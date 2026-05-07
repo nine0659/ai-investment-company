@@ -1,0 +1,30 @@
+# AI Investment Research Company - Dependencies
+
+# LangGraph (AI agent pipeline)
+langgraph>=0.2.0
+langchain-openai>=0.1.0
+
+# OpenAI
+openai>=1.0.0
+
+# Scheduler
+APScheduler>=3.10.0
+
+# Terminal UI
+rich>=13.0.0
+
+# Env vars
+python-dotenv>=1.0.0
+
+# HTTP
+requests>=2.31.0
+httpx>=0.25.0
+
+# Market data (Yahoo Finance)
+yfinance>=0.2.0
+
+# News (RSS)
+feedparser>=6.0.0
+
+# DB (SQLite, built-in — no extra package)
+# KIS API uses requests

@@ -1,0 +1,32 @@
+# 환경변수 (절대 커밋 금지)
+.env
+
+# Claude Code 로컬 설정
+.claude/
+
+# DB / 데이터
+data/database.sqlite3
+data/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 스케줄러 PID
+.scheduler_pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
