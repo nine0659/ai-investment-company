@@ -1,9 +1,20 @@
 import logging
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
+from zoneinfo import ZoneInfo
 from config.settings import KIS_APP_KEY, KIS_APP_SECRET, KIS_BASE_URL
 
 logger = logging.getLogger(__name__)
+
+_KST = ZoneInfo("Asia/Seoul")
+# KIS 순위 API는 평일 07:00~20:00 KST에만 데이터 제공
+_RANK_START = time(7, 0)
+_RANK_END   = time(20, 0)
+
+
+def _rank_api_available() -> bool:
+    now = datetime.now(_KST)
+    return now.weekday() < 5 and _RANK_START <= now.time() <= _RANK_END
 
 
 class KISClient:
@@ -77,12 +88,26 @@ class KISClient:
         )
 
     def _rank(self, path: str, tr_id: str, params: dict, top_n: int) -> list[dict]:
+        if not _rank_api_available():
+            now = datetime.now(_KST)
+            logger.debug(
+                "KIS 순위 API 가용 시간 외 스킵 (%s) — 현재 %s KST (평일 07:00~20:00만 제공)",
+                tr_id, now.strftime("%H:%M"),
+            )
+            return []
+        url = f"{KIS_BASE_URL}{path}"
         try:
-            r = requests.get(f"{KIS_BASE_URL}{path}", headers=self._headers(tr_id), params=params, timeout=10)
+            r = requests.get(url, headers=self._headers(tr_id), params=params, timeout=10)
+            if r.status_code == 404:
+                logger.warning(
+                    "KIS 순위 API 404 (%s) — 엔드포인트: %s | 응답: %s",
+                    tr_id, url, r.text[:200],
+                )
+                return []
             r.raise_for_status()
             return r.json().get("output", [])[:top_n]
         except Exception as e:
-            logger.error("KIS 순위 조회 실패 (%s): %s", tr_id, e)
+            logger.warning("KIS 순위 조회 실패 (%s): %s", tr_id, e)
             return []
 
     # ── 개별 종목 조회 ────────────────────────────────────────────

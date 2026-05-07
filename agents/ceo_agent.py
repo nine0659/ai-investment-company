@@ -2,56 +2,63 @@ import logging
 from datetime import datetime
 from graph.state import InvestmentState
 from clients.openai_client import chat
+from clients.us_stock_client import format_us_impact_for_prompt
 from config.settings import RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE, TZ
 
 logger = logging.getLogger(__name__)
 
+_PROMPT_PRE = """당신은 AI 투자리서치 회사의 CEO입니다.
+팀 분석을 바탕으로 장전 브리핑을 작성하되, 반드시 아래 3가지를 명확히 출력하세요.
+부서별 요약 반복 없이 핵심만 담아 짧고 강력하게 작성하세요.
+
+━━━━━━━━━━━━━━━━━━━━━━
+① 오늘의 핵심 판단 (단 한 문장)
+   예: "반도체 단기 반등 구간, 삼성전자 눌림 매수 유효"
+
+② 최우선 관심 종목 1~2개
+   형식 (종목당 1줄씩):
+   종목명(코드) | 진입가 XXX원 | 손절가 XXX원 | 목표가 XXX원 | 근거 한 줄
+
+③ 오늘 절대 하지 말 것 (단 하나)
+   예: "갭상승 추격매수 금지" / "2차전지 섹터 오늘 전량 회피"
+━━━━━━━━━━━━━━━━━━━━━━
+
+형식: 텔레그램 전송용, 이모지 활용, 한국어
+진입가·손절가·목표가는 제공된 데이터 기반으로 구체적 수치를 제시하세요."""
+
+_PROMPT_INTRA1 = """당신은 AI 투자리서치 회사의 CEO입니다. 장중 1차 점검(10시) 브리핑을 작성하세요.
+
+반드시 포함:
+① 오전 장 한줄 판단 (상승/하락/박스 + 주도 섹터)
+② 오전 전략 유효성 — 유효하면 "유지", 바뀌었으면 새 전략 제시
+③ 오후 핵심 관전 포인트 1가지
+
+형식: 텔레그램 전송용, 이모지, 한국어, 간결하게"""
+
+_PROMPT_INTRA2 = """당신은 AI 투자리서치 회사의 CEO입니다. 장중 2차 점검(13시) 브리핑을 작성하세요.
+
+반드시 포함:
+① 오후 장 방향 판단 (한 문장)
+② 포지션 관리 지침 — 홀드 / 손절 / 추가매수 여부
+③ 마감 전 주의사항 1가지
+
+형식: 텔레그램 전송용, 이모지, 한국어, 간결하게"""
+
+_PROMPT_CLOSE = """당신은 AI 투자리서치 회사의 CEO입니다. 장마감 복기 및 내일 전략(15:50)을 작성하세요.
+
+반드시 포함:
+① 오늘 장 총평 한 문장 (예측 vs 실제)
+② 내일 최우선 관심 종목 1~2개 (근거 포함)
+③ 내일 절대 하지 말 것 1가지
+④ CEO 한마디 (투자 철학·교훈)
+
+형식: 텔레그램 전송용, 이모지, 한국어, 간결하게"""
+
 _PROMPTS = {
-    RUN_TYPE_PRE: """당신은 AI 투자리서치 회사의 CEO입니다. 장전 브리핑을 작성하세요.
-
-구성:
-1. 오늘의 시장 한줄 요약
-2. 글로벌/선물 시장 핵심 (2-3줄)
-3. 오늘 주도 섹터·테마
-4. 주목 종목 TOP3 (종목명, 이유, 진입 전략)
-5. 리스크 주의사항
-6. CEO 한마디 (오늘의 투자 전략 핵심)
-
-형식: 텔레그램 전송용, 이모지 활용, 한국어, 간결하게""",
-
-    RUN_TYPE_INTRA1: """당신은 AI 투자리서치 회사의 CEO입니다. 장중 1차 점검 브리핑(10시)을 작성하세요.
-
-구성:
-1. 현재 시장 상황 (KOSPI/KOSDAQ 흐름)
-2. 오전 주도 섹터 확인
-3. 기존 전략 유효성 점검
-4. 추가 매수 / 손절 판단 가이드
-5. 오후를 위한 관전 포인트
-
-형식: 텔레그램 전송용, 이모지 활용, 한국어, 간결하게""",
-
-    RUN_TYPE_INTRA2: """당신은 AI 투자리서치 회사의 CEO입니다. 장중 2차 점검 브리핑(13시)을 작성하세요.
-
-구성:
-1. 오후 시장 전망
-2. 오전 대비 수급 변화
-3. 마감을 앞둔 포지션 관리 전략
-4. 장마감 전 주목할 이벤트
-5. 내일을 위한 준비사항
-
-형식: 텔레그램 전송용, 이모지 활용, 한국어, 간결하게""",
-
-    RUN_TYPE_CLOSE: """당신은 AI 투자리서치 회사의 CEO입니다. 장마감 복기 및 내일 전략 브리핑(15:50)을 작성하세요.
-
-구성:
-1. 오늘 장 총평
-2. 예측 대비 실제 결과 평가
-3. 오늘의 Winner & Loser
-4. 내일 시장 예측
-5. 내일을 위한 주목 종목·섹터
-6. CEO 투자 철학 한마디
-
-형식: 텔레그램 전송용, 이모지 활용, 한국어, 간결하게""",
+    RUN_TYPE_PRE:    _PROMPT_PRE,
+    RUN_TYPE_INTRA1: _PROMPT_INTRA1,
+    RUN_TYPE_INTRA2: _PROMPT_INTRA2,
+    RUN_TYPE_CLOSE:  _PROMPT_CLOSE,
 }
 
 
@@ -61,19 +68,34 @@ def run(state: InvestmentState) -> InvestmentState:
         now = datetime.now(TZ)
 
         candidates_text = "\n".join(
-            f"- {c.get('name', c.get('code', ''))}: {c.get('change_pct', 0)}% (점수 {c.get('score', 0)})"
+            f"- {c.get('name', c.get('code', ''))}: {c.get('change_pct', 0):+.1f}% "
+            f"(점수 {c.get('score', 0)})"
             for c in state.get("candidates", [])[:5]
         ) or "후보 없음"
 
-        context = (
-            f"날짜: {state.get('date', now.strftime('%Y-%m-%d'))}  시간: {now.strftime('%H:%M')}\n\n"
-            f"[위원회 종합]\n{state.get('committee_report', '')}\n\n"
-            f"시장 방향성: {state.get('market_direction', '중립')}\n\n"
-            f"[주목 종목]\n{candidates_text}\n\n"
-            f"[리스크]\n{chr(10).join(state.get('risks', [])[:3])}\n\n"
-            f"[복기]\n{state.get('review_report', '')}"
-        )
-        result = chat(_PROMPTS.get(run_type, _PROMPTS[RUN_TYPE_PRE]), context, max_tokens=3000)
+        context_parts = [
+            f"날짜: {state.get('date', now.strftime('%Y-%m-%d'))}  시간: {now.strftime('%H:%M')}",
+            f"시장 방향성: {state.get('market_direction', '중립')}",
+            f"\n[위원회 종합]\n{state.get('committee_report', '')}",
+            f"\n[주목 종목]\n{candidates_text}",
+            f"\n[리스크]\n{chr(10).join(state.get('risks', [])[:3])}",
+        ]
+
+        # 장전 브리핑에만 미국→한국 영향 섹션 추가
+        if run_type == RUN_TYPE_PRE:
+            us_hot = state.get("us_hot_stocks", [])
+            if us_hot:
+                context_parts.append(
+                    "\n[미국 시장 → 오늘 코스피 이슈 종목]\n"
+                    + format_us_impact_for_prompt(us_hot)
+                )
+
+        if state.get("review_report"):
+            context_parts.append(f"\n[복기]\n{state['review_report']}")
+
+        context = "\n".join(context_parts)
+        prompt = _PROMPTS.get(run_type, _PROMPT_PRE)
+        result = chat(prompt, context, max_tokens=2000)
         state["ceo_report"] = result
         logger.info("[CEO] 브리핑 생성 완료")
     except Exception as e:

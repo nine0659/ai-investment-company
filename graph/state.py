@@ -9,6 +9,7 @@ class InvestmentState(TypedDict):
     raw_market_data: dict[str, Any]
     raw_kis_data: dict[str, Any]
     raw_news_data: dict[str, Any]
+    us_hot_stocks: list[dict]   # 미국 거래량 급증·등락 상위 종목 + 한국 연관 매핑
 
     futures_report: str
     us_market_report: str

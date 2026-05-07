@@ -23,6 +23,7 @@ from clients.kis_client          import KISClient
 from clients.market_data_client  import fetch_global_market_data
 from clients.news_client         import fetch_all_news
 from clients.telegram_client     import send_message, send_error_alert
+from clients.us_stock_client     import fetch_us_top_movers
 from services.report_service     import save_report, format_report_for_db
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,14 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.error("[데이터수집] 글로벌 실패: %s", e)
         state["raw_market_data"] = {}
         state["errors"].append(f"collect_global: {e}")
+
+    try:
+        state["us_hot_stocks"] = fetch_us_top_movers(n=5)
+        logger.info("[데이터수집] 미국 상위 종목 완료: %d개", len(state["us_hot_stocks"]))
+    except Exception as e:
+        logger.error("[데이터수집] 미국 상위 종목 실패: %s", e)
+        state["us_hot_stocks"] = []
+        state["errors"].append(f"collect_us_hot: {e}")
 
     try:
         kis_data: dict = {}
@@ -171,6 +180,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "raw_market_data": {},
         "raw_kis_data": {},
         "raw_news_data": {},
+        "us_hot_stocks": [],
         "futures_report": "",
         "us_market_report": "",
         "korea_spot_report": "",
