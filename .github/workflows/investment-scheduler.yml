@@ -1,0 +1,79 @@
+name: AI Investment Research Scheduler
+
+# KST = UTC+9 이므로 9시간을 빼서 UTC 기준으로 등록
+# 08:20 KST (Mon-Fri) = 23:20 UTC (Sun-Thu)
+# 10:00 KST (Mon-Fri) = 01:00 UTC (Mon-Fri)
+# 13:00 KST (Mon-Fri) = 04:00 UTC (Mon-Fri)
+# 15:50 KST (Mon-Fri) = 06:50 UTC (Mon-Fri)
+
+on:
+  schedule:
+    - cron: '20 23 * * 0-4'   # 08:20 KST 장전 브리핑
+    - cron: '0 1 * * 1-5'     # 10:00 KST 장중 1차
+    - cron: '0 4 * * 1-5'     # 13:00 KST 장중 2차
+    - cron: '50 6 * * 1-5'    # 15:50 KST 장마감 복기
+
+  # GitHub UI에서 수동 실행 가능
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: '실행 타입'
+        required: true
+        default: 'pre'
+        type: choice
+        options:
+          - pre
+          - intra1
+          - intra2
+          - close
+
+permissions:
+  contents: read
+
+jobs:
+  briefing:
+    name: Investment Briefing (${{ github.event.schedule || inputs.run_type }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # cron 트리거별로 실행 타입 결정
+      - name: Determine run type
+        id: run_type
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "type=${{ inputs.run_type }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "20 23 * * 0-4" ]; then
+            echo "type=pre" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "0 1 * * 1-5" ]; then
+            echo "type=intra1" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "0 4 * * 1-5" ]; then
+            echo "type=intra2" >> $GITHUB_OUTPUT
+          else
+            echo "type=close" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run briefing — ${{ steps.run_type.outputs.type }}
+        env:
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL:        ${{ secrets.OPENAI_MODEL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
+          PYTHONUTF8: "1"
+        run: python main.py --type ${{ steps.run_type.outputs.type }}
