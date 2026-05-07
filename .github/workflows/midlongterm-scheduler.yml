@@ -1,0 +1,107 @@
+name: Mid/Long Term Investment Analysis
+
+# KST = UTC+9
+# 중기: 매주 일요일 20:00 KST = 11:00 UTC Sunday  → cron: '0 11 * * 0'
+# 장기: 매월 첫째 일요일 20:30 KST = 11:30 UTC    → cron: '30 11 * * 0' + day <= 7 조건
+
+on:
+  schedule:
+    - cron: '0 11 * * 0'    # 매주 일요일 20:00 KST — 중기 분석
+    - cron: '30 11 * * 0'   # 매주 일요일 20:30 KST — 장기 (첫째 주만 실행)
+
+  workflow_dispatch:
+    inputs:
+      analysis_type:
+        description: '분석 타입'
+        required: true
+        default: 'midterm'
+        type: choice
+        options:
+          - midterm
+          - longterm
+
+permissions:
+  contents: read
+
+# ── 중기 분석 (매주 일요일) ───────────────────────────────────────
+jobs:
+  midterm:
+    name: 중기 분석 (1~6개월)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 11 * * 0') ||
+      (github.event_name == 'workflow_dispatch' && inputs.analysis_type == 'midterm')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run midterm analysis
+        env:
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL:        ${{ secrets.OPENAI_MODEL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
+          DART_API_KEY:        ${{ secrets.DART_API_KEY }}
+          PYTHONUTF8: "1"
+        run: python main.py --type midterm
+
+# ── 장기 분석 (매월 첫째 일요일) ─────────────────────────────────
+  longterm:
+    name: 장기 분석 (1년+)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '30 11 * * 0') ||
+      (github.event_name == 'workflow_dispatch' && inputs.analysis_type == 'longterm')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 매월 첫째 일요일(1~7일)만 실행. workflow_dispatch는 항상 통과
+      - name: Check first Sunday of month
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> $GITHUB_OUTPUT
+          elif [ "$(date +%d)" -le 7 ]; then
+            echo "proceed=true" >> $GITHUB_OUTPUT
+          else
+            echo "proceed=false" >> $GITHUB_OUTPUT
+            echo "첫째 주 일요일이 아니므로 장기 분석을 건너뜁니다."
+          fi
+
+      - name: Run longterm analysis
+        if: steps.check.outputs.proceed == 'true'
+        env:
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL:        ${{ secrets.OPENAI_MODEL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
+          DART_API_KEY:        ${{ secrets.DART_API_KEY }}
+          PYTHONUTF8: "1"
+        run: python main.py --type longterm

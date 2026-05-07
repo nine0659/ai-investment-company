@@ -28,6 +28,8 @@ KIS_APP_SECRET      = os.getenv("KIS_APP_SECRET", "")
 KIS_ACCOUNT_NO      = os.getenv("KIS_ACCOUNT_NO", "")
 KIS_ACCOUNT_PROD_CD = os.getenv("KIS_ACCOUNT_PROD_CD", "01")
 
+DART_API_KEY = os.getenv("DART_API_KEY", "")
+
 KIS_IS_REAL  = KIS_ACCOUNT_PROD_CD == "01"
 KIS_BASE_URL = (
     "https://openapi.koreainvestment.com:9443"

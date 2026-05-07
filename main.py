@@ -3,11 +3,12 @@ main.py
 수동 실행 진입점
 
 사용법:
-  python main.py                  # 장전 브리핑 (기본)
   python main.py --type pre       # 장전 브리핑
   python main.py --type intra1    # 장중 1차 (10:00)
   python main.py --type intra2    # 장중 2차 (13:00)
   python main.py --type close     # 장마감 복기
+  python main.py --type midterm   # 중기 분석 (1~6개월)
+  python main.py --type longterm  # 장기 분석 (1년+)
   python main.py --check          # 환경변수 검증만
   python main.py --init-db        # DB 초기화
 """
@@ -38,7 +39,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI Investment Research Company")
     parser.add_argument(
         "--type",
-        choices=["pre", "intra1", "intra2", "close"],
+        choices=["pre", "intra1", "intra2", "close", "midterm", "longterm"],
         default="pre",
         help="실행 타입 (기본: pre)",
     )
@@ -70,19 +71,6 @@ def main():
         console.print("[green]✅ DB 초기화 완료[/green]")
         return
 
-    # run_type 매핑
-    from config.settings import RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE
-    type_map = {
-        "pre": RUN_TYPE_PRE,
-        "intra1": RUN_TYPE_INTRA1,
-        "intra2": RUN_TYPE_INTRA2,
-        "close": RUN_TYPE_CLOSE,
-    }
-    run_type = type_map[args.type]
-
-    console.print(f"[bold cyan]🚀 AI Investment Research Company 시작[/bold cyan]")
-    console.print(f"[cyan]실행 타입: {run_type}[/cyan]")
-
     # DB 초기화 (없으면 자동 생성)
     try:
         from services.review_service import init_db
@@ -90,12 +78,46 @@ def main():
     except Exception as e:
         logger.warning("DB 초기화 경고: %s", e)
 
-    # 파이프라인 실행
+    # ── 중기 / 장기 분석 (독립 실행) ──────────────────────────
+    if args.type == "midterm":
+        console.print("[bold cyan]📊 중기 투자 분석 시작 (1~6개월)[/bold cyan]")
+        from agents.midterm_agent import run_analysis
+        try:
+            run_analysis()
+            console.print("[green]✅ 중기 분석 완료[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ 중기 분석 실패: {e}[/red]")
+            sys.exit(1)
+        return
+
+    if args.type == "longterm":
+        console.print("[bold cyan]🏦 장기 투자 분석 시작 (1년+)[/bold cyan]")
+        from agents.longterm_agent import run_analysis
+        try:
+            run_analysis()
+            console.print("[green]✅ 장기 분석 완료[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ 장기 분석 실패: {e}[/red]")
+            sys.exit(1)
+        return
+
+    # ── 일간 파이프라인 ────────────────────────────────────────
+    from config.settings import RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE
+    type_map = {
+        "pre":    RUN_TYPE_PRE,
+        "intra1": RUN_TYPE_INTRA1,
+        "intra2": RUN_TYPE_INTRA2,
+        "close":  RUN_TYPE_CLOSE,
+    }
+    run_type = type_map[args.type]
+
+    console.print(f"[bold cyan]🚀 AI Investment Research Company 시작[/bold cyan]")
+    console.print(f"[cyan]실행 타입: {run_type}[/cyan]")
+
     from graph.investment_graph import run_pipeline
     try:
         final_state = run_pipeline(run_type)
 
-        # 결과 출력
         errors = final_state.get("errors", [])
         if errors:
             console.print(f"[yellow]⚠️ 일부 오류 발생: {len(errors)}건[/yellow]")

@@ -31,6 +31,18 @@ def init_db():
                 review_content  TEXT,
                 created_at      TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS midterm_reports (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                date       TEXT NOT NULL,
+                report     TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS longterm_reports (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                date       TEXT NOT NULL,
+                report     TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
         """)
     logger.info("DB 초기화 완료")
 
@@ -38,6 +50,16 @@ def init_db():
 def save_review(date: str, content: str):
     with _conn() as c:
         c.execute("INSERT INTO reviews (date, review_content) VALUES (?, ?)", (date, content))
+
+
+def save_midterm_report(date: str, report: str):
+    with _conn() as c:
+        c.execute("INSERT INTO midterm_reports (date, report) VALUES (?, ?)", (date, report))
+
+
+def save_longterm_report(date: str, report: str):
+    with _conn() as c:
+        c.execute("INSERT INTO longterm_reports (date, report) VALUES (?, ?)", (date, report))
 
 
 def get_last_close_report() -> dict | None:
