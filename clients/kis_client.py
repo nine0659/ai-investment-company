@@ -96,7 +96,7 @@ class KISClient:
             r.raise_for_status()
             o = r.json().get("output", {})
 
-            def _int(k):   return int(o.get(k) or 0)
+            def _int(k):   return int(float(o.get(k) or 0))
             def _float(k): return float(o.get(k) or 0)
 
             return {
