@@ -68,20 +68,10 @@ jobs:
     name: Investment Briefing
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'repository_dispatch' && (
-        github.event.action == 'pre_market' ||
-        github.event.action == 'intra1' ||
-        github.event.action == 'intra2' ||
-        github.event.action == 'close_market'
-      )) ||
-      (github.event_name == 'schedule' && (
-        github.event.schedule == '20 23 * * 0-4' ||
-        github.event.schedule == '0 1 * * 1-5' ||
-        github.event.schedule == '0 4 * * 1-5' ||
-        github.event.schedule == '50 6 * * 1-5'
-      ))
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.run_type == 'pre' || inputs.run_type == 'intra1' || inputs.run_type == 'intra2' || inputs.run_type == 'close')) ||
+      (github.event_name == 'repository_dispatch' && (github.event.action == 'pre_market' || github.event.action == 'intra1' || github.event.action == 'intra2' || github.event.action == 'close_market')) ||
+      (github.event_name == 'schedule' && (github.event.schedule == '20 23 * * 0-4' || github.event.schedule == '0 1 * * 1-5' || github.event.schedule == '0 4 * * 1-5' || github.event.schedule == '50 6 * * 1-5'))
 
     steps:
       - name: Checkout
@@ -139,7 +129,7 @@ jobs:
     name: DART Alert
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: |
+    if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'dart_alert') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'dart')
 
@@ -164,7 +154,7 @@ jobs:
     name: Price Alert
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: |
+    if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'price_alert') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'price-alert')
 
@@ -191,7 +181,7 @@ jobs:
     name: Weekly Stats Report
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: |
+    if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'weekly_stats') ||
       (github.event_name == 'schedule' && github.event.schedule == '0 11 * * 0') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'weekly')
@@ -217,7 +207,7 @@ jobs:
     name: US Investment Picks
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: |
+    if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'us_invest') ||
       (github.event_name == 'schedule' && github.event.schedule == '30 11 * * 0') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'us-invest')
@@ -243,7 +233,7 @@ jobs:
     name: Monthly Self-Learning
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: |
+    if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'monthly_learning') ||
       (github.event_name == 'schedule' && github.event.schedule == '0 12 1 * *') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'monthly')
