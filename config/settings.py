@@ -17,8 +17,9 @@ SCHEDULE_INTRA_1    = "10:00"
 SCHEDULE_INTRA_2    = "13:00"
 SCHEDULE_CLOSE      = "15:50"
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL     = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_MODEL_CEO = os.getenv("OPENAI_MODEL_CEO", OPENAI_MODEL)  # CEO 전용 모델
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")

@@ -1,6 +1,7 @@
 import logging
 from graph.state import InvestmentState
 from clients.openai_client import chat
+from services.learning_service import load_learned_weights
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ _DIRECTIONS = ["강한상승", "상승", "강한하락", "하락", "중립"]
 
 def run(state: InvestmentState) -> InvestmentState:
     try:
-        context = "\n\n".join([
+        parts = [
             f"[선물/파생팀]\n{state.get('futures_report', 'N/A')}",
             f"[미국시장팀]\n{state.get('us_market_report', 'N/A')}",
             f"[한국현물팀]\n{state.get('korea_spot_report', 'N/A')}",
@@ -35,7 +36,13 @@ def run(state: InvestmentState) -> InvestmentState:
             f"[섹터/테마팀]\n{state.get('sector_report', 'N/A')}",
             f"[수급팀]\n{state.get('money_flow_report', 'N/A')}",
             f"[리스크팀]\n{state.get('risk_report', 'N/A')}",
-        ])
+        ]
+
+        weights = load_learned_weights()
+        if weights and "(초기 데이터 없음)" not in weights:
+            parts.insert(0, f"[학습된 가중치 — 반드시 우선 반영]\n{weights}")
+
+        context = "\n\n".join(parts)
         result = chat(_SYSTEM, context, max_tokens=2500)
         state["committee_report"] = result
         state["market_direction"] = next(

@@ -43,6 +43,27 @@ def init_db():
                 report     TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS stock_recommendations (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                date         TEXT NOT NULL,
+                code         TEXT NOT NULL,
+                name         TEXT NOT NULL,
+                entry_price  REAL,
+                stop_price   REAL,
+                target_price REAL,
+                rationale    TEXT,
+                close_price  REAL,
+                return_pct   REAL,
+                result       TEXT,
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS foreign_buy_history (
+                date   TEXT NOT NULL,
+                code   TEXT NOT NULL,
+                name   TEXT,
+                amount REAL,
+                PRIMARY KEY (date, code)
+            );
         """)
     logger.info("DB 초기화 완료")
 

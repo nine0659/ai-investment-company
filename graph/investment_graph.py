@@ -55,8 +55,12 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     try:
         kis_data: dict = {}
         for market, code in [("kospi", "J"), ("kosdaq", "Q")]:
-            for fn, suffix in [(kis.get_volume_rank, "volume_rank"),
-                               (kis.get_amount_rank, "amount_rank")]:
+            for fn, suffix in [
+                (kis.get_volume_rank,       "volume_rank"),
+                (kis.get_amount_rank,       "amount_rank"),
+                (kis.get_foreign_buy_rank,  "foreign_rank"),
+                (kis.get_institution_buy_rank, "institution_rank"),
+            ]:
                 try:
                     kis_data[f"{market}_{suffix}"] = fn(code)
                 except Exception as e:

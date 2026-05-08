@@ -110,6 +110,32 @@ class KISClient:
             logger.warning("KIS 순위 조회 실패 (%s): %s", tr_id, e)
             return []
 
+    def get_foreign_buy_rank(self, market: str = "J", top_n: int = 20) -> list[dict]:
+        """외국인 순매수 상위 종목"""
+        return self._rank(
+            "/uapi/domestic-stock/v1/quotations/foreign-institution-total",
+            "FHPTJ04400000",
+            {"FID_COND_MRKT_DIV_CODE": market, "FID_COND_SCR_DIV_CODE": "20444",
+             "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "0",
+             "FID_RANK_SORT_CLS_CODE": "0",   # 0=외국인순매수
+             "FID_ETC_CLS_CODE": "0",
+             "FID_INPUT_DATE_1": "", "FID_INPUT_DATE_2": ""},
+            top_n,
+        )
+
+    def get_institution_buy_rank(self, market: str = "J", top_n: int = 20) -> list[dict]:
+        """기관 순매수 상위 종목"""
+        return self._rank(
+            "/uapi/domestic-stock/v1/quotations/foreign-institution-total",
+            "FHPTJ04400000",
+            {"FID_COND_MRKT_DIV_CODE": market, "FID_COND_SCR_DIV_CODE": "20444",
+             "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "0",
+             "FID_RANK_SORT_CLS_CODE": "1",   # 1=기관순매수
+             "FID_ETC_CLS_CODE": "0",
+             "FID_INPUT_DATE_1": "", "FID_INPUT_DATE_2": ""},
+            top_n,
+        )
+
     # ── 개별 종목 조회 ────────────────────────────────────────────
 
     def get_stock_price(self, stock_code: str) -> dict:
