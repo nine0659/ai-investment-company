@@ -1,4 +1,5 @@
 import logging
+import time as _time_module
 import requests
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
@@ -10,6 +11,9 @@ _KST = ZoneInfo("Asia/Seoul")
 # KIS 순위 API는 평일 07:00~20:00 KST에만 데이터 제공
 _RANK_START = time(7, 0)
 _RANK_END   = time(20, 0)
+
+# 토큰 만료 전 갱신 버퍼 (만료 15분 전 미리 갱신)
+_TOKEN_BUFFER_MINUTES = 15
 
 
 def _rank_api_available() -> bool:
@@ -25,18 +29,54 @@ class KISClient:
     # ── 인증 ─────────────────────────────────────────────────
 
     def _get_token(self) -> str:
-        if self._token and self._token_expires and datetime.now() < self._token_expires:
+        # 만료 15분 전 버퍼를 두고 갱신 판단
+        buffer = timedelta(minutes=_TOKEN_BUFFER_MINUTES)
+        if self._token and self._token_expires and datetime.now() < self._token_expires - buffer:
             return self._token
-        r = requests.post(
-            f"{KIS_BASE_URL}/oauth2/tokenP",
-            json={"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET},
-            timeout=10,
-        )
-        r.raise_for_status()
-        self._token = r.json()["access_token"]
-        self._token_expires = datetime.now() + timedelta(hours=23)
-        logger.info("KIS 토큰 갱신 완료")
-        return self._token
+
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                if attempt > 0:
+                    wait = 2 ** attempt  # 2초, 4초 지수 백오프
+                    logger.info("KIS 토큰 재시도 %d/3 (%d초 대기)", attempt + 1, wait)
+                    _time_module.sleep(wait)
+
+                r = requests.post(
+                    f"{KIS_BASE_URL}/oauth2/tokenP",
+                    json={"grant_type": "client_credentials",
+                          "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET},
+                    timeout=15,
+                )
+
+                # rate limit(429) 또는 일시적 서버 오류(5xx)는 재시도
+                if r.status_code in (429, 500, 502, 503, 504):
+                    logger.warning("KIS 토큰 발급 일시 오류 (HTTP %d), 재시도", r.status_code)
+                    last_exc = requests.HTTPError(f"HTTP {r.status_code}")
+                    continue
+
+                r.raise_for_status()
+                data = r.json()
+                self._token = data["access_token"]
+
+                # KIS 응답의 실제 만료 시간 사용 (expires_in: 초 단위, 기본 86400=24시간)
+                expires_in = int(data.get("expires_in", 86400))
+                self._token_expires = datetime.now() + timedelta(seconds=expires_in)
+                logger.info(
+                    "KIS 토큰 갱신 완료 (유효 %dh, 만료 %s)",
+                    expires_in // 3600,
+                    self._token_expires.strftime("%Y-%m-%d %H:%M"),
+                )
+                return self._token
+
+            except requests.HTTPError as e:
+                last_exc = e
+                logger.warning("KIS 토큰 발급 HTTP 오류 (시도 %d/3): %s", attempt + 1, e)
+            except Exception as e:
+                last_exc = e
+                logger.warning("KIS 토큰 발급 실패 (시도 %d/3): %s", attempt + 1, e)
+
+        raise RuntimeError(f"KIS 토큰 발급 3회 모두 실패: {last_exc}")
 
     def _headers(self, tr_id: str) -> dict:
         return {
