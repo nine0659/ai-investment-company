@@ -20,6 +20,7 @@ _RANK_KEYS = [
     ("kospi_volume_rank",  "KOSPI 거래량"),
     ("kosdaq_volume_rank", "KOSDAQ 거래량"),
     ("kospi_amount_rank",  "KOSPI 거래대금"),
+    ("kosdaq_amount_rank", "KOSDAQ 거래대금"),
     ("kospi_rise_rank",    "KOSPI 급등"),
     ("kosdaq_rise_rank",   "KOSDAQ 급등"),
 ]
@@ -30,7 +31,7 @@ def run(state: InvestmentState) -> InvestmentState:
         kis = state.get("raw_kis_data", {})
         parts = []
         for key, label in _RANK_KEYS:
-            items = kis.get(key, [])[:5]
+            items = kis.get(key, [])[:10]
             if items:
                 names = ", ".join(
                     f"{x.get('hts_kor_isnm', x.get('stck_shrn_iscd', '?'))}({x.get('prdy_ctrt', '')}%)"

@@ -12,7 +12,7 @@ from config.settings import RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_
 logger = logging.getLogger(__name__)
 
 _PROMPT_PRE = """당신은 AI 투자리서치 회사의 CEO입니다.
-팀 분석을 바탕으로 장전 브리핑을 작성하되, 반드시 아래 3가지를 명확히 출력하세요.
+팀 분석을 바탕으로 장전 브리핑을 작성하되, 반드시 아래 항목을 순서대로 출력하세요.
 부서별 요약 반복 없이 핵심만 담아 짧고 강력하게 작성하세요.
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -25,6 +25,12 @@ _PROMPT_PRE = """당신은 AI 투자리서치 회사의 CEO입니다.
 
 ③ 오늘 절대 하지 말 것 (단 하나)
    예: "갭상승 추격매수 금지" / "2차전지 섹터 오늘 전량 회피"
+
+④ 미국발 오늘 주목 한국 종목 (2~3개, 한 줄씩)
+   예: 한화에어로스페이스 — 미국 방산 ETF +3.2% 수혜 직결
+
+⑤ 오늘 주목할 빅피겨 발언 (있을 경우만, 1~2줄)
+   예: ⚡ 파월 발언 "금리 동결 재확인" → 금융주 긍정
 ━━━━━━━━━━━━━━━━━━━━━━
 
 형식: 텔레그램 전송용, 이모지 활용, 한국어
@@ -94,6 +100,16 @@ def run(state: InvestmentState) -> InvestmentState:
                 context_parts.append(
                     "\n[미국 시장 → 오늘 코스피 이슈 종목]\n"
                     + format_us_impact_for_prompt(us_hot)
+                )
+            if state.get("us_impact_report"):
+                context_parts.append(
+                    "\n[미국발 오늘 주목 한국 종목]\n"
+                    + state["us_impact_report"]
+                )
+            if state.get("bigfigure_report"):
+                context_parts.append(
+                    "\n[오늘 주목할 빅피겨 발언]\n"
+                    + state["bigfigure_report"]
                 )
 
         if run_type == RUN_TYPE_CLOSE:

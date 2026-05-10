@@ -63,14 +63,30 @@ class KISClient:
         )
 
     def get_amount_rank(self, market: str = "J", top_n: int = 20) -> list[dict]:
-        """거래대금 순위"""
+        """거래대금 순위 (KOSPI: J, KOSDAQ: Q).
+        KOSDAQ은 거래대금 전용 TR이 없으므로 volume-rank TR을 거래대금 정렬로 재사용.
+        """
+        # KOSDAQ은 TR_ID FHPST01710000 + FID_DIV_CLS_CODE=1(거래대금순)으로 대체
+        if market == "Q":
+            return self._rank(
+                "/uapi/domestic-stock/v1/quotations/volume-rank",
+                "FHPST01710000",
+                {"FID_COND_MRKT_DIV_CODE": market, "FID_COND_SCR_DIV_CODE": "20171",
+                 "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "1",
+                 "FID_BLNG_CLS_CODE": "0",
+                 "FID_TRGT_CLS_CODE": "111111111", "FID_TRGT_EXLS_CLS_CODE": "000000",
+                 "FID_INPUT_PRICE_1": "", "FID_INPUT_PRICE_2": "", "FID_VOL_CNT": "",
+                 "FID_INPUT_DATE_1": ""},
+                top_n,
+            )
         return self._rank(
             "/uapi/domestic-stock/v1/quotations/volume-rank",
             "FHPST01720000",
             {"FID_COND_MRKT_DIV_CODE": market, "FID_COND_SCR_DIV_CODE": "20172",
              "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "0", "FID_BLNG_CLS_CODE": "0",
              "FID_TRGT_CLS_CODE": "111111111", "FID_TRGT_EXLS_CLS_CODE": "000000",
-             "FID_INPUT_PRICE_1": "", "FID_INPUT_PRICE_2": "", "FID_VOL_CNT": "", "FID_INPUT_DATE_1": ""},
+             "FID_INPUT_PRICE_1": "", "FID_INPUT_PRICE_2": "", "FID_VOL_CNT": "",
+             "FID_INPUT_DATE_1": "", "FID_RANK_SORT_CLS_CODE": "0"},
             top_n,
         )
 

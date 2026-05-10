@@ -7,23 +7,27 @@ from langgraph.graph import StateGraph, END
 from graph.state import InvestmentState
 from config.settings import TZ, RUN_TYPE_CLOSE
 
-import agents.futures_market_team   as futures_market_team
-import agents.us_market_team        as us_market_team
+import agents.futures_market_team    as futures_market_team
+import agents.us_market_team         as us_market_team
+import agents.us_impact_agent        as us_impact_agent
 import agents.korea_spot_market_team as korea_spot_market_team
-import agents.global_market_team    as global_market_team
-import agents.news_analysis_team    as news_analysis_team
-import agents.sector_theme_team     as sector_theme_team
-import agents.money_flow_team       as money_flow_team
-import agents.risk_management_team  as risk_management_team
-import agents.review_feedback_team  as review_feedback_team
-import agents.investment_committee  as investment_committee
-import agents.ceo_agent             as ceo_agent
+import agents.global_market_team     as global_market_team
+import agents.news_analysis_team     as news_analysis_team
+import agents.bigfigure_agent        as bigfigure_agent
+import agents.sector_theme_team      as sector_theme_team
+import agents.money_flow_team        as money_flow_team
+import agents.risk_management_team   as risk_management_team
+import agents.review_feedback_team   as review_feedback_team
+import agents.investment_committee   as investment_committee
+import agents.ceo_agent              as ceo_agent
 
 from clients.kis_client          import KISClient
 from clients.market_data_client  import fetch_global_market_data
 from clients.news_client         import fetch_all_news
 from clients.telegram_client     import send_message, send_error_alert
 from clients.us_stock_client     import fetch_us_top_movers
+from clients.us_market_client    import fetch_us_sectors, fetch_us_52w_highs
+from clients.bigfigure_client    import fetch_bigfigure_news
 from services.report_service     import save_report, format_report_for_db
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,30 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.error("[데이터수집] 미국 상위 종목 실패: %s", e)
         state["us_hot_stocks"] = []
         state["errors"].append(f"collect_us_hot: {e}")
+
+    try:
+        state["us_sector_data"] = fetch_us_sectors()
+        logger.info("[데이터수집] 미국 섹터 ETF 완료: %d개", len(state["us_sector_data"]))
+    except Exception as e:
+        logger.error("[데이터수집] 미국 섹터 실패: %s", e)
+        state["us_sector_data"] = {}
+        state["errors"].append(f"collect_us_sectors: {e}")
+
+    try:
+        state["us_52w_highs"] = fetch_us_52w_highs()
+        logger.info("[데이터수집] 미국 52주 신고가 완료: %d개", len(state["us_52w_highs"]))
+    except Exception as e:
+        logger.error("[데이터수집] 미국 52w 실패: %s", e)
+        state["us_52w_highs"] = []
+        state["errors"].append(f"collect_us_52w: {e}")
+
+    try:
+        state["bigfigure_news"] = fetch_bigfigure_news(max_per_figure=3)
+        logger.info("[데이터수집] 빅피겨 뉴스 완료: %d명", len(state["bigfigure_news"]))
+    except Exception as e:
+        logger.error("[데이터수집] 빅피겨 뉴스 실패: %s", e)
+        state["bigfigure_news"] = []
+        state["errors"].append(f"collect_bigfigure: {e}")
 
     try:
         kis_data: dict = {}
@@ -89,16 +117,18 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
 
 # ── 에이전트 노드 ───────────────────────────────────────────────
 
-def node_futures(state):      return futures_market_team.run(state)
-def node_us(state):           return us_market_team.run(state)
-def node_korea(state):        return korea_spot_market_team.run(state)
-def node_global(state):       return global_market_team.run(state)
-def node_news(state):         return news_analysis_team.run(state)
-def node_sector(state):       return sector_theme_team.run(state)
-def node_money_flow(state):   return money_flow_team.run(state)
-def node_risk(state):         return risk_management_team.run(state)
-def node_committee(state):    return investment_committee.run(state)
-def node_ceo(state):          return ceo_agent.run(state)
+def node_futures(state):       return futures_market_team.run(state)
+def node_us(state):            return us_market_team.run(state)
+def node_us_impact(state):     return us_impact_agent.run(state)
+def node_korea(state):         return korea_spot_market_team.run(state)
+def node_global(state):        return global_market_team.run(state)
+def node_news(state):          return news_analysis_team.run(state)
+def node_bigfigure(state):     return bigfigure_agent.run(state)
+def node_sector(state):        return sector_theme_team.run(state)
+def node_money_flow(state):    return money_flow_team.run(state)
+def node_risk(state):          return risk_management_team.run(state)
+def node_committee(state):     return investment_committee.run(state)
+def node_ceo(state):           return ceo_agent.run(state)
 
 def node_review(state):
     if state.get("run_type") == RUN_TYPE_CLOSE:
@@ -150,9 +180,11 @@ def build_graph() -> StateGraph:
         ("collect_raw_data",       collect_raw_data),
         ("futures_market_team",    node_futures),
         ("us_market_team",         node_us),
+        ("us_impact_agent",        node_us_impact),       # 미국 섹터 → 한국 종목 매핑
         ("korea_spot_market_team", node_korea),
         ("global_market_team",     node_global),
         ("news_analysis_team",     node_news),
+        ("bigfigure_agent",        node_bigfigure),       # 빅피겨 발언 분석
         ("sector_theme_team",      node_sector),
         ("money_flow_team",        node_money_flow),
         ("risk_management_team",   node_risk),
@@ -185,11 +217,16 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "raw_kis_data": {},
         "raw_news_data": {},
         "us_hot_stocks": [],
+        "us_sector_data": {},
+        "us_52w_highs": [],
+        "bigfigure_news": [],
         "futures_report": "",
         "us_market_report": "",
+        "us_impact_report": "",
         "korea_spot_report": "",
         "global_market_report": "",
         "news_report": "",
+        "bigfigure_report": "",
         "sector_report": "",
         "money_flow_report": "",
         "risk_report": "",
