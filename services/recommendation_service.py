@@ -18,35 +18,58 @@ def _conn() -> sqlite3.Connection:
 
 # ── 파싱 ──────────────────────────────────────────────────────────
 
-_REC_PATTERN = re.compile(
-    r"([가-힣A-Za-z·&\s]{1,20}?)\s*\((\d{6})\)"   # 종목명(코드)
-    r"[^\n]*?진입[가격]*\s*[：:]?\s*([\d,]+)\s*원?"  # 진입가
-    r"[^\n]*?손절[가격]*\s*[：:]?\s*([\d,]+)\s*원?"  # 손절가
-    r"[^\n]*?목표[가격]*\s*[：:]?\s*([\d,]+)\s*원?"  # 목표가
-    r"(?:[^\n]*?\|\s*([^\n|]{1,80}))?",             # 근거(선택)
-    re.DOTALL,
-)
+_HEADER_RE = re.compile(r"([가-힣A-Za-z()·&·\s]{1,25}?)\s*\((\d{6})\)")
+# 1차 진입가 (분할 매수 형식: "1차(50%): 240,000원")
+_ENTRY1_RE = re.compile(r"1차[^\n]{0,30}?([\d,]{4,})\s*원")
+# 구형 단일 진입가 ("진입가 240,000원" / "진입: 240,000원")
+_ENTRY_OLD_RE = re.compile(r"진입[가격：: ]{0,5}([\d,]{4,})\s*원")
+_STOP_RE   = re.compile(r"손절[가격：: ·]{0,5}([\d,]{4,})\s*원")
+_TARGET_RE = re.compile(r"목표[가격：: ·]{0,5}([\d,]{4,})\s*원")
+
+
+def _extract_price(pattern: re.Pattern, text: str) -> int | None:
+    m = pattern.search(text)
+    if m:
+        try:
+            return int(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    return None
 
 
 def parse_recommendations(report_text: str) -> list[dict]:
-    """CEO 브리핑 텍스트에서 추천 종목 파싱"""
-    results = []
-    for m in _REC_PATTERN.finditer(report_text):
-        try:
-            name    = m.group(1).strip()
-            code    = m.group(2)
-            entry   = int(m.group(3).replace(",", ""))
-            stop    = int(m.group(4).replace(",", ""))
-            target  = int(m.group(5).replace(",", ""))
-            reason  = (m.group(6) or "").strip()
-            if entry > 0 and stop > 0 and target > 0:
-                results.append({
-                    "name": name, "code": code,
-                    "entry_price": entry, "stop_price": stop,
-                    "target_price": target, "rationale": reason,
-                })
-        except (ValueError, AttributeError):
+    """CEO 브리핑 텍스트에서 추천 종목 파싱.
+    분할 매수 형식(1차/2차/손절/목표)과 구형 단일 라인 형식을 모두 지원.
+    """
+    results: list[dict] = []
+    seen_codes: set[str] = set()
+    lines = report_text.split("\n")
+
+    for i, line in enumerate(lines):
+        m = _HEADER_RE.search(line)
+        if not m:
             continue
+        name = m.group(1).strip()
+        code = m.group(2)
+        if code in seen_codes:
+            continue
+
+        # 종목 헤더 이후 최대 10줄을 블록으로 추출
+        block = "\n".join(lines[i: i + 10])
+
+        # 1차 진입가 우선, 없으면 구형 진입가
+        entry = _extract_price(_ENTRY1_RE, block) or _extract_price(_ENTRY_OLD_RE, block)
+        stop  = _extract_price(_STOP_RE, block)
+        target = _extract_price(_TARGET_RE, block)
+
+        if entry and stop and target and entry > 0 and stop > 0 and target > 0:
+            seen_codes.add(code)
+            results.append({
+                "name": name, "code": code,
+                "entry_price": entry, "stop_price": stop,
+                "target_price": target, "rationale": "",
+            })
+
     return results
 
 

@@ -20,8 +20,14 @@ main.py
 import argparse
 import logging
 import sys
+import io
 from rich.console import Console
 from rich.logging import RichHandler
+
+# Windows cp949 콘솔에서 이모지/한글 깨짐 방지
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # 로깅 설정
 logging.basicConfig(
