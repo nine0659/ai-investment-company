@@ -142,11 +142,15 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run DART alert
         env:
-          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          DART_API_KEY:       ${{ secrets.DART_API_KEY }}
-          PYTHONUTF8:         "1"
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          DART_API_KEY:        ${{ secrets.DART_API_KEY }}
+          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
+          PYTHONUTF8:          "1"
         run: python main.py --type dart
 
   # ── 가격 알림 ─────────────────────────────────────────────────
