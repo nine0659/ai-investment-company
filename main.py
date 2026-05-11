@@ -62,9 +62,9 @@ def main():
 
     setup_logging(args.log_level)
 
-    # 환경변수 검증
+    # 환경변수 검증 (run_type 전달 → KIS 불필요 타입은 KIS 검증 스킵)
     from config.settings import validate_env
-    missing = validate_env()
+    missing = validate_env(run_type=args.type if not args.check and not args.init_db else "")
     if missing:
         console.print(f"[red]❌ 누락된 환경변수: {', '.join(missing)}[/red]")
         console.print("[yellow].env 파일에 해당 값을 설정하세요.[/yellow]")

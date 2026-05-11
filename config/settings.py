@@ -39,13 +39,20 @@ KIS_BASE_URL = (
 )
 
 
-def validate_env() -> list[str]:
-    required = {
+# KIS API가 필요하지 않은 실행 타입 (미국주식·주간통계·월간학습·DART는 KIS 불필요)
+_NO_KIS_TYPES = {"us-invest", "weekly", "monthly", "dart"}
+
+
+def validate_env(run_type: str = "") -> list[str]:
+    required: dict[str, str] = {
         "OPENAI_API_KEY":     OPENAI_API_KEY,
         "TELEGRAM_BOT_TOKEN": TELEGRAM_BOT_TOKEN,
         "TELEGRAM_CHAT_ID":   TELEGRAM_CHAT_ID,
-        "KIS_APP_KEY":        KIS_APP_KEY,
-        "KIS_APP_SECRET":     KIS_APP_SECRET,
-        "KIS_ACCOUNT_NO":     KIS_ACCOUNT_NO,
     }
+    if run_type not in _NO_KIS_TYPES:
+        required.update({
+            "KIS_APP_KEY":    KIS_APP_KEY,
+            "KIS_APP_SECRET": KIS_APP_SECRET,
+            "KIS_ACCOUNT_NO": KIS_ACCOUNT_NO,
+        })
     return [k for k, v in required.items() if not v or v in ("...", "sk-...")]
