@@ -1,14 +1,14 @@
 """
-DART 공시 실시간 감지 에이전트
-- 중복 방지: dart_sent_alerts (실제 발송한 공시만 저장, rcept_no 기준)
-- 필터링: 코스피/코스닥 상장 대형주(시총 1000억+), 주요 공시 유형만
-- 하루 최대 10건, 중요도 높은 순 발송
+DART 공시 에이전트
+- 브리핑 통합: fetch_for_briefing() → 오늘 중요 공시를 수집해 브리핑 컨텍스트에 포함
+- 필터링: 코스피/코스닥 상장 대형주(시총 5000억+), B타입 주요사항 공시만
+- 독립 알림(check_and_alert)은 레거시 유지 (현재 파이프라인에서 비활성화)
 """
 import logging
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, time as _time
 from zoneinfo import ZoneInfo
 
 import requests
@@ -22,52 +22,61 @@ _KST  = ZoneInfo("Asia/Seoul")
 _BASE = "https://opendart.fss.or.kr/api"
 _DB   = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
 
-_DAILY_LIMIT = 10
+_DAILY_LIMIT = 5   # 하루 최대 5건 (기존 10건 → 축소)
+
+# 발송 허용 시간 (KST) — 새벽·심야 무분별 발송 방지
+_SEND_START = _time(7, 0)
+_SEND_END   = _time(20, 0)
 
 # DART corp_cls: Y=KOSPI, K=KOSDAQ 상장사만 대상
 _LISTED_CLS = {"Y", "K"}
 
-# 시가총액 기준 (억원)
-_MIN_MARKET_CAP_억 = 1_000   # 코스피200/코스닥150 프록시 — 1000억 미만 소형주 제외
-_LARGE_CAP_억      = 5_000   # 유상증자 전용 대형주 기준
+# 시가총액 기준 (억원) — 기존 1000억에서 5000억으로 상향
+_MIN_MARKET_CAP_억 = 5_000   # 중형주 이상만 (코스피200·코스닥150 수준)
+_LARGE_CAP_억      = 10_000  # 유상증자 전용 대형주 기준
 
-# 감지할 공시 유형: A=정기공시(실적), B=주요사항보고(수주·부도·증자 등)
-_PBLNTF_TYPES = ["A", "B"]
+# B타입(주요사항보고)만 — A타입(사업/분기보고서 등 정기공시)은 무분별 발송 원인이므로 제외
+_PBLNTF_TYPES = ["B"]
 
 # 알림 규칙 (priority 낮을수록 먼저 발송)
+# ⚠️ 금액 기준(min_amount)은 공시 제목에서 파싱 — 제목에 금액 없는 경우 0으로 처리됨
 _ALERT_RULES = [
     {
-        "keywords": ["부도", "파산", "상장폐지", "관리종목지정"],
+        "keywords": ["부도", "파산", "상장폐지", "관리종목지정", "영업정지"],
         "min_amount": 0,
         "large_cap_only": False,
         "priority": 1,
         "emoji": "🚨", "label": "부도/상장폐지 경고",
     },
     {
+        # 수주: 500억 이상만 (기존 100억 → 대폭 상향)
         "keywords": ["수주", "공급계약", "납품계약"],
-        "min_amount": 10_000_000_000,   # 100억
+        "min_amount": 50_000_000_000,   # 500억
         "large_cap_only": False,
         "priority": 2,
-        "emoji": "🏆", "label": "대규모 수주/계약",
+        "emoji": "🏆", "label": "대규모 수주/계약(500억+)",
     },
     {
-        "keywords": ["잠정실적", "실적발표", "영업이익"],
+        # 잠정실적: 시총 5000억+ 대형주로 한정
+        "keywords": ["잠정실적"],
         "min_amount": 0,
-        "large_cap_only": False,
+        "large_cap_only": False,   # 시총 기준(_MIN_MARKET_CAP_억)으로 이미 필터링
         "priority": 3,
-        "emoji": "📈", "label": "실적 발표",
+        "emoji": "📈", "label": "잠정실적 발표",
     },
     {
+        # 자사주 매입: 1000억+ 대형주만 (소형주 자사주는 주가부양 목적 노이즈 많음)
         "keywords": ["자기주식취득", "자기주식 취득", "자사주매입"],
         "min_amount": 0,
-        "large_cap_only": False,
+        "large_cap_only": True,    # 1만억 이상 대형주만
         "priority": 4,
         "emoji": "💰", "label": "자사주 매입",
     },
     {
+        # 유상증자: 1만억 이상 초대형주만
         "keywords": ["유상증자결정"],
         "min_amount": 0,
-        "large_cap_only": True,   # 대형주(5000억+)만
+        "large_cap_only": True,
         "priority": 5,
         "emoji": "📢", "label": "유상증자",
     },
@@ -173,8 +182,15 @@ def _get_market_cap(kis, stock_code: str) -> int:
 
 def check_and_alert() -> int:
     """새 공시 체크 및 알림 발송. 발송 건수 반환."""
+    now = datetime.now(_KST)
+
+    # 발송 허용 시간대 체크 (07:00~20:00 KST)
+    if not (_SEND_START <= now.time() <= _SEND_END):
+        logger.debug("[DART] 발송 허용 시간 외 스킵 (%s KST)", now.strftime("%H:%M"))
+        return 0
+
     _ensure_table()
-    today = datetime.now(_KST).strftime("%Y-%m-%d")
+    today = now.strftime("%Y-%m-%d")
 
     # 오늘 발송 한도 확인
     already_sent = _count_today_sent(today)
@@ -286,12 +302,89 @@ def check_and_alert() -> int:
     return sent
 
 
+def fetch_for_briefing() -> list[dict]:
+    """브리핑 통합용: 오늘 중요 DART 공시 수집 (텔레그램 직접 발송 없음).
+
+    - 시간대·일일 한도 제약 없음 (브리핑 파이프라인 내 항상 실행)
+    - KIS 시총 조회는 시도하되 실패 시 생략 (시총 기준 필터 미적용)
+    - 최대 10건 반환
+    """
+    _ensure_table()
+    disclosures = fetch_today_disclosures()
+
+    kis = None
+    if KIS_APP_KEY:
+        try:
+            from clients.kis_client import KISClient
+            kis = KISClient()
+        except Exception:
+            pass
+
+    matched: list[dict] = []
+    for item in disclosures:
+        rcept_no   = item.get("rcept_no", "")
+        corp_name  = item.get("corp_name", "")
+        report_nm  = item.get("report_nm", "")
+        stock_code = (item.get("stock_code") or "").strip()
+        corp_cls   = item.get("corp_cls", "")
+
+        if not rcept_no or not stock_code:
+            continue
+        if corp_cls not in _LISTED_CLS:
+            continue
+
+        matched_rule = None
+        for rule in sorted(_ALERT_RULES, key=lambda r: r["priority"]):
+            if not _matches_rule(report_nm, rule):
+                continue
+            amount = _extract_amount(report_nm)
+            if rule["min_amount"] > 0 and amount < rule["min_amount"]:
+                continue
+            matched_rule = rule
+            break
+
+        if not matched_rule:
+            continue
+
+        market_cap = _get_market_cap(kis, stock_code) if kis else 0
+        if kis and market_cap > 0 and market_cap < _MIN_MARKET_CAP_억:
+            continue
+        if matched_rule.get("large_cap_only") and kis and market_cap > 0 and market_cap < _LARGE_CAP_억:
+            continue
+
+        matched.append({
+            "corp_name":  corp_name,
+            "report_nm":  report_nm,
+            "stock_code": stock_code,
+            "market_cap": market_cap,
+            "rule":       matched_rule,
+            "rcept_no":   rcept_no,
+        })
+
+    matched.sort(key=lambda x: x["rule"]["priority"])
+    return matched[:10]
+
+
+def format_disclosures_for_briefing(disclosures: list[dict]) -> str:
+    """브리핑에 삽입할 DART 공시 텍스트 생성."""
+    if not disclosures:
+        return ""
+    lines = []
+    for d in disclosures:
+        rule    = d["rule"]
+        cap_str = f" (시총 {d['market_cap']:,}억)" if d.get("market_cap") else ""
+        lines.append(f"  {rule['emoji']} {d['corp_name']}{cap_str}: {d['report_nm']}")
+    return "📢 오늘 주요 DART 공시:\n" + "\n".join(lines)
+
+
 def run():
-    """독립 실행 진입점"""
+    """독립 실행 진입점 (레거시 — 현재는 브리핑에 통합)"""
     now = datetime.now(_KST)
-    logger.info("[DART 감지] 시작 — %s KST", now.strftime("%H:%M"))
-    sent = check_and_alert()
-    logger.info("[DART 감지] 완료 — 알림 %d건", sent)
+    logger.info("[DART] 시작 — %s KST", now.strftime("%H:%M"))
+    items = fetch_for_briefing()
+    logger.info("[DART] 완료 — %d건 탐지", len(items))
+    for it in items:
+        logger.info("  %s %s: %s", it["rule"]["emoji"], it["corp_name"], it["report_nm"])
 
 
 if __name__ == "__main__":

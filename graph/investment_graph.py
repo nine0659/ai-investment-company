@@ -22,7 +22,7 @@ import agents.investment_committee   as investment_committee
 import agents.ceo_agent              as ceo_agent
 
 from clients.kis_client          import KISClient
-from clients.market_data_client  import fetch_global_market_data
+from clients.market_data_client  import fetch_global_market_data, fetch_kr_index_realtime
 from clients.news_client         import fetch_all_news
 from clients.telegram_client     import send_message, send_error_alert
 from clients.us_stock_client     import fetch_us_top_movers
@@ -111,6 +111,21 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.error("[데이터수집] 뉴스 실패: %s", e)
         state["raw_news_data"] = {}
         state["errors"].append(f"collect_news: {e}")
+
+    try:
+        from agents.dart_alert_agent import fetch_for_briefing
+        state["dart_disclosures"] = fetch_for_briefing()
+        logger.info("[데이터수집] DART 공시 완료: %d건", len(state["dart_disclosures"]))
+    except Exception as e:
+        logger.warning("[데이터수집] DART 공시 실패: %s", e)
+        state["dart_disclosures"] = []
+
+    try:
+        state["kr_index_realtime"] = fetch_kr_index_realtime()
+        logger.info("[데이터수집] 한국 지수 실시간 완료: %s", list(state["kr_index_realtime"].keys()))
+    except Exception as e:
+        logger.warning("[데이터수집] 한국 지수 실시간 실패: %s", e)
+        state["kr_index_realtime"] = {}
 
     return state
 
@@ -209,6 +224,19 @@ def build_graph() -> StateGraph:
 
 def run_pipeline(run_type: str) -> InvestmentState:
     now = datetime.now(TZ)
+
+    # 중복 실행 방지: 같은 날 같은 run_type이 이미 DB에 저장됐으면 스킵
+    try:
+        from services.report_service import already_ran_today
+        if already_ran_today(now.strftime("%Y-%m-%d"), run_type):
+            logger.warning(
+                "[중복방지] %s/%s 오늘 이미 실행 완료 — 중복 발송 방지를 위해 스킵",
+                run_type, now.strftime("%Y-%m-%d"),
+            )
+            return {}
+    except Exception as e:
+        logger.debug("[중복방지] DB 체크 실패 (무시): %s", e)
+
     initial: InvestmentState = {
         "run_type": run_type,
         "timestamp": now.isoformat(),
@@ -220,6 +248,8 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "us_sector_data": {},
         "us_52w_highs": [],
         "bigfigure_news": [],
+        "dart_disclosures": [],
+        "kr_index_realtime": {},
         "futures_report": "",
         "us_market_report": "",
         "us_impact_report": "",
@@ -227,6 +257,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "global_market_report": "",
         "news_report": "",
         "bigfigure_report": "",
+        "dart_report": "",
         "sector_report": "",
         "money_flow_report": "",
         "risk_report": "",

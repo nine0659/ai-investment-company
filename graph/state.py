@@ -13,6 +13,8 @@ class InvestmentState(TypedDict):
     us_sector_data: dict[str, Any]   # 미국 섹터 ETF 등락률 데이터
     us_52w_highs: list[dict]         # 미국 52주 신고가 근접 종목
     bigfigure_news: list[dict]       # 글로벌 빅피겨 최신 뉴스
+    dart_disclosures: list[dict]     # 오늘 주요 DART 공시 (브리핑 통합용)
+    kr_index_realtime: dict[str, Any]  # 장중 KOSPI·KOSDAQ 실시간 현재 지수
 
     futures_report: str
     us_market_report: str
@@ -21,6 +23,7 @@ class InvestmentState(TypedDict):
     global_market_report: str
     news_report: str
     bigfigure_report: str            # 빅피겨 발언 분석
+    dart_report: str                 # 오늘 DART 공시 요약
     sector_report: str
     money_flow_report: str
     risk_report: str

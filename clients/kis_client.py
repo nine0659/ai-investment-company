@@ -194,33 +194,51 @@ class KISClient:
 
     # ── 개별 종목 조회 ────────────────────────────────────────────
 
-    def get_stock_price(self, stock_code: str) -> dict:
-        """현재가·PER·PBR·EPS·BPS·시가총액 조회"""
+    def get_stock_price(self, stock_code: str, market: str | None = None) -> dict:
+        """현재가·PER·PBR·EPS·BPS·시가총액 조회.
+
+        market: "J"(KOSPI) 또는 "Q"(KOSDAQ).
+        None이면 J→Q 순으로 자동 시도.
+        지정 시 해당 market 먼저, 가격이 0이면 반대 market 재시도.
+        """
         url = f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": stock_code}
-        try:
-            r = requests.get(url, headers=self._headers("FHKST01010100"), params=params, timeout=10)
-            r.raise_for_status()
-            o = r.json().get("output", {})
+        if market:
+            markets = (market, "Q" if market == "J" else "J")
+        else:
+            markets = ("J", "Q")
 
-            def _int(k):   return int(float(o.get(k) or 0))
-            def _float(k): return float(o.get(k) or 0)
+        for m in markets:
+            try:
+                r = requests.get(
+                    url,
+                    headers=self._headers("FHKST01010100"),
+                    params={"FID_COND_MRKT_DIV_CODE": m, "FID_INPUT_ISCD": stock_code},
+                    timeout=10,
+                )
+                r.raise_for_status()
+                o = r.json().get("output", {})
 
-            return {
-                "price":          _int("stck_prpr"),
-                "per":            _float("per"),
-                "pbr":            _float("pbr"),
-                "eps":            _int("eps"),
-                "bps":            _int("bps"),
-                "issued_shares":  _int("lstg_stqt"),
-                "market_cap_억":  _int("hts_avls"),     # 시가총액 (억원)
-                "52w_high":       _int("d250_hgpr"),
-                "52w_low":        _int("d250_lwpr"),
-                "change_pct":     _float("prdy_ctrt"),
-            }
-        except Exception as e:
-            logger.error("KIS 주가 조회 실패 (%s): %s", stock_code, e)
-            return {}
+                def _int(k):   return int(float(o.get(k) or 0))
+                def _float(k): return float(o.get(k) or 0)
+
+                price = _int("stck_prpr")
+                if price == 0:
+                    continue  # 빈 응답 → 다음 market 시도
+                return {
+                    "price":          price,
+                    "per":            _float("per"),
+                    "pbr":            _float("pbr"),
+                    "eps":            _int("eps"),
+                    "bps":            _int("bps"),
+                    "issued_shares":  _int("lstg_stqt"),
+                    "market_cap_억":  _int("hts_avls"),
+                    "52w_high":       _int("d250_hgpr"),
+                    "52w_low":        _int("d250_lwpr"),
+                    "change_pct":     _float("prdy_ctrt"),
+                }
+            except Exception as e:
+                logger.error("KIS 주가 조회 실패 (%s/%s): %s", stock_code, m, e)
+        return {}
 
     def get_dividend_info(self, stock_code: str) -> dict:
         """배당 정보 조회 (배당수익률)"""

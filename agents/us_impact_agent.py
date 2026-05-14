@@ -11,74 +11,81 @@ logger = logging.getLogger(__name__)
 # strength: 높음(직접 공급망/경쟁) / 보통(간접 연관) / 낮음(테마적 연관)
 US_SECTOR_TO_KR: dict[str, list[dict]] = {
     "반도체": [
-        {"name": "SK하이닉스",   "code": "000660", "reason": "HBM 최대 공급사",         "strength": "높음"},
-        {"name": "삼성전자",     "code": "005930", "reason": "HBM·파운드리 수혜",        "strength": "높음"},
-        {"name": "한미반도체",   "code": "042700", "reason": "HBM 패키징 장비 공급",     "strength": "높음"},
-        {"name": "리노공업",     "code": "058470", "reason": "반도체 테스트 소켓",        "strength": "보통"},
-        {"name": "원익IPS",      "code": "240810", "reason": "반도체 증착·식각 장비",     "strength": "보통"},
-        {"name": "HPSP",         "code": "403870", "reason": "고압 어닐링 장비 독점",     "strength": "보통"},
+        {"name": "SK하이닉스",   "code": "000660", "market": "KOSPI",  "reason": "HBM 최대 공급사",         "strength": "높음"},
+        {"name": "삼성전자",     "code": "005930", "market": "KOSPI",  "reason": "HBM·파운드리 수혜",        "strength": "높음"},
+        {"name": "한미반도체",   "code": "042700", "market": "KOSDAQ", "reason": "HBM 패키징 장비 공급",     "strength": "높음"},
+        {"name": "리노공업",     "code": "058470", "market": "KOSDAQ", "reason": "반도체 테스트 소켓",        "strength": "보통"},
+        {"name": "원익IPS",      "code": "240810", "market": "KOSDAQ", "reason": "반도체 증착·식각 장비",     "strength": "보통"},
+        {"name": "HPSP",         "code": "403870", "market": "KOSDAQ", "reason": "고압 어닐링 장비 독점",     "strength": "보통"},
     ],
     "기술/IT": [
-        {"name": "삼성전자",     "code": "005930", "reason": "스마트기기 부품 수요",      "strength": "보통"},
-        {"name": "LG이노텍",     "code": "011070", "reason": "카메라 모듈 공급망",        "strength": "보통"},
-        {"name": "삼성전기",     "code": "009150", "reason": "MLCC·기판 공급",            "strength": "보통"},
+        {"name": "삼성전자",     "code": "005930", "market": "KOSPI",  "reason": "스마트기기 부품 수요",      "strength": "보통"},
+        {"name": "LG이노텍",     "code": "011070", "market": "KOSPI",  "reason": "카메라 모듈 공급망",        "strength": "보통"},
+        {"name": "삼성전기",     "code": "009150", "market": "KOSPI",  "reason": "MLCC·기판 공급",            "strength": "보통"},
     ],
     "전기차": [
-        {"name": "LG에너지솔루션", "code": "373220", "reason": "글로벌 배터리 최대 공급사", "strength": "높음"},
-        {"name": "삼성SDI",       "code": "006400", "reason": "배터리 셀 공급사",           "strength": "높음"},
-        {"name": "에코프로비엠",  "code": "247540", "reason": "양극재 공급사",              "strength": "높음"},
-        {"name": "포스코퓨처엠",  "code": "003670", "reason": "양극재·소재 공급",           "strength": "보통"},
-        {"name": "엘앤에프",      "code": "066970", "reason": "양극재 공급사",              "strength": "보통"},
+        {"name": "LG에너지솔루션", "code": "373220", "market": "KOSPI",  "reason": "글로벌 배터리 최대 공급사", "strength": "높음"},
+        {"name": "삼성SDI",        "code": "006400", "market": "KOSPI",  "reason": "배터리 셀 공급사",           "strength": "높음"},
+        {"name": "에코프로비엠",   "code": "247540", "market": "KOSDAQ", "reason": "양극재 공급사",              "strength": "높음"},
+        {"name": "포스코퓨처엠",   "code": "003670", "market": "KOSPI",  "reason": "양극재·소재 공급",           "strength": "보통"},
+        {"name": "엘앤에프",       "code": "066970", "market": "KOSDAQ", "reason": "양극재 공급사",              "strength": "보통"},
     ],
     "방산": [
-        {"name": "한화에어로스페이스", "code": "012450", "reason": "K9 수출·방산 성장",  "strength": "높음"},
-        {"name": "LIG넥스원",         "code": "079550", "reason": "미사일·방산 수출",    "strength": "높음"},
-        {"name": "현대로템",           "code": "064350", "reason": "K2 전차 수출",        "strength": "보통"},
-        {"name": "한국항공우주",       "code": "047810", "reason": "항공기·드론 수출",    "strength": "보통"},
+        {"name": "한화에어로스페이스", "code": "012450", "market": "KOSPI", "reason": "K9 수출·방산 성장",  "strength": "높음"},
+        {"name": "LIG넥스원",          "code": "079550", "market": "KOSPI", "reason": "미사일·방산 수출",    "strength": "높음"},
+        {"name": "현대로템",            "code": "064350", "market": "KOSPI", "reason": "K2 전차 수출",        "strength": "보통"},
+        {"name": "한국항공우주",        "code": "047810", "market": "KOSPI", "reason": "항공기·드론 수출",    "strength": "보통"},
     ],
     "바이오": [
-        {"name": "삼성바이오로직스", "code": "207940", "reason": "글로벌 CMO 수혜",      "strength": "높음"},
-        {"name": "셀트리온",         "code": "068270", "reason": "바이오시밀러 글로벌",  "strength": "보통"},
-        {"name": "유한양행",         "code": "000100", "reason": "신약 파이프라인",       "strength": "낮음"},
+        {"name": "삼성바이오로직스", "code": "207940", "market": "KOSPI", "reason": "글로벌 CMO 수혜",      "strength": "높음"},
+        {"name": "셀트리온",         "code": "068270", "market": "KOSPI", "reason": "바이오시밀러 글로벌",  "strength": "보통"},
+        {"name": "유한양행",         "code": "000100", "market": "KOSPI", "reason": "신약 파이프라인",       "strength": "낮음"},
     ],
     "금융": [
-        {"name": "KB금융",     "code": "105560", "reason": "글로벌 금리 연동",         "strength": "보통"},
-        {"name": "신한지주",   "code": "055550", "reason": "글로벌 금리 연동",         "strength": "보통"},
-        {"name": "삼성생명",   "code": "032830", "reason": "금리 수혜 보험사",         "strength": "보통"},
+        {"name": "KB금융",   "code": "105560", "market": "KOSPI", "reason": "글로벌 금리 연동",         "strength": "보통"},
+        {"name": "신한지주", "code": "055550", "market": "KOSPI", "reason": "글로벌 금리 연동",         "strength": "보통"},
+        {"name": "삼성생명", "code": "032830", "market": "KOSPI", "reason": "금리 수혜 보험사",         "strength": "보통"},
     ],
     "에너지": [
-        {"name": "한국전력",       "code": "015760", "reason": "에너지 가격 연동",      "strength": "보통"},
-        {"name": "두산에너빌리티", "code": "034020", "reason": "원전·에너지 기자재",    "strength": "보통"},
-        {"name": "한전KPS",        "code": "051600", "reason": "발전설비 유지보수",     "strength": "낮음"},
+        {"name": "한국전력",       "code": "015760", "market": "KOSPI", "reason": "에너지 가격 연동",      "strength": "보통"},
+        {"name": "두산에너빌리티", "code": "034020", "market": "KOSPI", "reason": "원전·에너지 기자재",    "strength": "보통"},
+        {"name": "한전KPS",        "code": "051600", "market": "KOSPI", "reason": "발전설비 유지보수",     "strength": "낮음"},
     ],
     "로봇/AI": [
-        {"name": "레인보우로보틱스", "code": "277810", "reason": "산업용 로봇 국내 1위", "strength": "높음"},
-        {"name": "두산로보틱스",    "code": "454910", "reason": "협동로봇 성장",          "strength": "높음"},
-        {"name": "HD현대",          "code": "267250", "reason": "로봇·AI 사업 보유",      "strength": "보통"},
-        {"name": "현대로템",        "code": "064350", "reason": "로봇·방산 융합",          "strength": "보통"},
+        {"name": "레인보우로보틱스", "code": "277810", "market": "KOSDAQ", "reason": "산업용 로봇 국내 1위", "strength": "높음"},
+        {"name": "두산로보틱스",     "code": "454910", "market": "KOSPI",  "reason": "협동로봇 성장",          "strength": "높음"},
+        {"name": "HD현대",           "code": "267250", "market": "KOSPI",  "reason": "로봇·AI 사업 보유",      "strength": "보통"},
+        {"name": "현대로템",         "code": "064350", "market": "KOSPI",  "reason": "로봇·방산 융합",          "strength": "보통"},
     ],
     "자동차": [
-        {"name": "현대차",    "code": "005380", "reason": "글로벌 자동차 동반 상승",   "strength": "높음"},
-        {"name": "기아",      "code": "000270", "reason": "글로벌 자동차 동반 상승",   "strength": "높음"},
-        {"name": "현대모비스", "code": "012330", "reason": "자동차 부품 공급망",        "strength": "보통"},
-        {"name": "만도",      "code": "204320", "reason": "자동차 부품 공급망",         "strength": "보통"},
+        {"name": "현대차",    "code": "005380", "market": "KOSPI", "reason": "글로벌 자동차 동반 상승",   "strength": "높음"},
+        {"name": "기아",      "code": "000270", "market": "KOSPI", "reason": "글로벌 자동차 동반 상승",   "strength": "높음"},
+        {"name": "현대모비스", "code": "012330", "market": "KOSPI", "reason": "자동차 부품 공급망",       "strength": "보통"},
+        {"name": "만도",      "code": "204320", "market": "KOSPI", "reason": "자동차 부품 공급망",        "strength": "보통"},
     ],
     "소프트웨어": [
-        {"name": "NAVER",  "code": "035420", "reason": "AI·플랫폼 섹터 동반",        "strength": "낮음"},
-        {"name": "카카오",  "code": "035720", "reason": "AI·플랫폼 섹터 동반",        "strength": "낮음"},
+        {"name": "NAVER", "code": "035420", "market": "KOSPI", "reason": "AI·플랫폼 섹터 동반",        "strength": "낮음"},
+        {"name": "카카오", "code": "035720", "market": "KOSPI", "reason": "AI·플랫폼 섹터 동반",        "strength": "낮음"},
     ],
 }
 
-_SYSTEM = """당신은 미국 시장 → 한국 주식 영향 분석 전문가입니다.
-전일 미국 섹터 ETF 성과를 바탕으로 오늘 한국 시장 수혜 종목을 발굴하세요.
+_SYSTEM = """당신은 미국 증시 → 한국 증시 직접 연동 분석 전문가입니다.
+
+핵심 원칙: 전일 미국 섹터 ETF의 등락은 오늘 한국 동일 섹터의 등락을 선행합니다.
+"미국에서 일어난 일은 한국에서도 일어난다" — 이 관점으로 오늘 매수 지도를 작성하세요.
 
 분석 항목:
-1. 미국 강세 섹터 TOP3 → 한국 수혜 종목 구체화 (코드 포함)
-2. 미국 약세 섹터 → 한국 리스크 종목 경고
-3. 52주 신고가 미국 종목의 한국 파급효과
-4. 오늘 장전 전략: 어느 섹터의 어떤 종목을 먼저 볼 것인가
+1. 미국 강세 섹터 TOP3 → 오늘 매수 우선 한국 종목 (코드·근거 포함)
+   예: "SMH(반도체ETF) +3.2% → SK하이닉스(000660)·한미반도체(042700) 오늘 갭업 유력"
+2. 미국 약세 섹터 → 오늘 회피·단기 매도 한국 종목 경고
+3. 미국 52주 신고가 종목의 한국 공급망 파급 (있는 경우)
+4. 오늘 장전 첫 매수 우선순위: 섹터 순서·종목 순서 명시
 
-출력: "[미국발 오늘 주목 한국 종목]" 헤더로 시작, 간결하게, 이모지 활용"""
+출력: "[미국발 오늘 한국 매수 지도]" 헤더로 시작
+- 강세 섹터별 한국 종목 (연동 강도: 높음/보통 구분)
+- 회피 섹터·종목
+- 오늘 첫 번째로 볼 종목 1개 명시 (근거 포함)
+이모지 활용, 간결하게"""
 
 
 def run(state: InvestmentState) -> InvestmentState:

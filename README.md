@@ -108,6 +108,62 @@ python scheduler.py
 
 ---
 
+## GitHub Actions + cron-job.org 스케줄 설정
+
+GitHub Actions schedule은 수 시간 지연이 발생할 수 있습니다.
+**정확한 시간 보장**을 위해 cron-job.org에서 `repository_dispatch` 이벤트를 직접 호출합니다.
+
+### 1. GitHub Fine-Grained PAT 발급
+
+GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+
+- **Repository access**: `nine0659/ai-investment-company`
+- **Permissions**: `Actions` → Read and write (또는 `Contents` → Read and write)
+- **Expiration**: 만료일 설정 후 갱신 필요
+
+### 2. cron-job.org 잡 설정 (총 4개)
+
+각 잡마다 아래 설정을 사용합니다:
+
+| 잡 이름 | Cron (KST) | `event_type` |
+|---|---|---|
+| 장전브리핑_0820 | `20 8 * * 1-5` (KST) | `pre_market` |
+| 장중1차_1000 | `0 10 * * 1-5` (KST) | `intra1` |
+| 장중2차_1300 | `0 13 * * 1-5` (KST) | `intra2` |
+| 장마감복기_1550 | `50 15 * * 1-5` (KST) | `close_market` |
+
+**cron-job.org 잡 공통 설정:**
+
+- **URL**: `https://api.github.com/repos/nine0659/ai-investment-company/dispatches`
+- **Method**: `POST`
+- **Headers**:
+  ```
+  Authorization: Bearer <발급한_PAT>
+  Content-Type: application/json
+  Accept: application/vnd.github+json
+  X-GitHub-Api-Version: 2022-11-28
+  ```
+- **Request body** (잡마다 `event_type` 변경):
+  ```json
+  {"event_type": "close_market"}
+  ```
+- **Expected HTTP status**: `204` (No Content) = 성공
+
+### 3. 설정 검증
+
+cron-job.org 잡을 수동 실행한 뒤 GitHub Actions 탭에서 `repository_dispatch` 이벤트가 트리거됐는지 확인하세요.
+
+또는 터미널에서 직접 테스트:
+
+```bash
+gh api --method POST repos/nine0659/ai-investment-company/dispatches \
+  -f event_type=close_market
+```
+
+이 명령이 `204`를 반환하면 GitHub 측 설정은 정상입니다. cron-job.org에서 동일한 API 호출이 성공하지 않으면 PAT나 헤더 설정을 다시 확인하세요.
+
+---
+
 ## 클라우드 서버 배포 (systemd)
 
 ```bash

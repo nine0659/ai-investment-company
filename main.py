@@ -114,13 +114,13 @@ def main():
         return
 
     if args.type == "dart":
-        console.print("[bold cyan]📢 DART 공시 알림 체크 시작[/bold cyan]")
+        console.print("[bold cyan]📢 DART 공시 조회 시작 (브리핑 통합 방식)[/bold cyan]")
         from agents.dart_alert_agent import run as dart_run
         try:
             dart_run()
-            console.print("[green]✅ DART 알림 완료[/green]")
+            console.print("[green]✅ DART 조회 완료 (텔레그램 발송은 브리핑에 통합됩니다)[/green]")
         except Exception as e:
-            console.print(f"[red]❌ DART 알림 실패: {e}[/red]")
+            console.print(f"[red]❌ DART 조회 실패: {e}[/red]")
             sys.exit(1)
         return
 

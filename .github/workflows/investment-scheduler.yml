@@ -7,14 +7,16 @@ name: AI Investment Research Scheduler
 # 15:50 KST (Mon-Fri)  = 06:50 UTC (Mon-Fri)
 # 20:00 KST (Sun)      = 11:00 UTC (Sun)   ← 주간 리포트
 # 20:30 KST (Sun)      = 11:30 UTC (Sun)   ← 미국 주식 추천
-# 21:00 KST (1st Mon)  = 12:00 UTC (Mon)   ← 월간 학습 (매월 1일 → 매월 1일 UTC)
+# 21:00 KST (1st Mon)  = 12:00 UTC (Mon)   ← 월간 학습 (매월 1일 UTC)
 #
 # ※ 1순위 트리거: cron-job.org → repository_dispatch (정확한 시간 보장)
 # ※ 2순위 트리거: GitHub Actions schedule (최대 수 시간 지연 가능, 백업용)
+#   → run_pipeline() 내 DB 중복 체크로 이중 발송 자동 방지
 #
+# DART 공시 알림은 별도 job을 제거하고 장전·장중·장마감 브리핑에 통합됩니다.
 # cron-job.org에서 호출할 event_type 목록:
 #   pre_market, intra1, intra2, close_market
-#   dart_alert, price_alert, weekly_stats, monthly_learning, us_invest
+#   price_alert, weekly_stats, monthly_learning, us_invest
 
 on:
   # ── 1순위: cron-job.org에서 GitHub API로 호출 ─────────────────
@@ -24,7 +26,6 @@ on:
       - intra1
       - intra2
       - close_market
-      - dart_alert
       - price_alert
       - weekly_stats
       - monthly_learning
@@ -53,7 +54,6 @@ on:
           - intra1
           - intra2
           - close
-          - dart
           - price-alert
           - weekly
           - monthly
@@ -68,6 +68,10 @@ jobs:
     name: Investment Briefing
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # 동일 run_type의 동시 실행 방지 — 중복 발송 차단 (DB 체크와 이중 보호)
+    concurrency:
+      group: briefing-${{ github.event.action || github.event.schedule || inputs.run_type || 'manual' }}
+      cancel-in-progress: false
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.run_type == 'pre' || inputs.run_type == 'intra1' || inputs.run_type == 'intra2' || inputs.run_type == 'close')) ||
       (github.event_name == 'repository_dispatch' && (github.event.action == 'pre_market' || github.event.action == 'intra1' || github.event.action == 'intra2' || github.event.action == 'close_market')) ||
@@ -123,35 +127,6 @@ jobs:
           DART_API_KEY:        ${{ secrets.DART_API_KEY }}
           PYTHONUTF8:          "1"
         run: python main.py --type ${{ steps.run_type.outputs.type }}
-
-  # ── DART 공시 알림 ────────────────────────────────────────────
-  dart-alert:
-    name: DART Alert
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: >-
-      (github.event_name == 'repository_dispatch' && github.event.action == 'dart_alert') ||
-      (github.event_name == 'workflow_dispatch' && inputs.run_type == 'dart')
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-      - run: pip install -r requirements.txt
-      - name: Run DART alert
-        env:
-          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
-          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
-          DART_API_KEY:        ${{ secrets.DART_API_KEY }}
-          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
-          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
-          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
-          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
-          PYTHONUTF8:          "1"
-        run: python main.py --type dart
 
   # ── 가격 알림 ─────────────────────────────────────────────────
   price-alert:

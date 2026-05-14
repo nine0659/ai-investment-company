@@ -27,6 +27,19 @@ def save_report(date: str, run_type: str, ceo_report: str,
     logger.info("리포트 저장 완료: %s %s", date, run_type)
 
 
+def already_ran_today(date: str, run_type: str) -> bool:
+    """오늘 날짜에 해당 run_type 리포트가 이미 DB에 저장됐으면 True (중복 실행 방지)."""
+    try:
+        with _conn() as c:
+            row = c.execute(
+                "SELECT 1 FROM reports WHERE date=? AND run_type=?",
+                (date, run_type),
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
 def format_report_for_db(state: dict) -> dict:
     return {
         "date":             state.get("date", ""),
