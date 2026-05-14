@@ -9,9 +9,8 @@ name: AI Investment Research Scheduler
 # 20:30 KST (Sun)      = 11:30 UTC (Sun)   ← 미국 주식 추천
 # 21:00 KST (1st Mon)  = 12:00 UTC (Mon)   ← 월간 학습 (매월 1일 UTC)
 #
-# ※ 1순위 트리거: cron-job.org → repository_dispatch (정확한 시간 보장)
-# ※ 2순위 트리거: GitHub Actions schedule (최대 수 시간 지연 가능, 백업용)
-#   → run_pipeline() 내 DB 중복 체크로 이중 발송 자동 방지
+# ※ 일간 브리핑 트리거: cron-job.org → repository_dispatch 전담 (GitHub schedule 백업 제거 — 수 시간 지연으로 저녁 오발송 문제)
+# ※ 주간·월간 트리거: GitHub Actions schedule (cron-job.org 미설정)
 #
 # DART 공시 알림은 별도 job을 제거하고 장전·장중·장마감 브리핑에 통합됩니다.
 # cron-job.org에서 호출할 event_type 목록:
@@ -31,12 +30,8 @@ on:
       - monthly_learning
       - us_invest
 
-    # ── 2순위: GitHub 자체 스케줄 (백업) ───────────────────────────
+    # ── 2순위: GitHub 자체 스케줄 (백업, 주간·월간만 — 일간 브리핑은 cron-job.org 전담) ──
   schedule:
-    - cron: '20 23 * * 0-4'
-    - cron: '0 1 * * 1-5'
-    - cron: '0 4 * * 1-5'
-    - cron: '50 6 * * 1-5'
     - cron: '0 11 * * 0'
     - cron: '30 11 * * 0'
     - cron: '0 12 1 * *'
@@ -74,8 +69,7 @@ jobs:
       cancel-in-progress: false
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.run_type == 'pre' || inputs.run_type == 'intra1' || inputs.run_type == 'intra2' || inputs.run_type == 'close')) ||
-      (github.event_name == 'repository_dispatch' && (github.event.action == 'pre_market' || github.event.action == 'intra1' || github.event.action == 'intra2' || github.event.action == 'close_market')) ||
-      (github.event_name == 'schedule' && (github.event.schedule == '20 23 * * 0-4' || github.event.schedule == '0 1 * * 1-5' || github.event.schedule == '0 4 * * 1-5' || github.event.schedule == '50 6 * * 1-5'))
+      (github.event_name == 'repository_dispatch' && (github.event.action == 'pre_market' || github.event.action == 'intra1' || github.event.action == 'intra2' || github.event.action == 'close_market'))
 
     steps:
       - name: Checkout
