@@ -39,17 +39,25 @@ def run(state: InvestmentState) -> InvestmentState:
         data = state.get("raw_market_data", {})
         lines = []
 
-        # KOSPI200 야간선물을 최상단에 별도 강조 표시
+        # KOSPI200 기준값을 최상단에 표시
         k200 = data.get("kospi200_futures")
         if k200:
             direction = "▲" if k200["change_pct"] >= 0 else "▼"
-            lines.append(
-                f"★ KOSPI200미니선물(야간): {k200['close']} "
-                f"{direction}{k200['change_pct']:+.2f}%  "
-                f"(고:{k200['high']} / 저:{k200['low']})"
-            )
+            if k200.get("is_index"):
+                lines.append(
+                    f"★ KOSPI200지수 전일종가(야간선물 기준): {k200['close']} "
+                    f"{direction}{k200['change_pct']:+.2f}%  "
+                    f"(고:{k200['high']} / 저:{k200['low']})  "
+                    f"※야간선물 방향은 아래 미국선물로 추정"
+                )
+            else:
+                lines.append(
+                    f"★ KOSPI200미니선물(야간): {k200['close']} "
+                    f"{direction}{k200['change_pct']:+.2f}%  "
+                    f"(고:{k200['high']} / 저:{k200['low']})"
+                )
         else:
-            lines.append("★ KOSPI200미니선물(야간): 수집 실패 — 미국 선물 연동으로 추정")
+            lines.append("★ KOSPI200 기준값: 수집 실패 — 미국 선물 연동으로 방향 추정")
 
         for k in _LABELS:
             if k == "kospi200_futures":

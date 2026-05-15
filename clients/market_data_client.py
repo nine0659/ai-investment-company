@@ -1,52 +1,38 @@
 import logging
-import re
 
-import requests
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-_NAVER_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
 
 def fetch_kospi200_futures() -> dict:
-    """KOSPI200 미니선물 전일 종가·전일대비 변화 수집 (야간선물 방향 파악용).
+    """KOSPI200 지수(전일종가)를 야간선물 방향 판단 기준값으로 반환.
 
-    소스: 네이버 금융 차트 API (일봉 3일) — 근월물 코드 101P6000
-    반환: {close, change, change_pct, high, low, symbol, name}
-    야간 세션(18:00~05:00 KST) 포함 전일 종가 기준으로 방향 판단.
+    야간선물(KRX 18:00~05:00 세션)은 무료 공개 API로 직접 수집 불가.
+    KOSPI200 지수 전일종가(^KS200)를 기준값으로 사용하며,
+    실제 야간선물 방향은 미국 선물(ES=F, NQ=F) 오버나잇 변화로 추정.
+    반환: {close, change, change_pct, high, low, symbol, name, is_index}
     """
     try:
-        resp = requests.get(
-            "https://fchart.stock.naver.com/siseJson.nhn",
-            params={"symbol": "101P6000", "requestType": "0", "count": "3", "timeframe": "day"},
-            headers=_NAVER_HEADERS,
-            timeout=8,
-        )
-        resp.raise_for_status()
-        # 응답 형식: [["20260514","open","high","low","close","volume"], ...]
-        rows = re.findall(
-            r'\["(\d{8})","([\d.]+)","([\d.]+)","([\d.]+)","([\d.]+)","(\d+)"\]',
-            resp.text,
-        )
-        if len(rows) >= 2:
-            latest  = rows[-1]
-            prev    = rows[-2]
-            close      = float(latest[4])
-            prev_close = float(prev[4])
-            change     = close - prev_close
-            change_pct = (change / prev_close * 100) if prev_close else 0
-            return {
-                "close":      round(close, 2),
-                "change":     round(change, 2),
-                "change_pct": round(change_pct, 2),
-                "high":       round(float(latest[2]), 2),
-                "low":        round(float(latest[3]), 2),
-                "symbol":     "101P6000",
-                "name":       "KOSPI200미니선물",
-            }
+        hist = yf.Ticker("^KS200").history(period="5d", interval="1d")
+        if len(hist) < 2:
+            return {}
+        close      = float(hist.iloc[-1]["Close"])
+        prev_close = float(hist.iloc[-2]["Close"])
+        change     = close - prev_close
+        change_pct = (change / prev_close * 100) if prev_close else 0
+        return {
+            "close":      round(close, 2),
+            "change":     round(change, 2),
+            "change_pct": round(change_pct, 2),
+            "high":       round(float(hist.iloc[-1]["High"]), 2),
+            "low":        round(float(hist.iloc[-1]["Low"]), 2),
+            "symbol":     "^KS200",
+            "name":       "KOSPI200지수(전일종가)",
+            "is_index":   True,
+        }
     except Exception as e:
-        logger.debug("KOSPI200 선물 조회 실패: %s", e)
+        logger.debug("KOSPI200 지수 조회 실패: %s", e)
     return {}
 
 TICKERS: dict[str, str] = {
