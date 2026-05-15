@@ -1,7 +1,53 @@
 import logging
+import re
+
+import requests
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+_NAVER_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+
+def fetch_kospi200_futures() -> dict:
+    """KOSPI200 미니선물 전일 종가·전일대비 변화 수집 (야간선물 방향 파악용).
+
+    소스: 네이버 금융 차트 API (일봉 3일) — 근월물 코드 101P6000
+    반환: {close, change, change_pct, high, low, symbol, name}
+    야간 세션(18:00~05:00 KST) 포함 전일 종가 기준으로 방향 판단.
+    """
+    try:
+        resp = requests.get(
+            "https://fchart.stock.naver.com/siseJson.nhn",
+            params={"symbol": "101P6000", "requestType": "0", "count": "3", "timeframe": "day"},
+            headers=_NAVER_HEADERS,
+            timeout=8,
+        )
+        resp.raise_for_status()
+        # 응답 형식: [["20260514","open","high","low","close","volume"], ...]
+        rows = re.findall(
+            r'\["(\d{8})","([\d.]+)","([\d.]+)","([\d.]+)","([\d.]+)","(\d+)"\]',
+            resp.text,
+        )
+        if len(rows) >= 2:
+            latest  = rows[-1]
+            prev    = rows[-2]
+            close      = float(latest[4])
+            prev_close = float(prev[4])
+            change     = close - prev_close
+            change_pct = (change / prev_close * 100) if prev_close else 0
+            return {
+                "close":      round(close, 2),
+                "change":     round(change, 2),
+                "change_pct": round(change_pct, 2),
+                "high":       round(float(latest[2]), 2),
+                "low":        round(float(latest[3]), 2),
+                "symbol":     "101P6000",
+                "name":       "KOSPI200미니선물",
+            }
+    except Exception as e:
+        logger.debug("KOSPI200 선물 조회 실패: %s", e)
+    return {}
 
 TICKERS: dict[str, str] = {
     # 미국 선물
@@ -181,7 +227,7 @@ def fetch_global_market_data() -> dict:
                 except Exception:
                     pass
 
-    # 선물 실시간 데이터 병합 (장전 브리핑 오버나잇 방향 반영)
+    # 미국 선물 실시간 데이터 병합 (장전 브리핑 오버나잇 방향 반영)
     try:
         futures_rt = fetch_futures_realtime()
         for sym, d in futures_rt.items():
@@ -196,6 +242,15 @@ def fetch_global_market_data() -> dict:
                     "symbol": sym, "realtime_pct": d["change_pct"],
                 }
     except Exception as e:
-        logger.debug("선물 실시간 병합 실패: %s", e)
+        logger.debug("미국 선물 실시간 병합 실패: %s", e)
+
+    # KOSPI200 야간선물 데이터 병합 (한국 시장 직접 선행 신호)
+    try:
+        k200 = fetch_kospi200_futures()
+        if k200:
+            result["kospi200_futures"] = k200
+            logger.debug("KOSPI200 야간선물 수집 완료: %s", k200)
+    except Exception as e:
+        logger.debug("KOSPI200 야간선물 병합 실패: %s", e)
 
     return result
