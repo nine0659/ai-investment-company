@@ -22,7 +22,7 @@ import agents.investment_committee   as investment_committee
 import agents.ceo_agent              as ceo_agent
 
 from clients.kis_client          import KISClient
-from clients.market_data_client  import fetch_global_market_data, fetch_kr_index_realtime
+from clients.market_data_client  import fetch_global_market_data, fetch_kr_index_realtime, check_data_freshness
 from clients.news_client         import fetch_all_news
 from clients.telegram_client     import send_message, send_error_alert
 from clients.us_stock_client     import fetch_us_top_movers
@@ -42,10 +42,17 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
 
     try:
         state["raw_market_data"] = fetch_global_market_data()
-        logger.info("[데이터수집] 글로벌 시장 완료")
+        freshness = check_data_freshness(state["raw_market_data"])
+        state["data_freshness"] = freshness
+        if freshness["warning"]:
+            logger.warning("[데이터수집] %s", freshness["warning"])
+            state["errors"].append(f"data_stale: {freshness['warning']}")
+        else:
+            logger.info("[데이터수집] 글로벌 시장 완료 — 데이터 기준: %s", freshness["label"])
     except Exception as e:
         logger.error("[데이터수집] 글로벌 실패: %s", e)
         state["raw_market_data"] = {}
+        state["data_freshness"] = {}
         state["errors"].append(f"collect_global: {e}")
 
     try:
@@ -242,6 +249,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "timestamp": now.isoformat(),
         "date": now.strftime("%Y-%m-%d"),
         "raw_market_data": {},
+        "data_freshness": {},
         "raw_kis_data": {},
         "raw_news_data": {},
         "us_hot_stocks": [],

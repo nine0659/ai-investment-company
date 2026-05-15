@@ -1,8 +1,12 @@
 import logging
+from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+_KST = ZoneInfo("Asia/Seoul")
 
 
 def fetch_kospi200_futures() -> dict:
@@ -30,6 +34,7 @@ def fetch_kospi200_futures() -> dict:
             "symbol":     "^KS200",
             "name":       "KOSPI200지수(전일종가)",
             "is_index":   True,
+            "data_date":  hist.index[-1].strftime("%Y-%m-%d"),
         }
     except Exception as e:
         logger.debug("KOSPI200 지수 조회 실패: %s", e)
@@ -88,6 +93,7 @@ def _parse(ticker: yf.Ticker) -> dict:
             "high":       round(float(latest["High"]), 4),
             "low":        round(float(latest["Low"]), 4),
             "volume":     int(latest.get("Volume", 0)),
+            "data_date":  hist.index[-1].strftime("%Y-%m-%d"),
         }
     except Exception as e:
         logger.debug("ticker parse error: %s", e)
@@ -240,3 +246,86 @@ def fetch_global_market_data() -> dict:
         logger.debug("KOSPI200 야간선물 병합 실패: %s", e)
 
     return result
+
+
+# ── 핵심 지표 — 신선도 점검 대상
+_FRESHNESS_KEYS = [
+    "sp500_futures", "nasdaq_futures", "kospi", "usd_krw", "vix", "us10y",
+]
+
+
+def _biz_days_ago(data_date: date, today: date) -> int:
+    """data_date 가 today 기준 몇 영업일(평일) 전인지 반환."""
+    if data_date >= today:
+        return 0
+    count = 0
+    d = today
+    while d > data_date:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:
+            count += 1
+    return count
+
+
+def check_data_freshness(raw_market_data: dict) -> dict:
+    """수집된 시장 데이터의 신선도를 점검.
+
+    반환:
+      latest_date  — 수집된 데이터 중 가장 최신 날짜 (str)
+      biz_days_old — 오늘(KST) 기준 영업일 수 (0=오늘, 1=전일 정상, 2+=비정상)
+      stale_keys   — 2거래일 이상 오래된 핵심 지표 목록
+      label        — 브리핑 첫 줄에 쓸 날짜 레이블 (예: "2026-05-14(전일)")
+      warning      — 이상 감지 시 경고 문자열, 정상이면 ""
+    """
+    today = date.today()  # 로컬(KST) 오늘 날짜
+
+    dates_found: list[date] = []
+    stale_keys: list[str] = []
+
+    for key in _FRESHNESS_KEYS:
+        d = raw_market_data.get(key, {})
+        dd = d.get("data_date")
+        if not dd:
+            continue
+        try:
+            parsed = date.fromisoformat(dd)
+            dates_found.append(parsed)
+            age = _biz_days_ago(parsed, today)
+            if age >= 2:
+                stale_keys.append(f"{key}({dd})")
+        except ValueError:
+            pass
+
+    if not dates_found:
+        return {
+            "latest_date":  "",
+            "biz_days_old": -1,
+            "stale_keys":   [],
+            "label":        "날짜 미확인",
+            "warning":      "⚠️ 시장 데이터 날짜를 확인할 수 없습니다.",
+        }
+
+    latest = max(dates_found)
+    age    = _biz_days_ago(latest, today)
+
+    if age == 0:
+        label = f"{latest}(오늘)"
+    elif age == 1:
+        label = f"{latest}(전일 — 정상)"
+    else:
+        label = f"{latest}({age}거래일 전 ⚠️)"
+
+    warning = ""
+    if stale_keys:
+        warning = (
+            f"⚠️ 데이터 신선도 경고: {', '.join(stale_keys)} 가 "
+            f"2거래일 이상 오래됨 — yfinance API 오류 또는 공휴일 연속 가능성"
+        )
+
+    return {
+        "latest_date":  str(latest),
+        "biz_days_old": age,
+        "stale_keys":   stale_keys,
+        "label":        label,
+        "warning":      warning,
+    }

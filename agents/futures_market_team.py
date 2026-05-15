@@ -70,7 +70,18 @@ def run(state: InvestmentState) -> InvestmentState:
                 base += f"  ★오버나잇현재: {d['realtime_current']} ({d['realtime_pct']:+.2f}%)"
             lines.append(base)
 
-        result = chat(_SYSTEM, "현재 시장 데이터:\n" + "\n".join(lines))
+        # 데이터 신선도 레이블 — 첫 줄에 기준 날짜 명시
+        freshness = state.get("data_freshness", {})
+        freshness_label = freshness.get("label", "")
+        freshness_warning = freshness.get("warning", "")
+        header_lines = []
+        if freshness_label:
+            header_lines.append(f"📅 데이터 기준: {freshness_label}")
+        if freshness_warning:
+            header_lines.append(freshness_warning)
+        header = ("\n".join(header_lines) + "\n\n") if header_lines else ""
+
+        result = chat(_SYSTEM, header + "현재 시장 데이터:\n" + "\n".join(lines))
         state["futures_report"] = result
         logger.info("[선물팀] 완료")
     except Exception as e:
