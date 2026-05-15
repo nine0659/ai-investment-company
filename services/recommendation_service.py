@@ -23,8 +23,9 @@ _HEADER_RE = re.compile(r"([가-힣A-Za-z()·&·\s]{1,25}?)\s*\((\d{6})\)")
 _ENTRY1_RE = re.compile(r"1차[^\n]{0,30}?([\d,]{4,})\s*원")
 # 구형 단일 진입가 ("진입가 240,000원" / "진입: 240,000원")
 _ENTRY_OLD_RE = re.compile(r"진입[가격：: ]{0,5}([\d,]{4,})\s*원")
-_STOP_RE   = re.compile(r"손절[가격：: ·]{0,5}([\d,]{4,})\s*원")
-_TARGET_RE = re.compile(r"목표[가격：: ·]{0,5}([\d,]{4,})\s*원")
+_STOP_RE      = re.compile(r"손절[가격：: ·]{0,5}([\d,]{4,})\s*원")
+_TARGET_RE    = re.compile(r"목표[가격：: ·]{0,5}([\d,]{4,})\s*원")
+_RATIONALE_RE = re.compile(r"선택 이유[：:]\s*([^\n]{10,200})")
 
 
 def _extract_price(pattern: re.Pattern, text: str) -> int | None:
@@ -58,16 +59,19 @@ def parse_recommendations(report_text: str) -> list[dict]:
         block = "\n".join(lines[i: i + 10])
 
         # 1차 진입가 우선, 없으면 구형 진입가
-        entry = _extract_price(_ENTRY1_RE, block) or _extract_price(_ENTRY_OLD_RE, block)
-        stop  = _extract_price(_STOP_RE, block)
+        entry  = _extract_price(_ENTRY1_RE, block) or _extract_price(_ENTRY_OLD_RE, block)
+        stop   = _extract_price(_STOP_RE, block)
         target = _extract_price(_TARGET_RE, block)
 
         if entry and stop and target and entry > 0 and stop > 0 and target > 0:
             seen_codes.add(code)
+            # 선택 이유 추출 (없으면 빈 문자열)
+            rm = _RATIONALE_RE.search(block)
+            rationale = rm.group(1).strip() if rm else ""
             results.append({
                 "name": name, "code": code,
                 "entry_price": entry, "stop_price": stop,
-                "target_price": target, "rationale": "",
+                "target_price": target, "rationale": rationale,
             })
 
     return results
@@ -139,7 +143,11 @@ def get_recent_recommendations(days: int = 7) -> list[dict]:
 
 # ── 종가 업데이트 ────────────────────────────────────────────────
 
-def _classify(return_pct: float) -> str:
+def _classify(return_pct: float, close: float = 0, stop_price: int = 0, target_price: int = 0) -> str:
+    if stop_price and close and close <= stop_price:
+        return "손절"
+    if target_price and close and close >= target_price:
+        return "목표달성"
     if return_pct >= 2.0:
         return "성공"
     if return_pct <= -2.0:
@@ -166,7 +174,9 @@ def update_close_prices(date: str, kis) -> list[dict]:
             if not close or not rec["entry_price"]:
                 continue
             ret = (close - rec["entry_price"]) / rec["entry_price"] * 100
-            result = _classify(ret)
+            result = _classify(ret, close=close,
+                               stop_price=rec.get("stop_price", 0),
+                               target_price=rec.get("target_price", 0))
             with _conn() as c:
                 c.execute(
                     "UPDATE stock_recommendations "
@@ -183,6 +193,38 @@ def update_close_prices(date: str, kis) -> list[dict]:
             logger.warning("종가 업데이트 실패 (%s): %s", rec["code"], e)
 
     return updated
+
+
+def get_performance_stats(days: int = 30) -> dict:
+    """최근 N일 추천 성과 통계 반환.
+    반환: {total, win, loss, neutral, win_rate, avg_return, max_loss, profit_factor}
+    """
+    recs = get_recent_recommendations(days=days)
+    empty = {"total": 0, "win": 0, "loss": 0, "neutral": 0,
+             "win_rate": 0.0, "avg_return": 0.0, "max_loss": 0.0, "profit_factor": 0.0}
+    if not recs:
+        return empty
+    returns = [r["return_pct"] for r in recs if r.get("return_pct") is not None]
+    if not returns:
+        return {**empty, "total": len(recs)}
+    wins    = [r for r in returns if r >= 2.0]
+    losses  = [r for r in returns if r <= -2.0]
+    neutral = len(returns) - len(wins) - len(losses)
+    avg_ret = sum(returns) / len(returns)
+    max_loss = min(returns)
+    total_profit = sum(r for r in returns if r > 0)
+    total_loss   = abs(sum(r for r in returns if r < 0))
+    profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else 0.0
+    return {
+        "total":         len(returns),
+        "win":           len(wins),
+        "loss":          len(losses),
+        "neutral":       neutral,
+        "win_rate":      round(len(wins) / len(returns) * 100, 1),
+        "avg_return":    round(avg_ret, 2),
+        "max_loss":      round(max_loss, 2),
+        "profit_factor": profit_factor,
+    }
 
 
 def format_returns_for_report(results: list[dict]) -> str:

@@ -38,8 +38,8 @@ def run_monthly_analysis() -> str:
     now  = datetime.now(_KST)
     recs = get_recent_recommendations(days=35)  # 지난달 포함
 
-    if not recs:
-        logger.info("[학습] 분석 데이터 없음")
+    if len(recs) < 5:
+        logger.info("[학습] 분석 데이터 부족 (%d건) — 최소 5건 필요, 스킵", len(recs))
         return ""
 
     rec_text = "\n".join(

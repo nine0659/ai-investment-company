@@ -7,7 +7,7 @@ from clients.kis_client import KISClient
 from clients.market_data_client import fetch_kr_stock_technicals
 from services.recommendation_service import (
     parse_recommendations, save_recommendations,
-    update_close_prices, format_returns_for_report,
+    update_close_prices, format_returns_for_report, get_performance_stats,
 )
 from config.settings import RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE, TZ
 
@@ -268,6 +268,7 @@ def run(state: InvestmentState) -> InvestmentState:
         candidates_text = "\n".join(
             f"- {c.get('name', c.get('code', ''))}: {c.get('change_pct', 0):+.1f}% "
             f"(점수 {c.get('score', 0)})"
+            + (" ⚠️미국섹터추정" if c.get("source") == "US_fallback" else "")
             for c in state.get("candidates", [])[:5]
         ) or "후보 없음"
 
@@ -344,6 +345,20 @@ def run(state: InvestmentState) -> InvestmentState:
                 logger.warning("[CEO] 실시간 가격 조회 실패: %s", e)
 
         if run_type == RUN_TYPE_CLOSE:
+            # 30일 누적 성과 통계 주입 — CEO가 추천 성향 자기보정에 활용
+            try:
+                stats = get_performance_stats(days=30)
+                if stats["total"] >= 3:
+                    context_parts.append(
+                        f"\n[최근 30일 추천 성과 통계]\n"
+                        f"총 {stats['total']}건 | 성공 {stats['win']}건 | 실패 {stats['loss']}건 | "
+                        f"승률 {stats['win_rate']}% | 평균수익률 {stats['avg_return']:+.2f}% | "
+                        f"최대손실 {stats['max_loss']:.2f}% | 손익비 {stats['profit_factor']:.2f}\n"
+                        f"→ 승률 50% 미만이면 확신도 '하' 종목 추천 자제, 조건 기반으로만 언급"
+                    )
+            except Exception as e:
+                logger.debug("[CEO] 성과 통계 주입 실패: %s", e)
+
             # 오늘 한국 시장 실제 움직임 — CEO가 '무엇이 실제로 움직였는가'를 파악하는 핵심 데이터
             if state.get("korea_spot_report"):
                 context_parts.append(

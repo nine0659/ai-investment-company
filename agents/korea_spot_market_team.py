@@ -97,6 +97,7 @@ def _extract_candidates(data: dict, us_sector_data: dict | None = None) -> list[
                     "change_pct": chg,
                     "market":     market,
                     "score":      0,
+                    "source":     "KIS",
                 }
             elif name:
                 seen[code]["name"] = name  # 더 정확한 이름으로 갱신
@@ -126,6 +127,7 @@ def _extract_candidates(data: dict, us_sector_data: dict | None = None) -> list[
                             "change_pct": 0.0,
                             "market":     s.get("market", "KOSPI"),
                             "score":      20,
+                            "source":     "US_fallback",
                         })
                         existing_codes.add(s["code"])
             logger.info("[한국현물팀] KIS 데이터 부족 — 미국 강세 섹터 기반 후보 보완: %d개", len(result))

@@ -2,7 +2,7 @@ import logging
 from graph.state import InvestmentState
 from clients.openai_client import chat
 from services.review_service import get_last_close_report, save_review
-from services.recommendation_service import get_recent_recommendations
+from services.recommendation_service import get_recent_recommendations, get_performance_stats
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,19 @@ def run(state: InvestmentState) -> InvestmentState:
         else:
             rec_text = "최근 추천 종목 수익률: 데이터 없음"
 
-        context_parts = [rec_text]
+        # 30일 누적 통계 — 복기 AI가 패턴을 판단하는 기반 데이터
+        stats = get_performance_stats(days=30)
+        if stats["total"] >= 3:
+            stats_text = (
+                f"[최근 30일 추천 성과 통계]\n"
+                f"총 {stats['total']}건 | 성공 {stats['win']}건 | 실패 {stats['loss']}건 | "
+                f"승률 {stats['win_rate']}% | 평균수익률 {stats['avg_return']:+.2f}% | "
+                f"최대손실 {stats['max_loss']:.2f}% | 손익비 {stats['profit_factor']:.2f}"
+            )
+        else:
+            stats_text = "[최근 30일 추천 성과 통계] 데이터 부족 (3건 미만)"
+
+        context_parts = [stats_text, rec_text]
 
         if last:
             context_parts.append(

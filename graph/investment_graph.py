@@ -266,6 +266,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "candidates": [],
         "sector_scores": [],
         "risks": [],
+        "risk_level": "중간",
         "market_direction": "",
         "review_report": "",
         "errors": [],

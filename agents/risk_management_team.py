@@ -1,8 +1,11 @@
 import logging
+import re
 from graph.state import InvestmentState
 from clients.openai_client import chat
 
 logger = logging.getLogger(__name__)
+
+_RISK_LEVEL_RE = re.compile(r"종합 리스크 레벨[：:\s]*(높음|중간|낮음)")
 
 _SYSTEM = """당신은 리스크 관리 전문가입니다.
 현재 시장 상황에서 투자 리스크를 식별하고 경고 신호를 제공하세요.
@@ -32,11 +35,25 @@ def run(state: InvestmentState) -> InvestmentState:
         )
         result = chat(_SYSTEM, context, max_tokens=2000)
         state["risk_report"] = result
-        state["risks"] = [
+
+        # 구조화된 리스크 레벨 추출
+        m = _RISK_LEVEL_RE.search(result)
+        state["risk_level"] = m.group(1) if m else "중간"
+
+        # 리스크 요인 라인 추출 — 번호 목록("1.", "2.", "3.") 우선, 없으면 키워드 필터
+        numbered = [
             line.strip() for line in result.split("\n")
-            if any(kw in line for kw in ["리스크", "경고", "주의", "위험"])
-        ][:5]
-        logger.info("[리스크팀] 완료")
+            if re.match(r"^\d+\.", line.strip())
+        ]
+        if numbered:
+            state["risks"] = numbered[:5]
+        else:
+            state["risks"] = [
+                line.strip() for line in result.split("\n")
+                if any(kw in line for kw in ["리스크", "경고", "주의", "위험"])
+            ][:5]
+
+        logger.info("[리스크팀] 완료 — 레벨: %s, 요인 %d개", state["risk_level"], len(state["risks"]))
     except Exception as e:
         logger.error("[리스크팀] 실패: %s", e)
         state["risk_report"] = "분석 실패"

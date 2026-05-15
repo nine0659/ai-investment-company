@@ -1,9 +1,13 @@
 import logging
+import re
 from graph.state import InvestmentState
 from clients.openai_client import chat
 from services.learning_service import load_learned_weights
 
 logger = logging.getLogger(__name__)
+
+# "시장 방향성: 강한상승" 형식에서 추출 — 콜론 뒤 공백 포함, 전후 오염 제거
+_DIR_LABEL_RE = re.compile(r"시장 방향성[：:\s]+([강한상승하락중립]+)")
 
 _SYSTEM = """당신은 투자위원회 의장입니다.
 각 분석팀의 리포트를 종합하여 오늘 한국 시장 투자 의사결정을 도출하세요.
@@ -65,10 +69,15 @@ def run(state: InvestmentState) -> InvestmentState:
         context = "\n\n".join(parts)
         result = chat(_SYSTEM, context, max_tokens=2500)
         state["committee_report"] = result
-        state["market_direction"] = next(
-            (d for d in _DIRECTIONS if d in result), "중립"
-        )
-        logger.info("[투자위원회] 완료 — 방향: %s", state["market_direction"])
+        # "시장 방향성: XXX" 라벨 우선 추출, 없으면 첫 발견 단어로 폴백
+        m = _DIR_LABEL_RE.search(result)
+        if m:
+            label = m.group(1).strip()
+            direction = next((d for d in _DIRECTIONS if d in label), "중립")
+        else:
+            direction = next((d for d in _DIRECTIONS if d in result), "중립")
+        state["market_direction"] = direction
+        logger.info("[투자위원회] 완료 — 방향: %s", direction)
     except Exception as e:
         logger.error("[투자위원회] 실패: %s", e)
         state["committee_report"] = "위원회 의견 생성 실패"

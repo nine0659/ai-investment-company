@@ -34,6 +34,7 @@ class InvestmentState(TypedDict):
     candidates: list[dict]
     sector_scores: list[dict]
     risks: list[str]
+    risk_level: str           # 높음 / 중간 / 낮음
     market_direction: str
 
     errors: list[str]
