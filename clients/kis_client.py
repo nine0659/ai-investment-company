@@ -221,7 +221,8 @@ class KISClient:
                 def _int(k):   return int(float(o.get(k) or 0))
                 def _float(k): return float(o.get(k) or 0)
 
-                price = _int("stck_prpr")
+                # 장 마감·개장 전에는 stck_prpr=0 → 전일 종가 fallback
+                price = _int("stck_prpr") or _int("stck_prdy_clpr")
                 if price == 0:
                     continue  # 빈 응답 → 다음 market 시도
                 return {
