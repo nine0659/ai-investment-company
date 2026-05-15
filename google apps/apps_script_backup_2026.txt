@@ -1,0 +1,755 @@
+/***********************
+ * 설정 - 여기만 수정
+ ***********************/
+const CONFIG = {
+  OPENAI_API_KEY: 'YOUR_OPENAI_API_KEY',         // ← 실제 키는 코드에 직접 입력하거나 PropertiesService 사용
+  TELEGRAM_BOT_TOKEN: 'YOUR_TELEGRAM_BOT_TOKEN', // ← BotFather에서 발급
+  TELEGRAM_CHAT_ID: 'YOUR_TELEGRAM_CHAT_ID',
+
+  KIS_APP_KEY: 'YOUR_KIS_APP_KEY',
+  KIS_APP_SECRET: 'YOUR_KIS_APP_SECRET',
+
+  MODEL: 'gpt-4.1-mini',
+
+  // 실전투자: https://openapi.koreainvestment.com:9443
+  // 모의투자: https://openapivts.koreainvestment.com:29443
+  KIS_BASE_URL: 'https://openapi.koreainvestment.com:9443'
+};
+
+
+/***********************
+ * 0. 평일 체크 (공통 가드)
+ * GAS timeBased 트리거는 평일/주말 구분이 없으므로
+ * 각 함수 진입 시 직접 체크해야 합니다.
+ ***********************/
+function _isWeekday_() {
+  const day = new Date().getDay(); // 0=일, 6=토
+  return day >= 1 && day <= 5;
+}
+
+
+/***********************
+ * 1. 장전 브리핑
+ ***********************/
+function runMorningBriefing() {
+  if (!_isWeekday_()) {
+    Logger.log('주말 — 장전 브리핑 스킵');
+    return;
+  }
+  const snapshot = buildMarketSnapshot_();
+  const prompt = buildMorningPrompt_(snapshot);
+  const report = callGPT_(prompt);
+
+  sendTelegram_('📊 장전 AI 브리핑\n\n' + report);
+  saveRecommendationLog_(snapshot, report, 'morning');
+}
+
+
+/***********************
+ * 2. 장중 시그널
+ ***********************/
+function runIntradaySignal() {
+  if (!_isWeekday_()) {
+    Logger.log('주말 — 장중 시그널 스킵');
+    return;
+  }
+  const snapshot = buildMarketSnapshot_();
+  const prompt = buildIntradayPrompt_(snapshot);
+  const report = callGPT_(prompt);
+
+  sendTelegram_('📈 장중 AI 시그널\n\n' + report);
+  saveRecommendationLog_(snapshot, report, 'intraday');
+}
+
+
+/***********************
+ * 3. 장마감 복기
+ ***********************/
+function runClosingReview() {
+  if (!_isWeekday_()) {
+    Logger.log('주말 — 장마감 복기 스킵');
+    return;
+  }
+  const snapshot = buildMarketSnapshot_();
+  const history = getRecentRecommendationHistory_();
+  const prompt = buildClosingReviewPrompt_(snapshot, history);
+  const report = callGPT_(prompt);
+
+  sendTelegram_('📌 장마감 AI 복기\n\n' + report);
+  saveReviewLog_(snapshot, report);
+}
+
+
+/***********************
+ * 4. 시장 스냅샷 생성
+ ***********************/
+function buildMarketSnapshot_() {
+  const date = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm');
+  const kospiNight = getKospiFutures_();
+  const news = getNews_();
+
+  const volumeRankKospi = getKisVolumeRank_('0001');
+  Utilities.sleep(250);
+  const volumeRankKosdaq = getKisVolumeRank_('1001');
+  Utilities.sleep(250);
+
+  const allRankStocks = mergeAndNormalizeStocks_([].concat(volumeRankKospi, volumeRankKosdaq));
+  const sectorStrength = calculateSectorStrength_(allRankStocks);
+  const volumeSurge = allRankStocks
+    .filter(s => s.volumeRatio >= 1.2 || s.tradingValue >= 300)
+    .sort((a, b) => b.tradingValue - a.tradingValue)
+    .slice(0, 15);
+
+  const gainers = allRankStocks
+    .filter(s => s.changePercent !== null && s.changePercent >= 2)
+    .sort((a, b) => b.changePercent - a.changePercent)
+    .slice(0, 15);
+
+  const leaders = allRankStocks
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 15);
+
+  return {
+    date,
+    kospiNight,
+    news,
+    allRankStocks,
+    volumeSurge,
+    gainers,
+    leaders,
+    sectorStrength,
+    feedback: getAiFeedbackSummary_()
+  };
+}
+
+
+/***********************
+ * 5. 한국투자 토큰
+ ***********************/
+function getKisAccessToken_() {
+  const props = PropertiesService.getScriptProperties();
+  const cachedToken = props.getProperty('KIS_ACCESS_TOKEN');
+  const expiresAt = Number(props.getProperty('KIS_TOKEN_EXPIRES_AT') || 0);
+  const now = Date.now();
+
+  if (cachedToken && expiresAt && now < expiresAt - 60000) {
+    return cachedToken;
+  }
+
+  const url = CONFIG.KIS_BASE_URL + '/oauth2/tokenP';
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({
+      grant_type: 'client_credentials',
+      appkey: CONFIG.KIS_APP_KEY,
+      appsecret: CONFIG.KIS_APP_SECRET
+    }),
+    muteHttpExceptions: true
+  });
+
+  const code = response.getResponseCode();
+  const text = response.getContentText();
+
+  if (code !== 200) {
+    throw new Error('한국투자 토큰 발급 오류: ' + code + ' / ' + text);
+  }
+
+  const json = JSON.parse(text);
+  const token = json.access_token;
+  const expiresIn = Number(json.expires_in || 86400);
+
+  props.setProperty('KIS_ACCESS_TOKEN', token);
+  props.setProperty('KIS_TOKEN_EXPIRES_AT', String(now + expiresIn * 1000));
+
+  return token;
+}
+
+
+/***********************
+ * 6. 한국투자 API 공통 호출
+ ***********************/
+function kisGet_(path, trId, params) {
+  const token = getKisAccessToken_();
+  const query = Object.keys(params)
+    .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k]))
+    .join('&');
+
+  const url = CONFIG.KIS_BASE_URL + path + '?' + query;
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: {
+      authorization: 'Bearer ' + token,
+      appkey: CONFIG.KIS_APP_KEY,
+      appsecret: CONFIG.KIS_APP_SECRET,
+      tr_id: trId,
+      custtype: 'P'
+    },
+    muteHttpExceptions: true
+  });
+
+  const code = response.getResponseCode();
+  const text = response.getContentText();
+
+  if (code !== 200) {
+    Logger.log('KIS API 오류: ' + path + ' / ' + code + ' / ' + text);
+    return [];
+  }
+
+  const json = JSON.parse(text);
+  if (json.rt_cd && json.rt_cd !== '0') {
+    Logger.log('KIS API 응답 오류: ' + path + ' / ' + text);
+    return [];
+  }
+
+  if (Array.isArray(json.output)) return json.output;
+  if (Array.isArray(json.output1)) return json.output1;
+  return [];
+}
+
+
+/***********************
+ * 7. 거래량/거래대금 순위
+ ***********************/
+function getKisVolumeRank_(marketCode) {
+  const rows = kisGet_(
+    '/uapi/domestic-stock/v1/quotations/volume-rank',
+    'FHPST01710000',
+    {
+      FID_COND_MRKT_DIV_CODE: 'J',
+      FID_COND_SCR_DIV_CODE: '20171',
+      FID_INPUT_ISCD: marketCode,
+      FID_DIV_CLS_CODE: '0',
+      FID_BLNG_CLS_CODE: '0',
+      FID_TRGT_CLS_CODE: '111111111',
+      FID_TRGT_EXLS_CLS_CODE: '0000000000',
+      FID_INPUT_PRICE_1: '0',
+      FID_INPUT_PRICE_2: '0',
+      FID_VOL_CNT: '0',
+      FID_INPUT_DATE_1: '0'
+    }
+  );
+
+  return rows.map(r => normalizeKisRankRow_(r));
+}
+
+
+/***********************
+ * 8. KIS 데이터 정규화
+ ***********************/
+function normalizeKisRankRow_(r) {
+  const name = pick_(r, ['hts_kor_isnm', 'prdt_name', 'kor_isnm']);
+  const code = pick_(r, ['mksc_shrn_iscd', 'stck_shrn_iscd', 'pdno']);
+  const price = num_(pick_(r, ['stck_prpr', 'stck_prpr']));
+  const changePercent = num_(pick_(r, ['prdy_ctrt', 'prdy_ctrt']));
+  const volume = num_(pick_(r, ['acml_vol', 'acml_vol']));
+  const prevVolume = num_(pick_(r, ['prdy_vol', 'prdy_vol']));
+  const volumeRatio = prevVolume > 0 ? round2_(volume / prevVolume) : 0;
+  const tradingValueRaw = num_(pick_(r, ['acml_tr_pbmn', 'acml_tr_pbmn']));
+  const tradingValue = Math.round(tradingValueRaw / 100000000);
+
+  const sector = guessSector_(name);
+  const score = round2_(
+    Math.max(0, changePercent || 0) * 12 +
+    Math.min(volumeRatio * 10, 35) +
+    Math.min(tradingValue / 100, 45)
+  );
+
+  return {
+    name,
+    code,
+    sector,
+    price,
+    changePercent,
+    volume,
+    prevVolume,
+    volumeRatio,
+    tradingValue,
+    score
+  };
+}
+
+function mergeAndNormalizeStocks_(stocks) {
+  const map = {};
+
+  stocks.forEach(s => {
+    if (!s || !s.code || !s.name) return;
+
+    if (!map[s.code]) {
+      map[s.code] = s;
+    } else {
+      map[s.code].tradingValue = Math.max(map[s.code].tradingValue || 0, s.tradingValue || 0);
+      map[s.code].score = Math.max(map[s.code].score || 0, s.score || 0);
+    }
+  });
+
+  return Object.keys(map).map(k => map[k]);
+}
+
+
+/***********************
+ * 9. 섹터 추정/강도 분석
+ ***********************/
+function guessSector_(name) {
+  const n = String(name || '');
+
+  if (/삼성전자|하이닉스|반도체|한미|이수페타시스|리노|ISC|DB하이텍|원익|피에스케이|테크윙/.test(n)) return '반도체';
+  if (/한화에어로|LIG|현대로템|항공우주|방산|풍산|빅텍|스페코/.test(n)) return '방산';
+  if (/두산에너빌리티|일렉트릭|LS|효성중공업|원전|전력|전선|대한전선|제룡/.test(n)) return '원전/전력';
+  if (/에코프로|엘앤에프|포스코퓨처|LG에너지|삼성SDI|금양|천보|2차전지|배터리/.test(n)) return '2차전지';
+  if (/로보|AI|고영|알체라|솔트룩스|마음AI|레인보우/.test(n)) return 'AI/로봇';
+  if (/바이오|셀트리온|삼성바이오|알테오젠|유한양행|HLB|리가켐/.test(n)) return '바이오';
+  if (/조선|중공업|한화오션|현대미포|HD현대중공업/.test(n)) return '조선';
+  if (/자동차|현대차|기아|모비스|HL만도/.test(n)) return '자동차';
+  if (/금융|은행|지주|증권|보험/.test(n)) return '금융';
+  if (/엔터|하이브|JYP|와이지|에스엠/.test(n)) return '엔터';
+  return '기타';
+}
+
+function calculateSectorStrength_(stocks) {
+  const sectors = {};
+
+  stocks.forEach(s => {
+    if (!sectors[s.sector]) {
+      sectors[s.sector] = {
+        sector: s.sector,
+        count: 0,
+        avgChange: 0,
+        avgVolumeRatio: 0,
+        totalTradingValue: 0,
+        score: 0
+      };
+    }
+
+    sectors[s.sector].count += 1;
+    sectors[s.sector].avgChange += s.changePercent || 0;
+    sectors[s.sector].avgVolumeRatio += s.volumeRatio || 0;
+    sectors[s.sector].totalTradingValue += s.tradingValue || 0;
+  });
+
+  return Object.keys(sectors).map(k => {
+    const sec = sectors[k];
+    sec.avgChange = round2_(sec.avgChange / sec.count);
+    sec.avgVolumeRatio = round2_(sec.avgVolumeRatio / sec.count);
+    sec.score = round2_(sec.avgChange * 10 + sec.avgVolumeRatio * 12 + Math.min(sec.totalTradingValue / 300, 45));
+    return sec;
+  }).sort((a, b) => b.score - a.score);
+}
+
+
+/***********************
+ * 10. 야간선물/뉴스
+ ***********************/
+function getKospiFutures_() {
+  try {
+    const html = UrlFetchApp.fetch('https://www.investing.com/indices/kospi-200-futures', {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    }).getContentText();
+
+    const match = html.match(/(-?\d+(?:\.\d+)?)\s*%/);
+    if (match && match[1]) return Number(match[1]);
+  } catch (e) {}
+
+  return null;
+}
+
+function getNews_() {
+  try {
+    const queries = [
+      '한국 증시',
+      '코스피 거래대금 급등주',
+      '코스닥 급등주',
+      '반도체 방산 원전 2차전지',
+      '미국 증시 나스닥 금리 환율'
+    ];
+
+    let allNews = [];
+
+    queries.forEach(q => {
+      const url = 'https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=ko&gl=KR&ceid=KR:ko';
+      const xml = UrlFetchApp.fetch(url).getContentText();
+      const items = xml.match(/<title>(.*?)<\/title>/g) || [];
+
+      for (let i = 1; i < Math.min(items.length, 4); i++) {
+        allNews.push(decodeHtml_(items[i].replace(/<\/?title>/g, '')));
+      }
+    });
+
+    return [...new Set(allNews)].slice(0, 16).join('\n');
+  } catch (e) {
+    return '뉴스 자동 수집 실패';
+  }
+}
+
+
+/***********************
+ * 11. 프롬프트
+ ***********************/
+function buildMorningPrompt_(snapshot) {
+  return `
+당신은 한국 주식시장 단타 트레이딩 에이전트입니다.
+반드시 한국어 존댓말로 작성하세요.
+
+[시장 데이터]
+- 시간: ${snapshot.date}
+- 코스피200 야간선물: ${snapshot.kospiNight === null ? '수집 실패' : snapshot.kospiNight + '%'}
+
+[실제 한국투자 OpenAPI 기반 거래대금/거래량 후보]
+${formatStockList_(snapshot.volumeSurge)}
+
+[급등 후보]
+${formatStockList_(snapshot.gainers)}
+
+[종합 대장 후보]
+${formatStockList_(snapshot.leaders)}
+
+[섹터 강도]
+${formatSectorList_(snapshot.sectorStrength)}
+
+[뉴스]
+${snapshot.news}
+
+[최근 복기/튜닝 메모]
+${snapshot.feedback}
+
+[작성 형식]
+1. 전일 한국시장 야간선물 분석
+2. 오늘 시장 방향성
+3. 오늘 돈이 몰릴 가능성이 높은 섹터 TOP 3
+4. 오늘 대장주 후보 TOP 5
+5. 종목별 진입 조건
+6. 손절 기준
+7. 장초 체크포인트
+8. 피해야 할 종목 유형
+
+[중요 규칙]
+- 실제 데이터에 있는 종목만 추천하세요.
+- 가격을 임의로 만들지 마세요.
+- 진입포인트는 가격보다 조건 중심으로 작성하세요.
+- 확정 표현 금지, 조건부 시나리오로 작성하세요.
+`;
+}
+
+function buildIntradayPrompt_(snapshot) {
+  return `
+당신은 한국 주식 장중 단타 시그널 분석가입니다.
+반드시 한국어 존댓말로 작성하세요.
+
+[현재 시간]
+${snapshot.date}
+
+[거래대금/거래량 급증 후보]
+${formatStockList_(snapshot.volumeSurge)}
+
+[급등 후보]
+${formatStockList_(snapshot.gainers)}
+
+[섹터 강도]
+${formatSectorList_(snapshot.sectorStrength)}
+
+[뉴스]
+${snapshot.news}
+
+[작성 형식]
+1. 지금 장중 분위기
+2. 지금 가장 강한 섹터
+3. 장중 관심 종목 TOP 3
+4. 지금 진입 가능/대기 구분
+5. 손절 기준
+6. 추격매수 경고
+`;
+}
+
+function buildClosingReviewPrompt_(snapshot, history) {
+  return `
+당신은 한국 주식 트레이딩 복기 에이전트입니다.
+
+[오늘 대장 후보]
+${formatStockList_(snapshot.leaders)}
+
+[섹터 강도]
+${formatSectorList_(snapshot.sectorStrength)}
+
+[최근 추천 기록]
+${history}
+
+아래 형식으로 복기하세요.
+
+1. 오늘 강했던 섹터
+2. 오늘 약했던 섹터
+3. 아침 추천이 맞았을 가능성이 높은 부분
+4. 틀렸을 가능성이 높은 부분
+5. 다음 리포트에 반영할 개선점
+6. 내일 가중치를 높일 섹터/낮출 섹터
+`;
+}
+
+
+/***********************
+ * 12. GPT/텔레그램
+ ***********************/
+function callGPT_(prompt) {
+  const res = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + CONFIG.OPENAI_API_KEY
+    },
+    payload: JSON.stringify({
+      model: CONFIG.MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: '당신은 한국 주식시장 장전/장중/복기 전문 AI 에이전트입니다. 항상 한국어 존댓말을 사용합니다. 실제 데이터가 없으면 가격을 추정하지 않습니다.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.25,
+      max_tokens: 2200
+    }),
+    muteHttpExceptions: true
+  });
+
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+
+  if (code !== 200) throw new Error('OpenAI API 오류: ' + code + ' / ' + text);
+
+  return JSON.parse(text).choices[0].message.content.trim();
+}
+
+function sendTelegram_(msg) {
+  const res = UrlFetchApp.fetch(
+    'https://api.telegram.org/bot' + CONFIG.TELEGRAM_BOT_TOKEN + '/sendMessage',
+    {
+      method: 'post',
+      payload: {
+        chat_id: CONFIG.TELEGRAM_CHAT_ID,
+        text: msg,
+        disable_web_page_preview: true
+      },
+      muteHttpExceptions: true
+    }
+  );
+
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+
+  if (code !== 200) throw new Error('텔레그램 오류: ' + code + ' / ' + text);
+}
+
+
+/***********************
+ * 13. 기록/복기
+ ***********************/
+function saveRecommendationLog_(snapshot, report, type) {
+  const ss = getOrCreateSpreadsheet_();
+  let sheet = ss.getSheetByName('recommendation_log');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('recommendation_log');
+    sheet.appendRow(['timestamp', 'type', 'topLeaders', 'topSectors', 'report']);
+  }
+
+  sheet.appendRow([
+    new Date(),
+    type,
+    snapshot.leaders.map(s => s.name).slice(0, 10).join(', '),
+    snapshot.sectorStrength.map(s => s.sector).slice(0, 5).join(', '),
+    report
+  ]);
+}
+
+function saveReviewLog_(snapshot, report) {
+  const ss = getOrCreateSpreadsheet_();
+  let sheet = ss.getSheetByName('review_log');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('review_log');
+    sheet.appendRow(['timestamp', 'topSectors', 'review']);
+  }
+
+  sheet.appendRow([
+    new Date(),
+    snapshot.sectorStrength.map(s => s.sector).slice(0, 5).join(', '),
+    report
+  ]);
+}
+
+function getRecentRecommendationHistory_() {
+  const ss = getOrCreateSpreadsheet_();
+  const sheet = ss.getSheetByName('recommendation_log');
+  if (!sheet) return '추천 기록 없음';
+
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return '추천 기록 없음';
+
+  return values.slice(Math.max(1, values.length - 8)).map(r => {
+    return '- ' + r[0] + ' / ' + r[1] + ' / 후보: ' + r[2] + ' / 섹터: ' + r[3];
+  }).join('\n');
+}
+
+function getAiFeedbackSummary_() {
+  const ss = getOrCreateSpreadsheet_();
+  const sheet = ss.getSheetByName('review_log');
+  if (!sheet) return '아직 누적 복기 데이터가 없습니다.';
+
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return '아직 누적 복기 데이터가 없습니다.';
+
+  return values.slice(Math.max(1, values.length - 6)).map(r => '- ' + r[2]).join('\n');
+}
+
+
+/***********************
+ * 14. 테스트 함수
+ ***********************/
+function testKisToken() {
+  const token = getKisAccessToken_();
+  Logger.log('KIS 토큰 발급 성공: ' + token.substring(0, 12) + '...');
+}
+
+function testKisMarketData() {
+  const snapshot = buildMarketSnapshot_();
+  Logger.log(JSON.stringify({
+    leaders: snapshot.leaders.slice(0, 5),
+    volumeSurge: snapshot.volumeSurge.slice(0, 5),
+    sectorStrength: snapshot.sectorStrength.slice(0, 5)
+  }, null, 2));
+}
+
+function testMorning() {
+  runMorningBriefing();
+}
+
+function testIntraday() {
+  runIntradaySignal();
+}
+
+function testClosingReview() {
+  runClosingReview();
+}
+
+
+/***********************
+ * 15. 자동 실행
+ *
+ * ⚠️ 주의: Python scheduler.py(APScheduler)와 이 GAS가 동시에 실행되면
+ *    같은 텔레그램 채널에 중복 메시지가 발송됩니다.
+ *    둘 중 하나만 활성화하세요.
+ *
+ * ⚠️ GAS timeBased 트리거 정밀도: nearMinute()는 ±15분 오차가 있습니다.
+ *    정확한 시간 발송이 필요하면 Python scheduler.py를 사용하세요.
+ *
+ * ⚠️ everyDays(1)은 주말 포함 매일 실행됩니다.
+ *    평일 체크는 각 함수 내부(_isWeekday_)에서 처리합니다.
+ ***********************/
+function createAllTriggers() {
+  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger('runMorningBriefing')
+    .timeBased()
+    .everyDays(1)
+    .atHour(8)
+    .nearMinute(20)
+    .inTimezone('Asia/Seoul')
+    .create();
+
+  ScriptApp.newTrigger('runIntradaySignal')
+    .timeBased()
+    .everyDays(1)
+    .atHour(10)
+    .nearMinute(0)
+    .inTimezone('Asia/Seoul')
+    .create();
+
+  ScriptApp.newTrigger('runIntradaySignal')
+    .timeBased()
+    .everyDays(1)
+    .atHour(13)
+    .nearMinute(0)
+    .inTimezone('Asia/Seoul')
+    .create();
+
+  ScriptApp.newTrigger('runClosingReview')
+    .timeBased()
+    .everyDays(1)
+    .atHour(15)
+    .nearMinute(50)
+    .inTimezone('Asia/Seoul')
+    .create();
+}
+
+
+/***********************
+ * 16. 유틸
+ ***********************/
+function getOrCreateSpreadsheet_() {
+  const props = PropertiesService.getScriptProperties();
+  let spreadsheetId = props.getProperty('SPREADSHEET_ID');
+
+  if (spreadsheetId) return SpreadsheetApp.openById(spreadsheetId);
+
+  const ss = SpreadsheetApp.create('Korea Market Agent Logs');
+  props.setProperty('SPREADSHEET_ID', ss.getId());
+  return ss;
+}
+
+function formatStockList_(stocks) {
+  if (!stocks || stocks.length === 0) return '해당 후보 없음';
+
+  return stocks.map(s =>
+    `- ${s.name}(${s.code}) / 섹터:${s.sector} / 현재가:${formatPrice_(s.price)} / 등락률:${formatPercent_(s.changePercent)} / 거래량배율:${s.volumeRatio}배 / 거래대금:${s.tradingValue}억 / 점수:${s.score}`
+  ).join('\n');
+}
+
+function formatSectorList_(sectors) {
+  if (!sectors || sectors.length === 0) return '섹터 데이터 없음';
+
+  return sectors.map(s =>
+    `- ${s.sector} / 평균등락률:${s.avgChange}% / 평균거래량배율:${s.avgVolumeRatio}배 / 거래대금:${s.totalTradingValue}억 / 점수:${s.score}`
+  ).join('\n');
+}
+
+function formatPrice_(price) {
+  if (price === null || price === undefined || isNaN(price)) return '수집 실패';
+  return Number(price).toLocaleString('ko-KR') + '원';
+}
+
+function formatPercent_(percent) {
+  if (percent === null || percent === undefined || isNaN(percent)) return '수집 실패';
+  return (percent > 0 ? '+' : '') + percent + '%';
+}
+
+function pick_(obj, keys) {
+  for (let i = 0; i < keys.length; i++) {
+    if (obj[keys[i]] !== undefined && obj[keys[i]] !== null && obj[keys[i]] !== '') return obj[keys[i]];
+  }
+  return '';
+}
+
+function num_(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(String(v).replace(/,/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function round2_(num) {
+  return Math.round(Number(num) * 100) / 100;
+}
+
+function decodeHtml_(str) {
+  return String(str || '')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
