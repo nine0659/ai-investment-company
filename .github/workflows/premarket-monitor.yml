@@ -1,0 +1,57 @@
+name: Pre-market Monitor
+
+# 09:00 KST (00:00 UTC) 평일마다 실행 — 08:20 KST 장전브리핑이 정상 실행됐는지 확인
+# 실행 안 됐으면 텔레그램 경고만 발송 (재실행 없음)
+
+on:
+  schedule:
+    - cron: '0 0 * * 1-5'   # 09:00 KST Mon-Fri
+  workflow_dispatch:         # 수동 테스트용
+
+permissions:
+  actions: read
+
+jobs:
+  monitor:
+    name: 장전브리핑 실행 확인
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check pre_market ran today
+        env:
+          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          REPO="${GITHUB_REPOSITORY}"
+          # 09:00 KST 기준 100분 전(07:20 KST)부터 조회 — 08:20 KST 실행분 포함
+          CUTOFF=$(date -u -d '100 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')
+
+          echo "pre_market 실행 여부 확인 (since: $CUTOFF)"
+
+          RUNS=$(gh api "repos/${REPO}/actions/runs?event=repository_dispatch&per_page=20")
+
+          FOUND=$(echo "$RUNS" | jq --arg cutoff "$CUTOFF" \
+            '[.workflow_runs[] | select(
+               .display_title == "pre_market" and
+               .conclusion    == "success"    and
+               .created_at    >= $cutoff
+             )] | length')
+
+          echo "성공한 pre_market 실행 수: $FOUND"
+
+          if [ "$FOUND" = "0" ]; then
+            echo "::warning::장전브리핑(pre_market) 미실행 감지!"
+
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"chat_id\": \"${TELEGRAM_CHAT_ID}\",
+                \"text\": \"⚠️ 장전브리핑 미실행 감지\n\n오전 8:20 장전브리핑(pre_market)이 실행되지 않았습니다.\ncron-job.org 대시보드에서 장전브리핑_0820 잡 상태를 확인하세요.\n\n수동 재실행: GitHub Actions → investment-scheduler → Run workflow → pre\"
+              }" > /dev/null
+
+            echo "텔레그램 경고 발송 완료"
+          else
+            echo "장전브리핑 정상 실행 확인 ✓"
+          fi
