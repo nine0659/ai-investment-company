@@ -239,7 +239,8 @@ def check_and_alert() -> int:
             if not _matches_rule(report_nm, rule):
                 continue
             amount = _extract_amount(report_nm)
-            if rule["min_amount"] > 0 and amount < rule["min_amount"]:
+            # amount==0: 제목에 금액 미기재(대부분의 계약 공시) → 금액 불명으로 간주, 통과
+            if rule["min_amount"] > 0 and amount > 0 and amount < rule["min_amount"]:
                 continue
             matched_rule = rule
             break
@@ -338,7 +339,8 @@ def fetch_for_briefing() -> list[dict]:
             if not _matches_rule(report_nm, rule):
                 continue
             amount = _extract_amount(report_nm)
-            if rule["min_amount"] > 0 and amount < rule["min_amount"]:
+            # amount==0: 제목에 금액 미기재 → 금액 불명으로 간주, 통과
+            if rule["min_amount"] > 0 and amount > 0 and amount < rule["min_amount"]:
                 continue
             matched_rule = rule
             break

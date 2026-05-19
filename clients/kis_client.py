@@ -238,7 +238,7 @@ class KISClient:
                     "change_pct":     _float("prdy_ctrt"),
                 }
             except Exception as e:
-                logger.error("KIS 주가 조회 실패 (%s/%s): %s", stock_code, m, e)
+                logger.warning("KIS 주가 조회 실패 (%s/%s): %s", stock_code, m, e)
         return {}
 
     def get_dividend_info(self, stock_code: str) -> dict:

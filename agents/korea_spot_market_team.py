@@ -126,7 +126,7 @@ def _extract_candidates(data: dict, us_sector_data: dict | None = None) -> list[
                             "name":       s["name"],
                             "change_pct": 0.0,
                             "market":     s.get("market", "KOSPI"),
-                            "score":      20,
+                            "score":      max(15, round(sector_info.get("change_pct", 0) * 5 + 15)),
                             "source":     "US_fallback",
                         })
                         existing_codes.add(s["code"])
