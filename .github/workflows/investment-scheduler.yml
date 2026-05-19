@@ -5,7 +5,8 @@ name: AI Investment Research Scheduler
 # 10:00 KST (Mon-Fri)  = 01:00 UTC (Mon-Fri)
 # 13:00 KST (Mon-Fri)  = 04:00 UTC (Mon-Fri)
 # 15:50 KST (Mon-Fri)  = 06:50 UTC (Mon-Fri)
-# 20:00 KST (Sun)      = 11:00 UTC (Sun)   ← 주간 리포트
+# 18:00 KST (Sun)      = 09:00 UTC (Sun)   ← KOSPI 주간 추세 분석
+# 20:00 KST (Sun)      = 11:00 UTC (Sun)   ← 주간 적중률 리포트
 # 20:30 KST (Sun)      = 11:30 UTC (Sun)   ← 미국 주식 추천
 # 21:00 KST (1st Mon)  = 12:00 UTC (Mon)   ← 월간 학습 (매월 1일 UTC)
 #
@@ -15,7 +16,7 @@ name: AI Investment Research Scheduler
 # DART 공시 알림은 별도 job을 제거하고 장전·장중·장마감 브리핑에 통합됩니다.
 # cron-job.org에서 호출할 event_type 목록:
 #   pre_market, intra1, intra2, close_market
-#   price_alert, weekly_stats, monthly_learning, us_invest
+#   price_alert, weekly_stats, monthly_learning, us_invest, trend_analysis
 
 on:
   # ── 1순위: cron-job.org에서 GitHub API로 호출 ─────────────────
@@ -29,9 +30,11 @@ on:
       - weekly_stats
       - monthly_learning
       - us_invest
+      - trend_analysis
 
     # ── 2순위: GitHub 자체 스케줄 (백업, 주간·월간만 — 일간 브리핑은 cron-job.org 전담) ──
   schedule:
+    - cron: '0 9 * * 0'
     - cron: '0 11 * * 0'
     - cron: '30 11 * * 0'
     - cron: '0 12 1 * *'
@@ -51,6 +54,7 @@ on:
           - close
           - price-alert
           - weekly
+          - trend
           - monthly
           - us-invest
 
@@ -148,6 +152,32 @@ jobs:
           KIS_ACCOUNT_NO:     ${{ secrets.KIS_ACCOUNT_NO }}
           PYTHONUTF8:         "1"
         run: python main.py --type price-alert
+
+  # ── KOSPI 주간 추세 분석 (일요일 18:00 KST) ─────────────────
+  trend-analysis:
+    name: KOSPI Weekly Trend Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'repository_dispatch' && github.event.action == 'trend_analysis') ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 9 * * 0') ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_type == 'trend')
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run KOSPI trend analysis
+        env:
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL:       ${{ secrets.OPENAI_MODEL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONUTF8:         "1"
+        run: python main.py --type trend
 
   # ── 주간 적중률 리포트 (일요일 20:00 KST) ────────────────────
   weekly-stats:

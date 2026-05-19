@@ -12,6 +12,7 @@ main.py
   python main.py --type dart         # DART 공시 알림 (즉시)
   python main.py --type price-alert  # 가격 알림 (즉시)
   python main.py --type weekly       # 주간 적중률 리포트
+  python main.py --type trend        # 주간 KOSPI 추세 분석 (일요일 18:00 KST)
   python main.py --type monthly      # 월간 자기학습 분석
   python main.py --type us-invest    # 미국 주식 주간 추천
   python main.py --check             # 환경변수 검증만
@@ -51,7 +52,7 @@ def main():
     parser.add_argument(
         "--type",
         choices=["pre", "intra1", "intra2", "close", "midterm", "longterm",
-                 "dart", "price-alert", "weekly", "monthly", "us-invest"],
+                 "dart", "price-alert", "weekly", "trend", "monthly", "us-invest"],
         default="pre",
         help="실행 타입 (기본: pre)",
     )
@@ -143,6 +144,17 @@ def main():
             console.print("[green]✅ 주간 리포트 발송 완료[/green]")
         except Exception as e:
             console.print(f"[red]❌ 주간 리포트 실패: {e}[/red]")
+            sys.exit(1)
+        return
+
+    if args.type == "trend":
+        console.print("[bold cyan]📊 KOSPI 주간 추세 분석 시작[/bold cyan]")
+        from services.market_trend_service import send_trend_report
+        try:
+            send_trend_report()
+            console.print("[green]✅ KOSPI 추세 분석 발송 완료[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ KOSPI 추세 분석 실패: {e}[/red]")
             sys.exit(1)
         return
 
