@@ -2,6 +2,7 @@ name: Pre-market Monitor
 
 # 09:00 KST (00:00 UTC) 평일마다 실행 — 08:20 KST 장전브리핑이 정상 실행됐는지 확인
 # 실행 안 됐으면 텔레그램 경고만 발송 (재실행 없음)
+# GitHub Actions 지연 대비: 100분 룩백 대신 전날 22:00 UTC(=07:00 KST) 이후 고정 조회
 
 on:
   schedule:
@@ -25,8 +26,10 @@ jobs:
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           REPO="${GITHUB_REPOSITORY}"
-          # 09:00 KST 기준 100분 전(07:20 KST)부터 조회 — 08:20 KST 실행분 포함
-          CUTOFF=$(date -u -d '100 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')
+          # 장전브리핑은 08:20 KST = 23:20 UTC(전날)에 실행됨
+          # GitHub Actions가 수 시간 지연되더라도 누락 감지 불가 오경보를 막기 위해
+          # '전날 22:00 UTC'(= 당일 07:00 KST)를 고정 기준점으로 사용
+          CUTOFF=$(date -u -d 'yesterday 22:00' '+%Y-%m-%dT%H:%M:%SZ')
 
           echo "pre_market 실행 여부 확인 (since: $CUTOFF)"
 

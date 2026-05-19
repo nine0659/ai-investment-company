@@ -3,6 +3,7 @@
 매주 일요일 20:00 KST 실행
 """
 import logging
+import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -12,6 +13,56 @@ from clients.telegram_client import send_message
 
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
+
+
+# ── 리스크 조정 수익률 지표 ──────────────────────────────────────
+
+def _sharpe_ratio(returns: list[float], risk_free: float = 0.0) -> float:
+    """연환산 샤프비율 = (평균수익률 - 무위험률) / 표준편차 × √252
+    추천 단위 수익률(%)을 사용하므로 일일 단위로 간주해 연환산."""
+    if len(returns) < 3:
+        return 0.0
+    n    = len(returns)
+    mean = sum(returns) / n
+    var  = sum((r - mean) ** 2 for r in returns) / (n - 1)
+    std  = math.sqrt(var) if var > 0 else 0.0
+    if std == 0:
+        return 0.0
+    return round((mean - risk_free) / std * math.sqrt(252), 2)
+
+
+def _sortino_ratio(returns: list[float], risk_free: float = 0.0) -> float:
+    """연환산 소르티노비율 = (평균수익률 - 무위험률) / 하방표준편차 × √252
+    하방: 무위험률(0%) 미만 수익률만 사용."""
+    if len(returns) < 3:
+        return 0.0
+    n        = len(returns)
+    mean     = sum(returns) / n
+    downside = [r for r in returns if r < risk_free]
+    if not downside:
+        return 0.0
+    down_var = sum((r - risk_free) ** 2 for r in downside) / len(downside)
+    down_std = math.sqrt(down_var) if down_var > 0 else 0.0
+    if down_std == 0:
+        return 0.0
+    return round((mean - risk_free) / down_std * math.sqrt(252), 2)
+
+
+def _max_drawdown(returns: list[float]) -> float:
+    """최대 드로다운(MDD) = 누적 수익률 고점 대비 최대 낙폭(%)"""
+    if not returns:
+        return 0.0
+    cumulative = 1.0
+    peak       = 1.0
+    mdd        = 0.0
+    for r in returns:
+        cumulative *= (1 + r / 100)
+        if cumulative > peak:
+            peak = cumulative
+        dd = (peak - cumulative) / peak * 100
+        if dd > mdd:
+            mdd = dd
+    return round(mdd, 2)
 
 
 def _sector_stats(recs: list[dict]) -> dict[str, dict]:
@@ -56,6 +107,11 @@ def generate_weekly_report(days: int = 7) -> str:
     avg_ret  = sum(returns) / len(returns) if returns else 0
     win_rate = success / total * 100 if total else 0
 
+    # 리스크 조정 수익률 지표
+    sharpe   = _sharpe_ratio(returns)
+    sortino  = _sortino_ratio(returns)
+    mdd      = _max_drawdown(returns)
+
     sector_data = _sector_stats(recs)
     sector_lines = []
     for sec, data in sorted(sector_data.items(), key=lambda x: -x[1]["success"]):
@@ -78,10 +134,15 @@ def generate_weekly_report(days: int = 7) -> str:
 
 총 {total}건 | 성공 {success}건 | 실패 {fail}건 | 보통 {normal}건
 평균 수익률: {avg_ret:+.2f}%  적중률: {win_rate:.0f}%
+샤프비율(연환산): {sharpe}  소르티노비율: {sortino}  MDD: -{mdd:.1f}%
+
+샤프비율 해석 기준: >1.0 우수 / 0.5~1.0 보통 / <0.5 개선 필요
+MDD 해석: 낮을수록 손실 관리 우수
 
 1. 이번 주 잘 맞은 조건은?
 2. 틀린 조건은?
-3. 다음 주 반영할 개선점 (구체적으로)
+3. 샤프비율·MDD 관점에서 리스크 관리 평가
+4. 다음 주 반영할 개선점 (구체적으로)
 """
     analysis = chat("당신은 투자 성과 분석 전문가입니다.", gpt_prompt, max_tokens=800)
 
@@ -90,6 +151,11 @@ def generate_weekly_report(days: int = 7) -> str:
         f"━━ 이번 주 성과 ━━\n"
         f"총 추천: {total}건 | 성공: {success} / 실패: {fail} / 보통: {normal}\n"
         f"✅ 적중률: {win_rate:.0f}%  |  📈 평균 수익률: {avg_ret:+.2f}%\n\n"
+        f"━━ 리스크 조정 지표 ━━\n"
+        f"📐 샤프비율(연환산): {sharpe:+.2f}"
+        + (" ✅우수" if sharpe >= 1.0 else " ⚠️개선필요" if sharpe < 0.5 else "") + "\n"
+        f"📐 소르티노비율    : {sortino:+.2f}\n"
+        f"📉 최대 드로다운   : -{mdd:.1f}%\n\n"
         f"🏆 최고: {best['name']} {best.get('return_pct', 0):+.1f}%\n"
         f"💔 최저: {worst['name']} {worst.get('return_pct', 0):+.1f}%\n\n"
         f"━━ 섹터별 적중률 ━━\n"

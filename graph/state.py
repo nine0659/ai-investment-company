@@ -25,6 +25,7 @@ class InvestmentState(TypedDict):
     news_report: str
     bigfigure_report: str            # 빅피겨 발언 분석
     dart_report: str                 # 오늘 DART 공시 요약
+    macro_report: str                # 매크로 레짐 분석 (금리/크레딧/달러/VIX)
     sector_report: str
     money_flow_report: str
     risk_report: str
