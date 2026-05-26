@@ -26,6 +26,10 @@ from clients.securities_report_client import (
     fetch_securities_reports,
     format_for_context as fmt_reports,
 )
+from clients.blog_scraper_client import (
+    fetch_blog_posts,
+    format_for_context as fmt_blog_posts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +74,16 @@ _SYSTEM = """당신은 글로벌 투자 인텔리전스 분석가입니다.
 - 수집된 기사 제목/요약 기반 분석 — 확인 안 된 수치 단정 금지
 - 전문가·기관 이름이 나오면 구체적으로 인용
 - "~할 것 같다" → "~를 지지하는 전문가 시각이 우세" 형태로 표현
+- 국내 투자 블로그 포스트(직접 수집)가 있으면 국내 개인 투자자 시각으로 별도 반영
 - 인텔리전스 부족 시 "데이터 부족으로 판단 유보" 명시"""
 
 
 def run(state: InvestmentState) -> InvestmentState:
     try:
-        intel    = fetch_all_intelligence(max_per_source=4)
-        tg_msgs  = fetch_telegram_intelligence()    # 설정 미완료면 빈 리스트
-        reports  = fetch_securities_reports()       # 네이버 금융 증권사 리포트
+        intel      = fetch_all_intelligence(max_per_source=4)
+        tg_msgs    = fetch_telegram_intelligence()    # 설정 미완료면 빈 리스트
+        reports    = fetch_securities_reports()       # 네이버 금융 증권사 리포트
+        blog_posts = fetch_blog_posts()               # 등록 블로그 직접 수집
 
         lines: list[str] = ["=== 글로벌 투자 인텔리전스 피드 ==="]
 
@@ -127,6 +133,13 @@ def run(state: InvestmentState) -> InvestmentState:
             if report_text:
                 lines.append(f"\n{report_text}")
 
+        # 국내 투자 블로그 직접 수집 포스트
+        if blog_posts:
+            blog_text = fmt_blog_posts(blog_posts)
+            if blog_text:
+                lines.append(f"\n{blog_text}")
+            logger.info("[인텔리전스팀] 블로그직접수집 %d건 포함", len(blog_posts))
+
         # 텔레그램 채널 인텔리전스 (설정된 경우)
         if tg_msgs:
             tg_text = fmt_telegram(tg_msgs, max_per_category=8)
@@ -147,8 +160,8 @@ def run(state: InvestmentState) -> InvestmentState:
         state["market_intelligence_report"] = result
 
         logger.info(
-            "[인텔리전스팀] 완료 — 피드 %d카테고리, 전문가쿼리 %d개, 블로그 %d개, 증권사리포트 %d건, 텔레그램 %d건",
-            len(feeds), len(expert), len(blogs), len(reports), len(tg_msgs),
+            "[인텔리전스팀] 완료 - 피드 %d카테고리, 전문가쿼리 %d개, 블로그RSS %d개, 증권사리포트 %d건, 텔레그램 %d건, 블로그직접수집 %d건",
+            len(feeds), len(expert), len(blogs), len(reports), len(tg_msgs), len(blog_posts),
         )
     except Exception as e:
         logger.error("[인텔리전스팀] 실패: %s", e)
