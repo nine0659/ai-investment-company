@@ -27,9 +27,11 @@ def run(state: InvestmentState) -> InvestmentState:
         usdkrw  = mkt.get("usd_krw", {}).get("close", "N/A")
         us10y   = mkt.get("us10y",   {}).get("close", "N/A")
 
+        event_level = state.get("event_risk_level", "중간")
         context = (
             f"VIX: {vix}\n달러/원: {usdkrw}\n미국10년물: {us10y}%\n\n"
             f"[매크로 레짐 — 리스크 환경의 틀]\n{state.get('macro_report', '')}\n\n"
+            f"[이벤트 리스크 — 레벨: {event_level}]\n{state.get('event_risk_report', '')}\n\n"
             f"[선물분석]\n{state.get('futures_report', '')}\n\n"
             f"[글로벌분석]\n{state.get('global_market_report', '')}\n\n"
             f"[뉴스분석]\n{state.get('news_report', '')}"

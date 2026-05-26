@@ -26,5 +26,12 @@ yfinance>=0.2.0
 # News (RSS)
 feedparser>=6.0.0
 
+# HTML parsing (증권사 리포트 크롤링)
+beautifulsoup4>=4.12.0
+
+# Telegram intelligence (채널 수집)
+pyrogram>=2.0.0
+# tgcrypto>=1.2.0  # 속도 개선용 (Windows C++ 빌드툴 필요 — 없으면 생략 가능)
+
 # DB (SQLite, built-in — no extra package)
 # KIS API uses requests

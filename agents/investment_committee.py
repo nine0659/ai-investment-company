@@ -14,9 +14,10 @@ _SYSTEM = """당신은 투자위원회 의장입니다.
 
 핵심 원칙 (의결 우선순위):
   0순위: 글로벌 매크로 레짐 — RISK-ON/OFF/NEUTRAL이 전체 포지션 크기와 섹터 방향의 틀을 결정
+  0-1순위: 이벤트 리스크 — FOMC·CPI·옵션만기 등 HIGH 이벤트 시 포지션 자동 50% 축소
   1순위: 전일 미국 증시 방향 — S&P500·NASDAQ·SOX 방향이 오늘 KOSPI 방향의 70%를 결정
   2순위: 달러/원 환율·미국 금리 — 외국인 수급 방향 결정
-  3순위: 국내 수급(외국인·기관) + 섹터 모멘텀
+  3순위: 국내 수급(외국인·기관) + EWY/EEM 글로벌 자금 흐름 + 섹터 모멘텀
   4순위: 뉴스·공시·빅피겨 발언 재료
 
 [매크로 레짐 → 포지션 크기 원칙]
@@ -25,6 +26,7 @@ _SYSTEM = """당신은 투자위원회 의장입니다.
 - NEUTRAL  : 보통 (30~50%), 확신 종목만
 - RISK-OFF : 보수적 (10~30%), 방어주·현금 비중 확대
 - RISK-OFF + 미국 하락: 최소화 (10% 이하) 또는 관망
+- 이벤트 리스크 HIGH 시: 위 기준에서 추가 50% 축소 (예: RISK-ON 50~70% → 25~35%)
 
 [필수 출력 규칙]
 - 시장 방향 판단은 반드시 확률(%)로 표현: "상승확률 XX%, 하락확률 YY%" 형식
@@ -54,15 +56,18 @@ _DIRECTIONS = ["강한상승", "상승", "강한하락", "하락", "중립"]
 
 def run(state: InvestmentState) -> InvestmentState:
     try:
+        event_level = state.get("event_risk_level", "중간")
         parts = [
             f"[매크로팀 — 0순위: 전체 투자 환경의 틀]\n{state.get('macro_report', 'N/A')}",
+            f"[이벤트리스크팀 — 0-1순위: 이벤트 레벨={event_level}]\n{state.get('event_risk_report', 'N/A')}",
+            f"[인텔리전스팀 — 글로벌 전문가 서사·강세론/약세론·컨센서스]\n{state.get('market_intelligence_report', 'N/A')}",
             f"[선물/파생팀]\n{state.get('futures_report', 'N/A')}",
             f"[미국시장팀]\n{state.get('us_market_report', 'N/A')}",
             f"[한국현물팀]\n{state.get('korea_spot_report', 'N/A')}",
             f"[글로벌팀]\n{state.get('global_market_report', 'N/A')}",
             f"[뉴스분석팀]\n{state.get('news_report', 'N/A')}",
             f"[섹터/테마팀]\n{state.get('sector_report', 'N/A')}",
-            f"[수급팀]\n{state.get('money_flow_report', 'N/A')}",
+            f"[수급팀 — EWY/EEM 글로벌 자금 포함]\n{state.get('money_flow_report', 'N/A')}",
             f"[리스크팀]\n{state.get('risk_report', 'N/A')}",
         ]
 

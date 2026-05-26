@@ -50,10 +50,11 @@ TICKERS: dict[str, str] = {
     "dxy":             "DX-Y.NYB",
     # 금리
     "us10y":           "^TNX",
-    "us2y":            "^IRX",
+    "us3m":            "^IRX",   # 13주(3개월) T-Bill — 수익률 곡선 단기 기준
     # 원자재
     "gold":            "GC=F",
     "oil_wti":         "CL=F",
+    "copper":          "HG=F",      # 구리 선물 — 글로벌 경기 선행 지표 (Dr. Copper)
     # 변동성
     "vix":             "^VIX",
     # 한국
@@ -71,6 +72,10 @@ TICKERS: dict[str, str] = {
     "sox":             "^SOX",
     "nvda":            "NVDA",
     "tsmc":            "TSM",
+    # 글로벌 자금 흐름 ETF — 외국인 수급 선행 지표
+    "ewy":             "EWY",       # iShares MSCI South Korea ETF (한국 외국인 선행)
+    "eem":             "EEM",       # iShares MSCI Emerging Markets ETF (신흥국 자금)
+    "lit":             "LIT",       # Global X Lithium & Battery Tech ETF (2차전지 섹터)
 }
 
 

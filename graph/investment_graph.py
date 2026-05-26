@@ -16,8 +16,10 @@ import agents.news_analysis_team     as news_analysis_team
 import agents.bigfigure_agent        as bigfigure_agent
 import agents.sector_theme_team      as sector_theme_team
 import agents.money_flow_team        as money_flow_team
-import agents.macro_team             as macro_team
-import agents.risk_management_team   as risk_management_team
+import agents.macro_team                  as macro_team
+import agents.event_risk_team             as event_risk_team
+import agents.market_intelligence_team    as market_intelligence_team
+import agents.risk_management_team        as risk_management_team
 import agents.review_feedback_team   as review_feedback_team
 import agents.investment_committee   as investment_committee
 import agents.ceo_agent              as ceo_agent
@@ -150,6 +152,8 @@ def node_bigfigure(state):     return bigfigure_agent.run(state)
 def node_sector(state):        return sector_theme_team.run(state)
 def node_money_flow(state):    return money_flow_team.run(state)
 def node_macro(state):         return macro_team.run(state)
+def node_event_risk(state):    return event_risk_team.run(state)
+def node_intelligence(state):  return market_intelligence_team.run(state)
 def node_risk(state):          return risk_management_team.run(state)
 def node_committee(state):     return investment_committee.run(state)
 def node_ceo(state):           return ceo_agent.run(state)
@@ -211,8 +215,10 @@ def build_graph() -> StateGraph:
         ("bigfigure_agent",        node_bigfigure),       # 빅피겨 발언 분석
         ("sector_theme_team",      node_sector),
         ("money_flow_team",        node_money_flow),
-        ("macro_team",             node_macro),            # 매크로 레짐 분석 (금리/크레딧/달러)
-        ("risk_management_team",   node_risk),
+        ("macro_team",                node_macro),            # 매크로 레짐 분석 (금리/크레딧/달러/구리)
+        ("event_risk_team",         node_event_risk),       # 경제 이벤트 캘린더 리스크
+        ("market_intelligence_team",node_intelligence),     # 글로벌 전문가 서사·컨센서스 (해석 레이어)
+        ("risk_management_team",    node_risk),
         ("review_feedback_team",   node_review),
         ("investment_committee",   node_committee),
         ("ceo_agent",              node_ceo),
@@ -270,6 +276,9 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "bigfigure_report": "",
         "dart_report": "",
         "macro_report": "",
+        "event_risk_report": "",
+        "event_risk_level": "중간",
+        "market_intelligence_report": "",
         "sector_report": "",
         "money_flow_report": "",
         "risk_report": "",

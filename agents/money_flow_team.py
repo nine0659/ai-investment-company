@@ -22,8 +22,13 @@ _SYSTEM = """당신은 수급 분석 전문가입니다.
 3. 기관 순매수 종목 (안정적 수급)
 4. 상승 모멘텀 지속 종목
 5. 섹터 강도와 일치하는 종목
+6. [글로벌 자금 선행 지표] EWY·EEM 등락 분석
+   - EWY(한국ETF) 상승: 미국 시간 기준 외국인이 한국을 매수 중 → 내일 외국인 순매수 기대
+   - EWY 하락: 미국 시간에 한국 매도 → 내일 외국인 순매도 압력
+   - EEM(신흥국ETF) 방향과 EWY 비교: EWY > EEM → 한국 단독 강세 (알파 발생)
 
 출력:
+- [글로벌 자금 선행 신호] EWY·EEM 분석 → 내일 외국인 수급 방향 예측 (먼저 작성)
 - 수급 집중 종목 TOP5 (이유 + 매수 강도 상/중/하)
 - 외국인 3거래일 연속 순매수 종목 ★ 별도 강조 (없으면 "해당 없음" 명시)
 - 전체 수급 판단 (매수우위·매도우위·중립)"""
@@ -154,7 +159,25 @@ def run(state: InvestmentState) -> InvestmentState:
             trading_days_str = ", ".join(_last_n_trading_days(3))
             consecutive_text = f"해당 없음 (조회 기준: {trading_days_str})"
 
+        # EWY·EEM 글로벌 자금 흐름 (외국인 수급 선행 지표)
+        raw_mkt = state.get("raw_market_data", {})
+        ewy = raw_mkt.get("ewy", {})
+        eem = raw_mkt.get("eem", {})
+        ewy_line = (
+            f"EWY(한국ETF): {ewy['close']} ({ewy['change_pct']:+.2f}%)"
+            if ewy else "EWY: 데이터 없음"
+        )
+        eem_line = (
+            f"EEM(신흥국ETF): {eem['close']} ({eem['change_pct']:+.2f}%)"
+            if eem else "EEM: 데이터 없음"
+        )
+        ewy_vs_eem = ""
+        if ewy and eem:
+            diff = round(ewy.get("change_pct", 0) - eem.get("change_pct", 0), 2)
+            ewy_vs_eem = f"EWY vs EEM 차이: {diff:+.2f}% ({'한국 단독 강세 ★' if diff > 0.3 else '한국 단독 약세 ⚠️' if diff < -0.3 else '신흥국 동반'})"
+
         context = (
+            f"[글로벌 자금 선행 지표 — EWY·EEM]\n{ewy_line}\n{eem_line}\n{ewy_vs_eem}\n\n"
             f"후보 종목:\n{top10_text}\n\n"
             f"외국인 순매수 상위 (KOSPI+KOSDAQ):\n{foreign_text}\n\n"
             f"기관 순매수 상위 (KOSPI+KOSDAQ):\n{institution_text}\n\n"

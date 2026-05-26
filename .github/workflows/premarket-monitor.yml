@@ -26,23 +26,23 @@ jobs:
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           REPO="${GITHUB_REPOSITORY}"
-          # 장전브리핑은 08:20 KST = 23:20 UTC(전날)에 실행됨
-          # GitHub Actions가 수 시간 지연되더라도 누락 감지 불가 오경보를 막기 위해
-          # '전날 22:00 UTC'(= 당일 07:00 KST)를 고정 기준점으로 사용
-          CUTOFF=$(date -u -d 'yesterday 22:00' '+%Y-%m-%dT%H:%M:%SZ')
+          # 장전브리핑 시간 윈도우: 07:00 KST ~ 09:30 KST = 전날 22:00 UTC ~ 당일 00:30 UTC
+          # display_title은 repository_dispatch에서 event_type과 일치하지 않을 수 있으므로
+          # 시간 윈도우 기반으로 investment-scheduler.yml의 성공한 run을 확인
+          WINDOW_START=$(date -u -d 'yesterday 22:00' '+%Y-%m-%dT%H:%M:%SZ')
+          WINDOW_END=$(date -u -d 'today 00:30'       '+%Y-%m-%dT%H:%M:%SZ')
 
-          echo "pre_market 실행 여부 확인 (since: $CUTOFF)"
+          echo "pre_market 실행 여부 확인 (window: $WINDOW_START ~ $WINDOW_END)"
 
-          RUNS=$(gh api "repos/${REPO}/actions/runs?event=repository_dispatch&per_page=20")
+          RUNS=$(gh api "repos/${REPO}/actions/workflows/investment-scheduler.yml/runs?event=repository_dispatch&status=success&per_page=10")
 
-          FOUND=$(echo "$RUNS" | jq --arg cutoff "$CUTOFF" \
+          FOUND=$(echo "$RUNS" | jq --arg start "$WINDOW_START" --arg end "$WINDOW_END" \
             '[.workflow_runs[] | select(
-               .display_title == "pre_market" and
-               .conclusion    == "success"    and
-               .created_at    >= $cutoff
+               .created_at >= $start and
+               .created_at <= $end
              )] | length')
 
-          echo "성공한 pre_market 실행 수: $FOUND"
+          echo "장전 시간대 성공한 실행 수: $FOUND"
 
           if [ "$FOUND" = "0" ]; then
             echo "::warning::장전브리핑(pre_market) 미실행 감지!"

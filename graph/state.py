@@ -25,7 +25,10 @@ class InvestmentState(TypedDict):
     news_report: str
     bigfigure_report: str            # 빅피겨 발언 분석
     dart_report: str                 # 오늘 DART 공시 요약
-    macro_report: str                # 매크로 레짐 분석 (금리/크레딧/달러/VIX)
+    macro_report: str                # 매크로 레짐 분석 (금리/크레딧/달러/VIX/구리/LIT)
+    event_risk_report: str           # 경제 이벤트 캘린더 리스크 (FOMC/CPI/옵션만기 등)
+    event_risk_level: str            # 높음 / 중간 / 낮음
+    market_intelligence_report: str  # 글로벌 전문가 서사·강세론/약세론·컨센서스 변화
     sector_report: str
     money_flow_report: str
     risk_report: str

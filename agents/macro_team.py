@@ -15,7 +15,7 @@ _SYSTEM = """당신은 글로벌 매크로 경제 분석 전문가입니다.
 제공된 지표를 분석해 오늘 한국 주식 시장의 투자 환경을 평가하세요.
 
 [분석 기준]
-1. 수익률 곡선(10Y-2Y 금리차)
+1. 수익률 곡선(10Y-3M 금리차)
    - +0.5 이상: 정상 — 경기 확장 기대
    - 0 ~ +0.5: 평탄화 — 경계 구간
    - 0 미만: 역전 ⚠️ — 과거 역전 후 12~18개월 내 침체 발생
@@ -38,6 +38,15 @@ _SYSTEM = """당신은 글로벌 매크로 경제 분석 전문가입니다.
    - 급등: 지정학 리스크 or 달러 약세
    - 약세: 위험자산 선호 재확인
 
+6. 구리(Copper) — "Dr. Copper": 글로벌 실물 경기 선행 지표
+   - 상승: 글로벌 제조업 수요 확대 → 한국 소재·조선·산업재 수혜
+   - 하락: 경기 둔화 우려 → 경기민감주 회피 신호
+   - 기준: 전일대비 +1% 이상 = 강한 경기 기대 / -1% 이하 = 경기 우려
+
+7. LIT ETF(리튬·배터리) — 2차전지 섹터 선행 지표
+   - 상승: 전기차·배터리 투자 심리 개선 → 에코프로·LG에너지솔루션 수혜 방향
+   - 하락: 배터리 업황 불확실 → 2차전지 종목 압박
+
 [매크로 레짐 분류]
 RISK-ON: VIX<20, 크레딧 스프레드 안정, DXY 하락/보합
   → 반도체·AI·방산·성장주·소재 선호
@@ -57,6 +66,8 @@ NEUTRAL: 신호 혼재
 ⚡ 핵심 신호 3가지 (수치 포함, 한 줄씩)
 ✅ 오늘 유리한 섹터: [섹터1, 섹터2, 섹터3]
 🚫 오늘 불리한 섹터: [섹터1, 섹터2]
+🔩 구리 신호: [경기확장/경기둔화/중립] + 한 줄 근거
+🔋 배터리(LIT) 신호: [긍정/부정/중립] + 한국 2차전지 섹터 영향
 ⚠️ 매크로 주의사항: [한 줄]"""
 
 
@@ -94,7 +105,7 @@ def run(state: InvestmentState) -> InvestmentState:
 
         vix       = val("vix")
         us10y     = val("us10y")
-        us2y      = val("us2y")
+        us3m      = val("us3m")   # 13주(3개월) T-Bill — 단기금리 기준
         dxy       = val("dxy")
         dxy_chg   = val("dxy", "change_pct")
         gold_chg  = val("gold", "change_pct")
@@ -105,10 +116,10 @@ def run(state: InvestmentState) -> InvestmentState:
         hyg_chg = credit.get("hyg", {}).get("change_pct")
         lqd_chg = credit.get("lqd", {}).get("change_pct")
 
-        # 수익률 곡선
+        # 수익률 곡선 (10Y - 3M 스프레드)
         yield_curve = None
-        if us10y is not None and us2y is not None:
-            yield_curve = round(us10y - us2y, 2)
+        if us10y is not None and us3m is not None:
+            yield_curve = round(us10y - us3m, 2)
         yc_label = (
             f"{yield_curve:+.2f}% (역전 ⚠️)" if yield_curve is not None and yield_curve < 0
             else f"{yield_curve:+.2f}% (평탄화)" if yield_curve is not None and yield_curve < 0.5
@@ -127,15 +138,20 @@ def run(state: InvestmentState) -> InvestmentState:
             else:
                 credit_signal = f"중립 (HYG-LQD: {diff:+.2f}%)"
 
+        copper_chg = val("copper", "change_pct")
+        lit_chg    = val("lit",    "change_pct")
+
         context_lines = [
             "=== 글로벌 매크로 지표 ===",
             f"VIX(공포지수)    : {vix or 'N/A'}",
             f"미국 10년물 금리  : {us10y or 'N/A'}%",
-            f"미국 2년물 금리   : {us2y or 'N/A'}%",
-            f"수익률 곡선(10Y-2Y): {yc_label}",
+            f"미국 3개월물 금리  : {us3m or 'N/A'}%",
+            f"수익률 곡선(10Y-3M): {yc_label}",
             f"신용 스프레드(HYG-LQD): {credit_signal}",
             f"달러인덱스(DXY)  : {dxy or 'N/A'} (전일비 {f'{dxy_chg:+.2f}%' if dxy_chg is not None else 'N/A'})",
             f"금(Gold) 등락    : {f'{gold_chg:+.2f}%' if gold_chg is not None else 'N/A'}",
+            f"구리(Copper) 등락: {f'{copper_chg:+.2f}%' if copper_chg is not None else 'N/A'}  ← 글로벌 경기 선행",
+            f"LIT(리튬배터리ETF): {f'{lit_chg:+.2f}%' if lit_chg is not None else 'N/A'}  ← 2차전지 섹터 선행",
             f"S&P500 전일 등락 : {f'{sp500_chg:+.2f}%' if sp500_chg is not None else 'N/A'}",
         ]
 
