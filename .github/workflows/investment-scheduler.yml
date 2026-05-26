@@ -32,12 +32,21 @@ on:
       - us_invest
       - trend_analysis
 
-    # ── 2순위: GitHub 자체 스케줄 (백업, 주간·월간만 — 일간 브리핑은 cron-job.org 전담) ──
+    # ── 2순위: GitHub 자체 스케줄 (백업) ──────────────────────────
+    # already_ran_today() DB 체크로 중복 발송 방지 — cron-job.org 미실행 시에만 실제 동작
+    # 장전 백업: 09:30 KST (00:30 UTC) Mon-Fri = cron-job.org 08:20 실패 시 대비
+    # 장중1 백업: 10:30 KST (01:30 UTC) Mon-Fri
+    # 장중2 백업: 14:00 KST (05:00 UTC) Mon-Fri
+    # 장마감 백업: 16:30 KST (07:30 UTC) Mon-Fri
   schedule:
-    - cron: '0 9 * * 0'
-    - cron: '0 11 * * 0'
-    - cron: '30 11 * * 0'
-    - cron: '0 12 1 * *'
+    - cron: '30 0 * * 0-4'   # 장전 백업 09:30 KST (Sun-Thu UTC = Mon-Fri KST)
+    - cron: '30 1 * * 1-5'   # 장중1 백업 10:30 KST
+    - cron: '0 5 * * 1-5'    # 장중2 백업 14:00 KST
+    - cron: '30 7 * * 1-5'   # 장마감 백업 16:30 KST
+    - cron: '0 9 * * 0'      # KOSPI 주간 추세 18:00 KST (Sun)
+    - cron: '0 11 * * 0'     # 주간 적중률 20:00 KST (Sun)
+    - cron: '30 11 * * 0'    # 미국 주식 추천 20:30 KST (Sun)
+    - cron: '0 12 1 * *'     # 월간 자기학습 21:00 KST (1st Mon)
 
   # ── 수동 실행 ──────────────────────────────────────────────────
   workflow_dispatch:
@@ -73,7 +82,8 @@ jobs:
       cancel-in-progress: false
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.run_type == 'pre' || inputs.run_type == 'intra1' || inputs.run_type == 'intra2' || inputs.run_type == 'close')) ||
-      (github.event_name == 'repository_dispatch' && (github.event.action == 'pre_market' || github.event.action == 'intra1' || github.event.action == 'intra2' || github.event.action == 'close_market'))
+      (github.event_name == 'repository_dispatch' && (github.event.action == 'pre_market' || github.event.action == 'intra1' || github.event.action == 'intra2' || github.event.action == 'close_market')) ||
+      (github.event_name == 'schedule' && (github.event.schedule == '30 0 * * 0-4' || github.event.schedule == '30 1 * * 1-5' || github.event.schedule == '0 5 * * 1-5' || github.event.schedule == '30 7 * * 1-5'))
 
     steps:
       - name: Checkout
@@ -105,8 +115,12 @@ jobs:
           else
             case "${{ github.event.schedule }}" in
               "20 23 * * 0-4") echo "type=pre"    >> $GITHUB_OUTPUT ;;
+              "30 0 * * 0-4")  echo "type=pre"    >> $GITHUB_OUTPUT ;;  # 장전 백업
               "0 1 * * 1-5")   echo "type=intra1" >> $GITHUB_OUTPUT ;;
+              "30 1 * * 1-5")  echo "type=intra1" >> $GITHUB_OUTPUT ;;  # 장중1 백업
               "0 4 * * 1-5")   echo "type=intra2" >> $GITHUB_OUTPUT ;;
+              "0 5 * * 1-5")   echo "type=intra2" >> $GITHUB_OUTPUT ;;  # 장중2 백업
+              "30 7 * * 1-5")  echo "type=close"  >> $GITHUB_OUTPUT ;;  # 장마감 백업
               *)                echo "type=close"  >> $GITHUB_OUTPUT ;;
             esac
           fi
@@ -122,8 +136,11 @@ jobs:
           KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
           KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
           KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
-          DART_API_KEY:        ${{ secrets.DART_API_KEY }}
-          PYTHONUTF8:          "1"
+          DART_API_KEY:           ${{ secrets.DART_API_KEY }}
+          TELEGRAM_API_ID:        ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH:      ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
+          PYTHONUTF8:             "1"
         run: python main.py --type ${{ steps.run_type.outputs.type }}
 
   # ── 가격 알림 ─────────────────────────────────────────────────

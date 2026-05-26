@@ -296,7 +296,7 @@ def check_data_freshness(raw_market_data: dict) -> dict:
             parsed = date.fromisoformat(dd)
             dates_found.append(parsed)
             age = _biz_days_ago(parsed, today)
-            if age >= 2:
+            if age >= 3:
                 stale_keys.append(f"{key}({dd})")
         except ValueError:
             pass
@@ -324,7 +324,7 @@ def check_data_freshness(raw_market_data: dict) -> dict:
     if stale_keys:
         warning = (
             f"⚠️ 데이터 신선도 경고: {', '.join(stale_keys)} 가 "
-            f"2거래일 이상 오래됨 — yfinance API 오류 또는 공휴일 연속 가능성"
+            f"3거래일 이상 오래됨 — yfinance API 오류 또는 연속 공휴일 가능성"
         )
 
     return {
