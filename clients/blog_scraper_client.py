@@ -105,16 +105,21 @@ def _fetch_post_content(blog_id: str, post_no: str) -> str:
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # SE 에디터 (신형) → 구형 순서로 시도
-        content_div = (
-            soup.select_one(".se-main-container")
-            or soup.select_one("#postViewArea")
-            or soup.select_one(".post_ct")
-            or soup.select_one(".se_doc_viewer")
-            or soup.select_one("div[class*='post']")
-        )
-        if content_div:
-            text = content_div.get_text(separator="\n", strip=True)
+        _SELECTORS = [
+            ".se-main-container",
+            "#postViewArea",
+            "._postView",
+            ".ct_wrap",
+            ".post_ct",
+            ".se_doc_viewer",
+        ]
+        for sel in _SELECTORS:
+            el = soup.select_one(sel)
+            if not el:
+                continue
+            text = el.get_text(separator="\n", strip=True)
+            if len(text) < 10:
+                continue
             text = re.sub(r"\n{3,}", "\n\n", text)
             return text[:_MAX_CONTENT_CHARS]
         return ""
