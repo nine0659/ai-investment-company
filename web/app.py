@@ -10,7 +10,7 @@ import logging
 import os
 import queue
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -298,3 +298,108 @@ async def search_companies_api(body: dict):
         return {"results": search_companies(query)}
     except Exception as e:
         return {"results": [], "error": str(e)}
+
+
+@app.get("/api/portfolio/summary")
+async def get_portfolio_summary_api():
+    """포트폴리오 전체 요약 통계."""
+    try:
+        from services.portfolio_service import get_portfolio_summary, calculate_pnl
+        from clients.kis_client import KISClient
+        try:
+            kis = KISClient()
+        except Exception:
+            kis = None
+        pnl = calculate_pnl(kis)
+        summary = get_portfolio_summary(pnl)
+        return summary
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/portfolio/history")
+async def get_portfolio_history_api(limit: int = 50):
+    """매매 이력 조회."""
+    try:
+        from services.portfolio_service import get_portfolio_history
+        return {"trades": get_portfolio_history(days=365)}
+    except Exception as e:
+        return {"trades": [], "error": str(e)}
+
+
+@app.post("/api/watchlist")
+async def add_watchlist_api(body: dict):
+    """워치리스트 종목 추가."""
+    code   = (body.get("code") or "").strip()
+    name   = (body.get("name") or "").strip()
+    if not code or not name:
+        return {"ok": False, "error": "code와 name은 필수입니다"}
+    try:
+        from services.watchlist_service import add_to_watchlist
+        row_id = add_to_watchlist(
+            code=code, name=name,
+            target_entry=body.get("target_entry"),
+            timeframe=body.get("timeframe", "short"),
+            reason=body.get("reason"),
+            trigger_type=body.get("trigger_type", "price_below"),
+        )
+        return {"ok": True, "id": row_id}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.delete("/api/watchlist/{code}")
+async def remove_watchlist_api(code: str):
+    """워치리스트 종목 제거."""
+    try:
+        from services.watchlist_service import remove_from_watchlist
+        removed = remove_from_watchlist(code)
+        return {"ok": removed}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/alerts")
+async def get_alerts_api(days: int = 7):
+    """최근 알림 이력 (alert_notifications 테이블)."""
+    try:
+        cutoff = (datetime.now(_KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, date, alert_type, code, name, message, created_at "
+                    "FROM alert_notifications "
+                    "WHERE date >= :cutoff "
+                    "ORDER BY created_at DESC LIMIT 100"
+                ),
+                {"cutoff": cutoff},
+            ).fetchall()
+        alerts = [
+            {"id": r[0], "date": r[1], "alert_type": r[2],
+             "code": r[3], "name": r[4], "message": r[5], "created_at": r[6]}
+            for r in rows
+        ]
+        return {"alerts": alerts}
+    except Exception as e:
+        logger.warning("알림 조회 실패: %s", e)
+        return {"alerts": []}
+
+
+@app.get("/api/backtest")
+async def backtest_api(days: int = 20):
+    """AI 추천 종목 백테스트 결과."""
+    try:
+        from services.backtest_service import get_recommendation_backtest
+        return get_recommendation_backtest(days=days)
+    except Exception as e:
+        return {"error": str(e), "items": [], "stats": {}}
+
+
+@app.get("/api/performance")
+async def performance_api():
+    """실제 매매 성과 분석 (portfolio_history 기반)."""
+    try:
+        from services.backtest_service import get_portfolio_performance
+        return get_portfolio_performance()
+    except Exception as e:
+        return {"error": str(e), "trades": [], "stats": {}}

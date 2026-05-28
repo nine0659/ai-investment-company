@@ -167,18 +167,20 @@ def fetch_futures_realtime() -> dict:
 
 
 def fetch_kr_stock_technicals(symbol: str) -> dict:
-    """한국 개별 종목 기술적 지표 계산 (RSI14, MA5, MA20, 현재가 대비 MA 위치).
+    """한국 개별 종목 기술적 지표 계산.
     symbol: yfinance 심볼 (예: "000660.KS" 또는 "042700.KQ")
-    반환: {rsi14, ma5, ma20, above_ma20, close}
+    반환: {rsi14, ma5, ma20, above_ma20, close, bb_upper, bb_lower, bb_pct,
+           vol_ratio, golden_cross, dead_cross}
     """
     try:
         hist = yf.Ticker(symbol).history(period="3mo", interval="1d")
-        if len(hist) < 20:
+        if len(hist) < 21:
             return {}
-        closes = hist["Close"]
-        close  = float(closes.iloc[-1])
-        ma5    = float(closes.iloc[-5:].mean())
-        ma20   = float(closes.iloc[-20:].mean())
+        closes  = hist["Close"]
+        volumes = hist["Volume"]
+        close   = float(closes.iloc[-1])
+        ma5     = float(closes.iloc[-5:].mean())
+        ma20    = float(closes.iloc[-20:].mean())
 
         # RSI 14
         delta  = closes.diff()
@@ -190,12 +192,36 @@ def fetch_kr_stock_technicals(symbol: str) -> dict:
         rsi    = 100 - 100 / (1 + rs)
         rsi14  = float(rsi.iloc[-1])
 
+        # 볼린저밴드 (20일, 2σ)
+        std20    = float(closes.iloc[-20:].std())
+        bb_upper = round(ma20 + 2 * std20, 0)
+        bb_lower = round(ma20 - 2 * std20, 0)
+        bb_range = bb_upper - bb_lower
+        bb_pct   = round((close - bb_lower) / bb_range * 100, 1) if bb_range > 0 else 50.0
+
+        # 거래량: 오늘 vs 5일 평균 비율
+        vol_today = float(volumes.iloc[-1]) if len(volumes) >= 1 else 0
+        vol_ma5   = float(volumes.iloc[-6:-1].mean()) if len(volumes) >= 6 else vol_today
+        vol_ratio = round(vol_today / vol_ma5 * 100, 0) if vol_ma5 > 0 else 100.0
+
+        # MA5/MA20 골든크로스·데드크로스 (전일 대비)
+        prev_ma5  = float(closes.iloc[-6:-1].mean()) if len(closes) >= 6 else ma5
+        prev_ma20 = float(closes.iloc[-21:-1].mean()) if len(closes) >= 21 else ma20
+        golden_cross = bool(prev_ma5 < prev_ma20 and ma5 >= ma20)
+        dead_cross   = bool(prev_ma5 > prev_ma20 and ma5 <= ma20)
+
         return {
-            "close":      round(close, 0),
-            "ma5":        round(ma5, 0),
-            "ma20":       round(ma20, 0),
-            "rsi14":      round(rsi14, 1),
-            "above_ma20": close > ma20,
+            "close":        round(close, 0),
+            "ma5":          round(ma5, 0),
+            "ma20":         round(ma20, 0),
+            "rsi14":        round(rsi14, 1),
+            "above_ma20":   close > ma20,
+            "bb_upper":     bb_upper,
+            "bb_lower":     bb_lower,
+            "bb_pct":       bb_pct,        # 0=하단, 100=상단
+            "vol_ratio":    vol_ratio,     # 5일 평균 대비 오늘 거래량 %
+            "golden_cross": golden_cross,  # MA5가 MA20 상향돌파
+            "dead_cross":   dead_cross,    # MA5가 MA20 하향돌파
         }
     except Exception as e:
         logger.debug("기술적 지표 계산 실패 (%s): %s", symbol, e)

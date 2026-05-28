@@ -56,6 +56,21 @@ def _mark_alerted(today: str, code: str, alert_type: str) -> None:
         logger.debug("알림 기록 실패: %s", e)
 
 
+def _save_notification(today: str, alert_type: str, code: str, name: str, message: str) -> None:
+    """alert_notifications 테이블에 알림 내용 저장 (웹 UI 표시용)."""
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO alert_notifications (date, alert_type, code, name, message) "
+                    "VALUES (:d, :t, :c, :n, :m)"
+                ),
+                {"d": today, "t": alert_type, "c": code, "n": name, "m": message},
+            )
+    except Exception as e:
+        logger.debug("알림 저장 실패: %s", e)
+
+
 def _get_tech(code: str) -> dict:
     """기술적 지표 조회 — KOSPI 우선, 실패 시 KOSDAQ 시도."""
     for sfx in ("KS", "KQ"):
@@ -84,9 +99,13 @@ def _check_entry_signals(code: str, price: int, target_entry: float | None, tech
     if not tech:
         return signals
 
-    rsi = tech.get("rsi14", 50)
+    rsi       = tech.get("rsi14", 50)
     above_ma20 = tech.get("above_ma20", True)
-    ma20 = tech.get("ma20", 0)
+    ma20      = tech.get("ma20", 0)
+    bb_pct    = tech.get("bb_pct", 50)
+    vol_ratio = tech.get("vol_ratio", 100)
+    golden    = tech.get("golden_cross", False)
+    dead      = tech.get("dead_cross", False)
 
     # 신호 2: RSI 극과매도 (28 이하)
     if rsi <= 28:
@@ -95,6 +114,25 @@ def _check_entry_signals(code: str, price: int, target_entry: float | None, tech
     # 신호 3: RSI 과매도 + MA20 지지권 진입
     elif rsi <= 33 and not above_ma20 and ma20 and price >= ma20 * 0.97:
         signals.append(f"RSI 과매도 ({rsi:.0f}) + MA20 지지권 ({ma20:,.0f}원)")
+
+    # 신호 4: 볼린저밴드 하단 터치 (bb_pct ≤ 5%)
+    if bb_pct is not None and bb_pct <= 5:
+        bb_lower = tech.get("bb_lower", 0)
+        signals.append(f"볼린저밴드 하단 터치 (BB% {bb_pct:.0f}%, 하단 {bb_lower:,.0f}원) — 과매도 반등 구간")
+
+    # 신호 5: 거래량 급증 + 가격이 MA20 위 (돌파 시도)
+    if vol_ratio >= 200 and above_ma20:
+        signals.append(f"거래량 급증 ({vol_ratio:.0f}%, 5일 평균 대비) + MA20 상단 — 돌파 가능성")
+    elif vol_ratio >= 300:
+        signals.append(f"거래량 폭증 ({vol_ratio:.0f}%, 5일 평균 대비) — 세력 개입 의심, 주목")
+
+    # 신호 6: MA5/MA20 골든크로스
+    if golden:
+        signals.append(f"MA5/MA20 골든크로스 발생 — 단기 추세 전환 신호")
+
+    # 신호 7: MA5/MA20 데드크로스 (경고)
+    if dead:
+        signals.append(f"⚠️ MA5/MA20 데드크로스 — 추세 약화 경고 (진입 주의)")
 
     return signals
 
@@ -143,6 +181,7 @@ def run_watchlist_monitor(today: str, kis: KISClient) -> list[str]:
             alert_text = "\n".join(lines)
             fired.append(alert_text)
             _mark_alerted(today, code, "entry")
+            _save_notification(today, "entry", code, name, alert_text)
             logger.info("[모니터] 진입신호: %s(%s)", name, code)
         except Exception as e:
             logger.debug("[모니터] %s 진입신호 실패: %s", code, e)
@@ -179,25 +218,29 @@ def run_portfolio_monitor(today: str, kis: KISClient) -> tuple[list[str], list[s
             # 손절가 도달
             if stop_price and price <= stop_price:
                 if not _already_alerted(today, code, "stop"):
-                    stop_alerts.append(
+                    msg = (
                         f"🚨 *손절선 도달* {name}({code})\n"
                         f"  현재: {price:,}원  |  손절가: {stop_price:,.0f}원\n"
                         f"  평균단가: {avg_price:,.0f}원  |  수익률: {pnl_pct:+.1f}%  |  {qty}주\n"
                         f"  → *즉시 전량 매도 검토*"
                     )
+                    stop_alerts.append(msg)
                     _mark_alerted(today, code, "stop")
+                    _save_notification(today, "stop", code, name, msg)
                     logger.info("[모니터] 손절선 도달: %s(%s) %+.1f%%", name, code, pnl_pct)
 
             # 목표가 도달
             if target_price and price >= target_price:
                 if not _already_alerted(today, code, "target"):
-                    target_alerts.append(
+                    msg = (
                         f"🎯 *목표가 도달* {name}({code})\n"
                         f"  현재: {price:,}원  |  목표가: {target_price:,.0f}원\n"
                         f"  평균단가: {avg_price:,.0f}원  |  수익률: {pnl_pct:+.1f}%  |  {qty}주\n"
                         f"  → 절반 익절 또는 전량 매도 검토"
                     )
+                    target_alerts.append(msg)
                     _mark_alerted(today, code, "target")
+                    _save_notification(today, "target", code, name, msg)
                     logger.info("[모니터] 목표가 도달: %s(%s) %+.1f%%", name, code, pnl_pct)
 
         except Exception as e:

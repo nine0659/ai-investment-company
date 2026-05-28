@@ -177,6 +177,16 @@ price_alert_log = Table("price_alert_log", metadata,
     Column("sent_at", Text, server_default="CURRENT_TIMESTAMP"),
 )
 
+alert_notifications = Table("alert_notifications", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("date",       Text,    nullable=False),
+    Column("alert_type", Text,    nullable=False),  # entry / stop / target / volume / golden_cross
+    Column("code",       Text,    nullable=False),
+    Column("name",       Text),
+    Column("message",    Text),
+    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
 us_invest_recommendations = Table("us_invest_recommendations", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
     Column("date",       Text,    nullable=False),
