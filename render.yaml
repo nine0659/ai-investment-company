@@ -29,3 +29,5 @@ services:
         sync: false
       - key: WEB_PASSWORD
         sync: false
+      - key: DATABASE_URL
+        sync: false

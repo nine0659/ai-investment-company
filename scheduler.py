@@ -120,7 +120,7 @@ def main():
 
     # DB 초기화
     try:
-        from services.review_service import init_db
+        from db.database import init_db
         init_db()
     except Exception as e:
         logger.warning("DB 초기화 경고: %s", e)

@@ -3,48 +3,27 @@
 장중(09:10~15:20) 10분마다 실행 → 조건 충족 시 텔레그램 즉시 발송
 """
 import logging
-import os
-import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from clients.kis_client import KISClient
 from clients.telegram_client import send_message
 from services.recommendation_service import get_recommendations
+from db.database import get_conn
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
-_DB = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
-
-# 알림 중복 방지 쿨다운 (분)
 _ALERT_COOLDOWN_MIN = 60
-
-
-def _conn():
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
-
-
-def _ensure_alert_log():
-    with _conn() as c:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS price_alert_log (
-                date    TEXT,
-                code    TEXT,
-                type    TEXT,
-                sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (date, code, type)
-            )
-        """)
 
 
 def _already_alerted(date: str, code: str, alert_type: str) -> bool:
     try:
-        with _conn() as c:
-            row = c.execute(
-                "SELECT sent_at FROM price_alert_log WHERE date=? AND code=? AND type=?",
-                (date, code, alert_type),
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT sent_at FROM price_alert_log WHERE date=:date AND code=:code AND type=:type"),
+                {"date": date, "code": code, "type": alert_type},
             ).fetchone()
         return row is not None
     except Exception:
@@ -53,10 +32,13 @@ def _already_alerted(date: str, code: str, alert_type: str) -> bool:
 
 def _mark_alerted(date: str, code: str, alert_type: str):
     try:
-        with _conn() as c:
-            c.execute(
-                "INSERT OR REPLACE INTO price_alert_log (date, code, type) VALUES (?,?,?)",
-                (date, code, alert_type),
+        with get_conn() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO price_alert_log (date, code, type) VALUES (:date, :code, :type) "
+                    "ON CONFLICT (date, code, type) DO UPDATE SET sent_at=CURRENT_TIMESTAMP"
+                ),
+                {"date": date, "code": code, "type": alert_type},
             )
     except Exception:
         pass
@@ -76,7 +58,6 @@ def check_alerts() -> int:
 
     now  = datetime.now(_KST)
     date = now.strftime("%Y-%m-%d")
-    _ensure_alert_log()
 
     recs = get_recommendations(date)
     if not recs:

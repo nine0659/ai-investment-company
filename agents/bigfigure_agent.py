@@ -3,8 +3,6 @@
 긴급 알림은 장전(pre_market) 실행 시에만 1회 발송 — 하루 중복 방지
 """
 import logging
-import os
-import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -12,34 +10,21 @@ from graph.state import InvestmentState
 from clients.openai_client import chat
 from clients.telegram_client import send_message
 from config.settings import RUN_TYPE_PRE
+from db.database import get_conn
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
-_DB  = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
-
-
-def _conn():
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
-
-
-def _ensure_alert_table():
-    with _conn() as c:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS bigfigure_alert_log (
-                date TEXT PRIMARY KEY,
-                sent_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
 
 
 def _already_sent_today() -> bool:
     today = datetime.now(_KST).strftime("%Y-%m-%d")
     try:
-        with _conn() as c:
-            row = c.execute(
-                "SELECT 1 FROM bigfigure_alert_log WHERE date=?", (today,)
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT 1 FROM bigfigure_alert_log WHERE date=:date"),
+                {"date": today},
             ).fetchone()
         return row is not None
     except Exception:
@@ -49,9 +34,10 @@ def _already_sent_today() -> bool:
 def _mark_sent_today():
     today = datetime.now(_KST).strftime("%Y-%m-%d")
     try:
-        with _conn() as c:
-            c.execute(
-                "INSERT OR IGNORE INTO bigfigure_alert_log (date) VALUES (?)", (today,)
+        with get_conn() as conn:
+            conn.execute(
+                text("INSERT INTO bigfigure_alert_log (date) VALUES (:date) ON CONFLICT (date) DO NOTHING"),
+                {"date": today},
             )
     except Exception:
         pass

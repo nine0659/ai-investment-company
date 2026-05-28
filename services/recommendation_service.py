@@ -2,34 +2,28 @@
 추천 종목 DB 저장·조회·수익률 업데이트
 """
 import logging
-import os
 import re
-import sqlite3
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from db.database import get_conn
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
-
-_DB = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
-
-
-def _conn() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
-
+_TZ = ZoneInfo("Asia/Seoul")
 
 # ── 파싱 ──────────────────────────────────────────────────────────
 
 _HEADER_RE = re.compile(r"([가-힣A-Za-z()·&·\s]{1,25}?)\s*\((\d{6})\)")
-# 1차 진입가 (분할 매수 형식: "1차(50%): 240,000원")
-_ENTRY1_RE = re.compile(r"1차[^\n]{0,30}?([\d,]{4,})\s*원")
-# 구형 단일 진입가 ("진입가 240,000원" / "진입: 240,000원")
+_ENTRY1_RE    = re.compile(r"1차[^\n]{0,30}?([\d,]{4,})\s*원")
 _ENTRY_OLD_RE = re.compile(r"진입[가격：: ]{0,5}([\d,]{4,})\s*원")
 _STOP_RE      = re.compile(r"손절[가격：: ·]{0,5}([\d,]{4,})\s*원")
 _TARGET_RE    = re.compile(r"목표[가격：: ·]{0,5}([\d,]{4,})\s*원")
 _RATIONALE_RE = re.compile(r"선택 이유[：:]\s*([^\n]{10,200})")
 
 
-def _extract_price(pattern: re.Pattern, text: str) -> int | None:
-    m = pattern.search(text)
+def _extract_price(pattern: re.Pattern, text_: str) -> int | None:
+    m = pattern.search(text_)
     if m:
         try:
             return int(m.group(1).replace(",", ""))
@@ -39,9 +33,7 @@ def _extract_price(pattern: re.Pattern, text: str) -> int | None:
 
 
 def parse_recommendations(report_text: str) -> list[dict]:
-    """CEO 브리핑 텍스트에서 추천 종목 파싱.
-    분할 매수 형식(1차/2차/손절/목표)과 구형 단일 라인 형식을 모두 지원.
-    """
+    """CEO 브리핑 텍스트에서 추천 종목 파싱."""
     results: list[dict] = []
     seen_codes: set[str] = set()
     lines = report_text.split("\n")
@@ -55,17 +47,13 @@ def parse_recommendations(report_text: str) -> list[dict]:
         if code in seen_codes:
             continue
 
-        # 종목 헤더 이후 최대 10줄을 블록으로 추출
         block = "\n".join(lines[i: i + 10])
-
-        # 1차 진입가 우선, 없으면 구형 진입가
         entry  = _extract_price(_ENTRY1_RE, block) or _extract_price(_ENTRY_OLD_RE, block)
         stop   = _extract_price(_STOP_RE, block)
         target = _extract_price(_TARGET_RE, block)
 
         if entry and stop and target and entry > 0 and stop > 0 and target > 0:
             seen_codes.add(code)
-            # 선택 이유 추출 (없으면 빈 문자열)
             rm = _RATIONALE_RE.search(block)
             rationale = rm.group(1).strip() if rm else ""
             results.append({
@@ -80,32 +68,40 @@ def parse_recommendations(report_text: str) -> list[dict]:
 # ── 저장 / 조회 ──────────────────────────────────────────────────
 
 def save_recommendations(date: str, recs: list[dict]) -> int:
-    """추천 종목 저장 (같은 날 기존 데이터는 삭제 후 재저장). 저장 건수 반환."""
+    """추천 종목 저장 (같은 날 기존 데이터는 삭제 후 재저장)."""
     if not recs:
         return 0
-    with _conn() as c:
-        c.execute("DELETE FROM stock_recommendations WHERE date=?", (date,))
-        c.executemany(
-            "INSERT INTO stock_recommendations "
-            "(date, code, name, entry_price, stop_price, target_price, rationale) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [(date, r["code"], r["name"],
-              r["entry_price"], r["stop_price"], r["target_price"], r["rationale"])
-             for r in recs],
+    with get_conn() as conn:
+        conn.execute(
+            text("DELETE FROM stock_recommendations WHERE date=:date"),
+            {"date": date},
         )
+        for r in recs:
+            conn.execute(
+                text(
+                    "INSERT INTO stock_recommendations "
+                    "(date, code, name, entry_price, stop_price, target_price, rationale) "
+                    "VALUES (:date, :code, :name, :entry, :stop, :target, :rationale)"
+                ),
+                {"date": date, "code": r["code"], "name": r["name"],
+                 "entry": r["entry_price"], "stop": r["stop_price"],
+                 "target": r["target_price"], "rationale": r["rationale"]},
+            )
     logger.info("추천 종목 저장 완료: %d건 (%s)", len(recs), date)
     return len(recs)
 
 
 def get_recommendations(date: str) -> list[dict]:
-    """특정 날짜 추천 종목 조회"""
+    """특정 날짜 추천 종목 조회."""
     try:
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT code, name, entry_price, stop_price, target_price, "
-                "rationale, close_price, return_pct, result "
-                "FROM stock_recommendations WHERE date=?",
-                (date,),
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT code, name, entry_price, stop_price, target_price, "
+                    "rationale, close_price, return_pct, result "
+                    "FROM stock_recommendations WHERE date=:date"
+                ),
+                {"date": date},
             ).fetchall()
         return [
             {"code": r[0], "name": r[1], "entry_price": r[2],
@@ -119,16 +115,19 @@ def get_recommendations(date: str) -> list[dict]:
 
 
 def get_recent_recommendations(days: int = 7) -> list[dict]:
-    """최근 N일 추천 종목 전체 조회 (통계용)"""
+    """최근 N일 추천 종목 전체 조회 (통계용)."""
     try:
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT date, code, name, entry_price, stop_price, target_price, "
-                "close_price, return_pct, result "
-                "FROM stock_recommendations "
-                "WHERE date >= date('now', ?) AND return_pct IS NOT NULL "
-                "ORDER BY date DESC",
-                (f"-{days} days",),
+        cutoff = (datetime.now(_TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT date, code, name, entry_price, stop_price, target_price, "
+                    "close_price, return_pct, result "
+                    "FROM stock_recommendations "
+                    "WHERE date >= :cutoff AND return_pct IS NOT NULL "
+                    "ORDER BY date DESC"
+                ),
+                {"cutoff": cutoff},
             ).fetchall()
         return [
             {"date": r[0], "code": r[1], "name": r[2],
@@ -156,11 +155,7 @@ def _classify(return_pct: float, close: float = 0, stop_price: int = 0, target_p
 
 
 def update_close_prices(date: str, kis) -> list[dict]:
-    """
-    당일 추천 종목 종가 수집 → 수익률 계산 → DB 업데이트.
-    kis: KISClient 인스턴스
-    반환: 업데이트된 종목 리스트
-    """
+    """당일 추천 종목 종가 수집 → 수익률 계산 → DB 업데이트."""
     recs = get_recommendations(date)
     if not recs:
         logger.info("종가 업데이트: 당일 추천 종목 없음 (%s)", date)
@@ -177,18 +172,20 @@ def update_close_prices(date: str, kis) -> list[dict]:
             result = _classify(ret, close=close,
                                stop_price=rec.get("stop_price", 0),
                                target_price=rec.get("target_price", 0))
-            with _conn() as c:
-                c.execute(
-                    "UPDATE stock_recommendations "
-                    "SET close_price=?, return_pct=?, result=? "
-                    "WHERE date=? AND code=?",
-                    (close, round(ret, 2), result, date, rec["code"]),
+            with get_conn() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE stock_recommendations "
+                        "SET close_price=:close, return_pct=:ret, result=:result "
+                        "WHERE date=:date AND code=:code"
+                    ),
+                    {"close": close, "ret": round(ret, 2), "result": result,
+                     "date": date, "code": rec["code"]},
                 )
             updated.append({**rec, "close_price": close,
                              "return_pct": round(ret, 2), "result": result})
             logger.info("종가 업데이트: %s(%s) 진입 %s → 종가 %s (%.1f%% %s)",
-                        rec["name"], rec["code"],
-                        rec["entry_price"], close, ret, result)
+                        rec["name"], rec["code"], rec["entry_price"], close, ret, result)
         except Exception as e:
             logger.warning("종가 업데이트 실패 (%s): %s", rec["code"], e)
 
@@ -196,9 +193,7 @@ def update_close_prices(date: str, kis) -> list[dict]:
 
 
 def get_performance_stats(days: int = 30) -> dict:
-    """최근 N일 추천 성과 통계 반환.
-    반환: {total, win, loss, neutral, win_rate, avg_return, max_loss, profit_factor}
-    """
+    """최근 N일 추천 성과 통계."""
     recs = get_recent_recommendations(days=days)
     empty = {"total": 0, "win": 0, "loss": 0, "neutral": 0,
              "win_rate": 0.0, "avg_return": 0.0, "max_loss": 0.0, "profit_factor": 0.0}
@@ -228,7 +223,7 @@ def get_performance_stats(days: int = 30) -> dict:
 
 
 def format_returns_for_report(results: list[dict]) -> str:
-    """종가/수익률 결과를 텔레그램 메시지용 텍스트로 변환"""
+    """종가/수익률 결과를 텔레그램 메시지용 텍스트로 변환."""
     if not results:
         return "오늘 추천 종목 없음"
     lines = ["📊 오늘 추천 종목 결과:"]

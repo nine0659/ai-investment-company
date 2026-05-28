@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import queue
-import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -22,10 +21,12 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from db.database import get_conn
+from sqlalchemy import text
+
 logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
-_DB  = Path(__file__).parent.parent / "data" / "database.sqlite3"
 
 # ── 웹 암호 보호 (환경변수 WEB_PASSWORD 설정 시 활성화) ──────────
 _WEB_PASSWORD = os.getenv("WEB_PASSWORD", "")
@@ -58,11 +59,6 @@ def _check_auth(credentials: HTTPBasicCredentials | None = Depends(_security)):
 
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _db_conn():
-    _DB.parent.mkdir(exist_ok=True)
-    return sqlite3.connect(str(_DB))
 
 
 def _stream_via_thread(target_fn, *args) -> StreamingResponse:
@@ -130,11 +126,13 @@ async def status():
 async def get_briefings(limit: int = 20):
     """최근 브리핑 목록."""
     try:
-        with _db_conn() as c:
-            rows = c.execute(
-                "SELECT date, run_type, ceo_report, market_direction, "
-                "created_at FROM reports ORDER BY created_at DESC LIMIT ?",
-                (limit,),
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT date, run_type, ceo_report, market_direction, created_at "
+                    "FROM reports ORDER BY created_at DESC LIMIT :limit"
+                ),
+                {"limit": limit},
             ).fetchall()
         briefings = [
             {
@@ -155,17 +153,13 @@ async def get_briefings(limit: int = 20):
 async def get_portfolio_api():
     """보유 포지션 + 현재가 손익."""
     try:
-        from services.portfolio_service import get_portfolio, calculate_pnl
+        from services.portfolio_service import calculate_pnl
         from clients.kis_client import KISClient
-        kis = KISClient()
-        positions = get_portfolio()
-        enriched = []
-        for p in positions:
-            try:
-                pnl = calculate_pnl(p, kis)
-                enriched.append({**p, **pnl})
-            except Exception:
-                enriched.append(p)
+        try:
+            kis = KISClient()
+        except Exception:
+            kis = None
+        enriched = calculate_pnl(kis)
         return {"positions": enriched}
     except Exception as e:
         return {"positions": [], "error": str(e)}

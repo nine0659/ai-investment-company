@@ -31,6 +31,10 @@ KIS_ACCOUNT_PROD_CD = os.getenv("KIS_ACCOUNT_PROD_CD", "01")
 
 DART_API_KEY = os.getenv("DART_API_KEY", "")
 
+# ── 데이터베이스 ─────────────────────────────────────────────────
+# 설정 시 PostgreSQL(Supabase), 미설정 시 SQLite 로컬
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
 KIS_IS_REAL  = KIS_ACCOUNT_PROD_CD == "01"
 KIS_BASE_URL = (
     "https://openapi.koreainvestment.com:9443"

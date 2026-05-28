@@ -1,22 +1,15 @@
 """
 watchlist_service.py
 관심종목(워치리스트) 관리 서비스
-
-기능:
-  - 관심종목 추가/삭제/수정
-  - 진입 조건 트리거 자동 감지 (가격, RSI, 돌파 등)
-  - 우선순위(urgent/normal/low) 관리
-  - 브리핑 통합용 포맷 출력
 """
 import logging
-import os
-import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-logger = logging.getLogger(__name__)
+from db.database import get_conn
+from sqlalchemy import text
 
-_DB = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
+logger = logging.getLogger(__name__)
 _TZ = ZoneInfo("Asia/Seoul")
 
 TRIGGER_TYPES = {
@@ -29,11 +22,6 @@ TRIGGER_TYPES = {
 }
 
 
-def _conn() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
-
-
 # ── CRUD ──────────────────────────────────────────────────────
 
 def add_to_watchlist(code: str, name: str, target_entry: float = None,
@@ -44,31 +32,39 @@ def add_to_watchlist(code: str, name: str, target_entry: float = None,
     now = datetime.now(_TZ).strftime("%Y-%m-%d")
     trigger_value = trigger_value or target_entry
 
-    with _conn() as c:
-        existing = c.execute(
-            "SELECT id FROM watchlist_items WHERE code=?", (code,)
+    with get_conn() as conn:
+        existing = conn.execute(
+            text("SELECT id FROM watchlist_items WHERE code=:code"),
+            {"code": code},
         ).fetchone()
 
         if existing:
-            c.execute(
-                "UPDATE watchlist_items SET name=?, target_entry=?, timeframe=?, reason=?, "
-                "trigger_type=?, trigger_value=?, priority=?, status='active', added_date=? "
-                "WHERE code=?",
-                (name, target_entry, timeframe, reason,
-                 trigger_type, trigger_value, priority, now, code)
+            conn.execute(
+                text(
+                    "UPDATE watchlist_items SET name=:name, target_entry=:target, "
+                    "timeframe=:tf, reason=:reason, trigger_type=:ttype, "
+                    "trigger_value=:tval, priority=:priority, status='active', added_date=:now "
+                    "WHERE code=:code"
+                ),
+                {"name": name, "target": target_entry, "tf": timeframe, "reason": reason,
+                 "ttype": trigger_type, "tval": trigger_value, "priority": priority,
+                 "now": now, "code": code},
             )
             row_id = existing[0]
             logger.info("워치리스트 업데이트: %s(%s) [%s] 목표진입 %s원",
                         name, code, priority, f"{target_entry:,.0f}" if target_entry else "미설정")
         else:
-            c.execute(
-                "INSERT INTO watchlist_items "
-                "(code, name, target_entry, timeframe, reason, trigger_type, trigger_value, priority, added_date) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (code, name, target_entry, timeframe, reason,
-                 trigger_type, trigger_value, priority, now)
+            result = conn.execute(
+                text(
+                    "INSERT INTO watchlist_items "
+                    "(code, name, target_entry, timeframe, reason, trigger_type, trigger_value, priority, added_date) "
+                    "VALUES (:code, :name, :target, :tf, :reason, :ttype, :tval, :priority, :now) RETURNING id"
+                ),
+                {"code": code, "name": name, "target": target_entry, "tf": timeframe,
+                 "reason": reason, "ttype": trigger_type, "tval": trigger_value,
+                 "priority": priority, "now": now},
             )
-            row_id = c.lastrowid
+            row_id = result.scalar()
             logger.info("워치리스트 추가: %s(%s) [%s/%s] 목표진입 %s원",
                         name, code, timeframe, priority,
                         f"{target_entry:,.0f}" if target_entry else "미설정")
@@ -77,10 +73,10 @@ def add_to_watchlist(code: str, name: str, target_entry: float = None,
 
 def remove_from_watchlist(code: str) -> bool:
     """워치리스트에서 종목 제거."""
-    with _conn() as c:
-        result = c.execute(
-            "UPDATE watchlist_items SET status='removed' WHERE code=? AND status='active'",
-            (code,)
+    with get_conn() as conn:
+        result = conn.execute(
+            text("UPDATE watchlist_items SET status='removed' WHERE code=:code AND status='active'"),
+            {"code": code},
         )
     removed = result.rowcount > 0
     if removed:
@@ -91,13 +87,15 @@ def remove_from_watchlist(code: str) -> bool:
 def get_watchlist(status: str = "active") -> list[dict]:
     """워치리스트 조회."""
     try:
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT code, name, target_entry, timeframe, reason, "
-                "trigger_type, trigger_value, priority, status, added_date "
-                "FROM watchlist_items WHERE status=? "
-                "ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, added_date DESC",
-                (status,)
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT code, name, target_entry, timeframe, reason, "
+                    "trigger_type, trigger_value, priority, status, added_date "
+                    "FROM watchlist_items WHERE status=:status "
+                    "ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, added_date DESC"
+                ),
+                {"status": status},
             ).fetchall()
         return [
             {"code": r[0], "name": r[1], "target_entry": r[2], "timeframe": r[3],
@@ -141,8 +139,7 @@ def check_triggers(kis=None) -> list[dict]:
 
             elif ttype == "rsi_oversold":
                 from clients.market_data_client import fetch_kr_stock_technicals
-                sfx = "KS"
-                tech = fetch_kr_stock_technicals(f"{item['code']}.{sfx}")
+                tech = fetch_kr_stock_technicals(f"{item['code']}.KS")
                 if not tech:
                     tech = fetch_kr_stock_technicals(f"{item['code']}.KQ")
                 if tech and tech.get("rsi14", 100) <= 30:
@@ -184,10 +181,7 @@ def format_watchlist_for_briefing(kis=None, include_triggered_only: bool = False
     tf_map = {"short": "단기", "mid": "중기", "long": "장기"}
     pr_map = {"urgent": "🔴긴급", "normal": "🟡보통", "low": "🔵낮음"}
 
-    if include_triggered_only:
-        items_to_show = [i for i in items if i["code"] in triggered_codes]
-    else:
-        items_to_show = items
+    items_to_show = [i for i in items if i["code"] in triggered_codes] if include_triggered_only else items
 
     if not items_to_show:
         return "조건 충족 종목 없음" if include_triggered_only else "관심 종목 없음"

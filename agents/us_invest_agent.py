@@ -4,8 +4,6 @@
 성장주 TOP3 + 배당 ETF TOP2 + 섹터 ETF TOP2 추천
 """
 import logging
-import sqlite3
-import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -13,11 +11,11 @@ import yfinance as yf
 
 from clients.openai_client import chat_ceo
 from clients.telegram_client import send_message
+from db.database import get_conn
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
-
-_DB = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
 
 # 성장주 후보
 _GROWTH_STOCKS = [
@@ -56,30 +54,6 @@ _SECTOR_ETFS = [
     ("GLD", "금"),
     ("TLT", "미국장기채"),
 ]
-
-
-def _conn():
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
-
-
-def _ensure_table():
-    with _conn() as c:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS us_invest_recommendations (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                date       TEXT NOT NULL,
-                category   TEXT NOT NULL,
-                ticker     TEXT NOT NULL,
-                name       TEXT,
-                price      REAL,
-                change_1w  REAL,
-                change_1m  REAL,
-                score      REAL,
-                rationale  TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
 
 
 def _fetch_stock_data(ticker: str) -> dict:
@@ -246,7 +220,6 @@ _SYSTEM = """당신은 미국 주식 투자 전문 애널리스트입니다.
 
 def run() -> str:
     logger.info("[US투자] 주간 추천 생성 시작")
-    _ensure_table()
     now = datetime.now(_KST)
     date = now.strftime("%Y-%m-%d")
 
@@ -263,15 +236,20 @@ def run() -> str:
 
     # DB 저장
     try:
-        with _conn() as c:
+        with get_conn() as conn:
             for cat, items in candidates.items():
                 for d in items:
-                    c.execute("""
-                        INSERT OR REPLACE INTO us_invest_recommendations
-                        (date, category, ticker, name, price, change_1w, change_1m, score)
-                        VALUES (?,?,?,?,?,?,?,?)
-                    """, (date, cat, d["ticker"], d.get("name", ""), d.get("price"),
-                          d.get("change_1w"), d.get("change_1m"), d.get("score")))
+                    conn.execute(
+                        text(
+                            "INSERT INTO us_invest_recommendations "
+                            "(date, category, ticker, name, price, change_1w, change_1m, score) "
+                            "VALUES (:date, :cat, :ticker, :name, :price, :w1, :m1, :score)"
+                        ),
+                        {"date": date, "cat": cat, "ticker": d["ticker"],
+                         "name": d.get("name", ""), "price": d.get("price"),
+                         "w1": d.get("change_1w"), "m1": d.get("change_1m"),
+                         "score": d.get("score")},
+                    )
         logger.info("[US투자] DB 저장 완료")
     except Exception as e:
         logger.warning("[US투자] DB 저장 실패: %s", e)

@@ -5,9 +5,7 @@ DART 공시 에이전트
 - 독립 알림(check_and_alert)은 레거시 유지 (현재 파이프라인에서 비활성화)
 """
 import logging
-import os
 import re
-import sqlite3
 from datetime import datetime, time as _time
 from zoneinfo import ZoneInfo
 
@@ -15,12 +13,13 @@ import requests
 
 from config.settings import DART_API_KEY, KIS_APP_KEY
 from clients.telegram_client import send_message
+from db.database import get_conn
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
 _KST  = ZoneInfo("Asia/Seoul")
 _BASE = "https://opendart.fss.or.kr/api"
-_DB   = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
 
 _DAILY_LIMIT = 5   # 하루 최대 5건 (기존 10건 → 축소)
 
@@ -83,46 +82,38 @@ _ALERT_RULES = [
 ]
 
 
-def _conn() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
-
-
-def _ensure_table():
-    with _conn() as c:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS dart_sent_alerts (
-                rcept_no   TEXT PRIMARY KEY,
-                corp_name  TEXT,
-                report_nm  TEXT,
-                date       TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-
 def _is_sent(rcept_no: str) -> bool:
-    with _conn() as c:
-        row = c.execute(
-            "SELECT 1 FROM dart_sent_alerts WHERE rcept_no=?", (rcept_no,)
-        ).fetchone()
-    return row is not None
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT 1 FROM dart_sent_alerts WHERE rcept_no=:no"),
+                {"no": rcept_no},
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
 
 
 def _mark_sent(rcept_no: str, corp_name: str, report_nm: str, date: str):
-    with _conn() as c:
-        c.execute(
-            "INSERT OR IGNORE INTO dart_sent_alerts "
-            "(rcept_no, corp_name, report_nm, date) VALUES (?, ?, ?, ?)",
-            (rcept_no, corp_name, report_nm, date),
-        )
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO dart_sent_alerts (rcept_no, corp_name, report_nm, date) "
+                    "VALUES (:no, :corp, :nm, :date) ON CONFLICT (rcept_no) DO NOTHING"
+                ),
+                {"no": rcept_no, "corp": corp_name, "nm": report_nm, "date": date},
+            )
+    except Exception:
+        pass
 
 
 def _count_today_sent(date: str) -> int:
     try:
-        with _conn() as c:
-            row = c.execute(
-                "SELECT COUNT(*) FROM dart_sent_alerts WHERE date=?", (date,)
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT COUNT(*) FROM dart_sent_alerts WHERE date=:date"),
+                {"date": date},
             ).fetchone()
         return row[0] if row else 0
     except Exception:
@@ -189,7 +180,7 @@ def check_and_alert() -> int:
         logger.debug("[DART] 발송 허용 시간 외 스킵 (%s KST)", now.strftime("%H:%M"))
         return 0
 
-    _ensure_table()
+    pass  # init_db()에서 테이블 보장됨
     today = now.strftime("%Y-%m-%d")
 
     # 오늘 발송 한도 확인
@@ -310,7 +301,7 @@ def fetch_for_briefing() -> list[dict]:
     - KIS 시총 조회는 시도하되 실패 시 생략 (시총 기준 필터 미적용)
     - 최대 10건 반환
     """
-    _ensure_table()
+    pass  # init_db()에서 테이블 보장됨
     disclosures = fetch_today_disclosures()
 
     kis = None

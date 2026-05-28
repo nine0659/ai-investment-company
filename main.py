@@ -78,7 +78,7 @@ def _run_portfolio_cmd(args):
         add_position, close_position, update_position,
         get_portfolio, calculate_pnl, format_portfolio_for_briefing
     )
-    from services.review_service import init_db
+    from db.database import init_db
     init_db()
 
     sub = args.portfolio[0] if args.portfolio else "list"
@@ -152,7 +152,7 @@ def _run_watchlist_cmd(args):
         add_to_watchlist, remove_from_watchlist,
         get_watchlist, check_triggers, format_watchlist_for_briefing
     )
-    from services.review_service import init_db
+    from db.database import init_db
     from clients.telegram_client import send_message
     init_db()
 
@@ -312,14 +312,14 @@ def main():
 
     # DB 초기화
     if args.init_db:
-        from services.review_service import init_db
+        from db.database import init_db
         init_db()
         console.print("[green]✅ DB 초기화 완료[/green]")
         return
 
     # DB 초기화 (없으면 자동 생성)
     try:
-        from services.review_service import init_db
+        from db.database import init_db
         init_db()
     except Exception as e:
         logger.warning("DB 초기화 경고: %s", e)

@@ -9,20 +9,14 @@ portfolio_service.py
   - 포트폴리오 전체 현황 요약
 """
 import logging
-import os
-import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from db.database import get_conn
+from sqlalchemy import text
+
 logger = logging.getLogger(__name__)
-
-_DB = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
 _TZ = ZoneInfo("Asia/Seoul")
-
-
-def _conn() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
 
 
 # ── 포지션 추가 / 수정 ──────────────────────────────────────────
@@ -35,39 +29,44 @@ def add_position(code: str, name: str, quantity: int, avg_price: float,
     now = datetime.now(_TZ).strftime("%Y-%m-%d")
     entry_date = entry_date or now
 
-    with _conn() as c:
-        existing = c.execute(
-            "SELECT id, quantity, avg_price FROM portfolio_positions WHERE code=? AND status='holding'",
-            (code,)
+    with get_conn() as conn:
+        existing = conn.execute(
+            text("SELECT id, quantity, avg_price FROM portfolio_positions WHERE code=:code AND status='holding'"),
+            {"code": code},
         ).fetchone()
 
         if existing:
             old_qty, old_avg = existing[1], existing[2]
             new_qty = old_qty + quantity
             new_avg = round((old_qty * old_avg + quantity * avg_price) / new_qty, 0)
-            c.execute(
-                "UPDATE portfolio_positions SET quantity=?, avg_price=?, updated_at=?, "
-                "target_price=COALESCE(?,target_price), stop_price=COALESCE(?,stop_price), "
-                "memo=COALESCE(?,memo) WHERE code=? AND status='holding'",
-                (new_qty, new_avg, now,
-                 target_price, stop_price, memo, code)
+            conn.execute(
+                text(
+                    "UPDATE portfolio_positions SET quantity=:qty, avg_price=:avg, updated_at=:now, "
+                    "target_price=COALESCE(:target, target_price), "
+                    "stop_price=COALESCE(:stop, stop_price), "
+                    "memo=COALESCE(:memo, memo) "
+                    "WHERE code=:code AND status='holding'"
+                ),
+                {"qty": new_qty, "avg": new_avg, "now": now,
+                 "target": target_price, "stop": stop_price, "memo": memo, "code": code},
             )
             row_id = existing[0]
             logger.info("포지션 추가매수: %s(%s) %d주 → 총 %d주 @평균 %,.0f원",
                         name, code, quantity, new_qty, new_avg)
         else:
-            c.execute(
-                "INSERT INTO portfolio_positions "
-                "(code, name, quantity, avg_price, entry_date, timeframe, sector, "
-                " target_price, stop_price, memo, status) "
-                "VALUES (?,?,?,?,?,?,?,?,?,'holding')",
-                (code, name, quantity, avg_price, entry_date, timeframe,
-                 sector, target_price, stop_price)
+            result = conn.execute(
+                text(
+                    "INSERT INTO portfolio_positions "
+                    "(code, name, quantity, avg_price, entry_date, timeframe, sector, "
+                    " target_price, stop_price, memo, status) "
+                    "VALUES (:code, :name, :qty, :avg, :entry_date, :tf, :sector, "
+                    "        :target, :stop, :memo, 'holding') RETURNING id"
+                ),
+                {"code": code, "name": name, "qty": quantity, "avg": avg_price,
+                 "entry_date": entry_date, "tf": timeframe, "sector": sector,
+                 "target": target_price, "stop": stop_price, "memo": memo},
             )
-            # memo 추가
-            row_id = c.lastrowid
-            if memo:
-                c.execute("UPDATE portfolio_positions SET memo=? WHERE id=?", (memo, row_id))
+            row_id = result.scalar()
             logger.info("신규 포지션 추가: %s(%s) %d주 @%,.0f원 [%s]",
                         name, code, quantity, avg_price, timeframe)
     return row_id
@@ -82,11 +81,12 @@ def update_position(code: str, **kwargs) -> bool:
         return False
     now = datetime.now(_TZ).strftime("%Y-%m-%d")
     updates["updated_at"] = now
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    with _conn() as c:
-        c.execute(
-            f"UPDATE portfolio_positions SET {set_clause} WHERE code=? AND status='holding'",
-            (*updates.values(), code)
+    set_clause = ", ".join(f"{k}=:{k}" for k in updates)
+    updates["_code"] = code
+    with get_conn() as conn:
+        conn.execute(
+            text(f"UPDATE portfolio_positions SET {set_clause} WHERE code=:_code AND status='holding'"),
+            updates,
         )
     return True
 
@@ -97,11 +97,13 @@ def close_position(code: str, exit_price: float = None, exit_date: str = None,
     now = datetime.now(_TZ).strftime("%Y-%m-%d")
     exit_date = exit_date or now
 
-    with _conn() as c:
-        row = c.execute(
-            "SELECT id, name, quantity, avg_price, timeframe, memo FROM portfolio_positions "
-            "WHERE code=? AND status='holding'",
-            (code,)
+    with get_conn() as conn:
+        row = conn.execute(
+            text(
+                "SELECT id, name, quantity, avg_price, timeframe, memo "
+                "FROM portfolio_positions WHERE code=:code AND status='holding'"
+            ),
+            {"code": code},
         ).fetchone()
         if not row:
             return None
@@ -111,30 +113,28 @@ def close_position(code: str, exit_price: float = None, exit_date: str = None,
         sell_qty = partial_qty or qty
         ret = round((exit_price - avg_price) / avg_price * 100, 2)
 
-        # 이력 저장
-        c.execute(
-            "INSERT INTO portfolio_history "
-            "(code, name, quantity, avg_price, exit_price, exit_date, return_pct, timeframe, memo) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (code, name, sell_qty, avg_price, exit_price, exit_date, ret, timeframe, memo)
+        conn.execute(
+            text(
+                "INSERT INTO portfolio_history "
+                "(code, name, quantity, avg_price, exit_price, exit_date, return_pct, timeframe, memo) "
+                "VALUES (:code, :name, :qty, :avg, :exit, :exit_date, :ret, :tf, :memo)"
+            ),
+            {"code": code, "name": name, "qty": sell_qty, "avg": avg_price,
+             "exit": exit_price, "exit_date": exit_date, "ret": ret, "tf": timeframe, "memo": memo},
         )
 
         if partial_qty and partial_qty < qty:
-            # 부분 매도: 수량만 줄임
-            c.execute(
-                "UPDATE portfolio_positions SET quantity=?, updated_at=? WHERE code=? AND status='holding'",
-                (qty - partial_qty, now, code)
+            conn.execute(
+                text("UPDATE portfolio_positions SET quantity=:qty, updated_at=:now WHERE code=:code AND status='holding'"),
+                {"qty": qty - partial_qty, "now": now, "code": code},
             )
-            logger.info("부분 매도: %s(%s) %d주 @%,.0f원 (%.2f%%)",
-                        name, code, sell_qty, exit_price, ret)
+            logger.info("부분 매도: %s(%s) %d주 @%,.0f원 (%.2f%%)", name, code, sell_qty, exit_price, ret)
         else:
-            # 전량 매도: 상태 변경
-            c.execute(
-                "UPDATE portfolio_positions SET status='sold', updated_at=? WHERE code=? AND status='holding'",
-                (now, code)
+            conn.execute(
+                text("UPDATE portfolio_positions SET status='sold', updated_at=:now WHERE code=:code AND status='holding'"),
+                {"now": now, "code": code},
             )
-            logger.info("전량 매도: %s(%s) %d주 @%,.0f원 (%.2f%%)",
-                        name, code, qty, exit_price, ret)
+            logger.info("전량 매도: %s(%s) %d주 @%,.0f원 (%.2f%%)", name, code, qty, exit_price, ret)
 
     return {"code": code, "name": name, "sell_qty": sell_qty,
             "avg_price": avg_price, "exit_price": exit_price, "return_pct": ret}
@@ -145,11 +145,13 @@ def close_position(code: str, exit_price: float = None, exit_date: str = None,
 def get_portfolio() -> list[dict]:
     """현재 보유 중인 모든 포지션 반환."""
     try:
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT code, name, quantity, avg_price, entry_date, timeframe, "
-                "sector, target_price, stop_price, memo "
-                "FROM portfolio_positions WHERE status='holding' ORDER BY entry_date DESC"
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT code, name, quantity, avg_price, entry_date, timeframe, "
+                    "sector, target_price, stop_price, memo "
+                    "FROM portfolio_positions WHERE status='holding' ORDER BY entry_date DESC"
+                )
             ).fetchall()
         return [
             {"code": r[0], "name": r[1], "quantity": r[2], "avg_price": r[3],
@@ -165,11 +167,14 @@ def get_portfolio() -> list[dict]:
 def get_portfolio_history(days: int = 90) -> list[dict]:
     """최근 N일 매도 이력 조회."""
     try:
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT code, name, quantity, avg_price, exit_price, exit_date, return_pct, timeframe "
-                "FROM portfolio_history WHERE exit_date >= date('now', ?) ORDER BY exit_date DESC",
-                (f"-{days} days",)
+        cutoff = (datetime.now(_TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT code, name, quantity, avg_price, exit_price, exit_date, return_pct, timeframe "
+                    "FROM portfolio_history WHERE exit_date >= :cutoff ORDER BY exit_date DESC"
+                ),
+                {"cutoff": cutoff},
             ).fetchall()
         return [
             {"code": r[0], "name": r[1], "quantity": r[2], "avg_price": r[3],
@@ -190,7 +195,7 @@ def calculate_pnl(kis=None) -> list[dict]:
     positions = get_portfolio()
     results = []
     for p in positions:
-        current_price = p["avg_price"]  # fallback
+        current_price = p["avg_price"]
         price_label = "평균단가(기준)"
         if kis:
             try:
@@ -202,12 +207,11 @@ def calculate_pnl(kis=None) -> list[dict]:
             except Exception as e:
                 logger.debug("현재가 조회 실패 (%s): %s", p["code"], e)
 
-        invested = p["avg_price"] * p["quantity"]
+        invested    = p["avg_price"] * p["quantity"]
         current_val = current_price * p["quantity"]
-        pnl_amt = current_val - invested
-        pnl_pct = round((current_price - p["avg_price"]) / p["avg_price"] * 100, 2)
+        pnl_amt     = current_val - invested
+        pnl_pct     = round((current_price - p["avg_price"]) / p["avg_price"] * 100, 2)
 
-        # 목표가/손절가 대비 상태
         status_flag = "보유중"
         if p.get("stop_price") and current_price <= p["stop_price"]:
             status_flag = "🔴손절선도달"
@@ -221,12 +225,12 @@ def calculate_pnl(kis=None) -> list[dict]:
         results.append({
             **p,
             "current_price": current_price,
-            "price_label": price_label,
-            "invested": round(invested),
-            "current_val": round(current_val),
-            "pnl_amt": round(pnl_amt),
-            "pnl_pct": pnl_pct,
-            "status_flag": status_flag,
+            "price_label":   price_label,
+            "invested":      round(invested),
+            "current_val":   round(current_val),
+            "pnl_amt":       round(pnl_amt),
+            "pnl_pct":       pnl_pct,
+            "status_flag":   status_flag,
         })
     return results
 
@@ -295,7 +299,6 @@ def format_portfolio_for_briefing(kis=None) -> str:
         f"총 손익: {summary['total_pnl_amt']:+,.0f}원 ({summary['total_pnl_pct']:+.2f}%)",
     ]
 
-    # 섹터 비중
     if summary["sector_breakdown"]:
         sec_parts = [f"{s}:{v['weight_pct']}%" for s, v in summary["sector_breakdown"].items()]
         lines.append(f"섹터 비중: {' | '.join(sec_parts)}")
@@ -307,9 +310,7 @@ def format_portfolio_for_briefing(kis=None) -> str:
         if p.get("target_price"):
             target_to_go = round((p["target_price"] - p["current_price"]) / p["current_price"] * 100, 1)
             target_line = f" | 목표가 {p['target_price']:,.0f}원(+{target_to_go}%)"
-        stop_line = ""
-        if p.get("stop_price"):
-            stop_line = f" | 손절 {p['stop_price']:,.0f}원"
+        stop_line = f" | 손절 {p['stop_price']:,.0f}원" if p.get("stop_price") else ""
 
         lines.append(
             f"  {p['status_flag']} {p['name']}({p['code']}) [{tf_label}]"

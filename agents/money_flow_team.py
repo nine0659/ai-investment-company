@@ -1,17 +1,16 @@
 import logging
-import os
-import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from graph.state import InvestmentState
 from clients.openai_client import chat
 from services.scoring_service import score_stock
+from db.database import get_conn
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
-_DB  = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "database.sqlite3"))
 
 _SYSTEM = """당신은 수급 분석 전문가입니다.
 후보 종목들의 수급 데이터와 외국인/기관 순매수 현황을 분석하여 오늘 매매 집중 가능성이 높은 종목을 점수화하세요.
@@ -34,9 +33,7 @@ _SYSTEM = """당신은 수급 분석 전문가입니다.
 - 전체 수급 판단 (매수우위·매도우위·중립)"""
 
 
-def _conn():
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    return sqlite3.connect(_DB)
+
 
 
 def _last_n_trading_days(n: int) -> list[str]:
@@ -53,47 +50,48 @@ def _last_n_trading_days(n: int) -> list[str]:
 def _save_foreign_buy(date: str, stocks: list[dict]) -> int:
     """외국인 순매수 상위 종목을 DB에 저장. 저장 건수를 반환."""
     try:
-        with _conn() as c:
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS foreign_buy_history (
-                    date TEXT NOT NULL, code TEXT NOT NULL, name TEXT, amount REAL,
-                    PRIMARY KEY (date, code)
-                )
-            """)
-            rows = [
-                (date,
-                 s.get("mksc_shrn_iscd") or s.get("stck_shrn_iscd") or s.get("code", ""),
-                 s.get("hts_kor_isnm") or s.get("name", ""),
-                 float(s.get("frgn_ntby_qty") or s.get("amount", 0) or 0))
-                for s in stocks
-                if s.get("mksc_shrn_iscd") or s.get("stck_shrn_iscd") or s.get("code")
-            ]
-            valid = [(d, c_, n, a) for d, c_, n, a in rows if a > 0]
-            if valid:
-                c.executemany(
-                    "INSERT OR REPLACE INTO foreign_buy_history (date, code, name, amount) VALUES (?,?,?,?)",
-                    valid,
-                )
-            return len(valid)
+        rows = [
+            (date,
+             s.get("mksc_shrn_iscd") or s.get("stck_shrn_iscd") or s.get("code", ""),
+             s.get("hts_kor_isnm") or s.get("name", ""),
+             float(s.get("frgn_ntby_qty") or s.get("amount", 0) or 0))
+            for s in stocks
+            if s.get("mksc_shrn_iscd") or s.get("stck_shrn_iscd") or s.get("code")
+        ]
+        valid = [(d, c_, n, a) for d, c_, n, a in rows if a > 0]
+        if valid:
+            with get_conn() as conn:
+                for d, c_, n, a in valid:
+                    conn.execute(
+                        text(
+                            "INSERT INTO foreign_buy_history (date, code, name, amount) "
+                            "VALUES (:date, :code, :name, :amount) "
+                            "ON CONFLICT (date, code) DO UPDATE SET name=EXCLUDED.name, amount=EXCLUDED.amount"
+                        ),
+                        {"date": d, "code": c_, "name": n, "amount": a},
+                    )
+        return len(valid)
     except Exception as e:
         logger.debug("외국인 이력 저장 실패: %s", e)
         return 0
 
 
 def _get_consecutive_foreign_buyers(days: int = 3) -> dict[str, str]:
-    """최근 days 거래일 연속 외국인 순매수 종목 반환.
-    반환: {code: name} — 주말 제외한 거래일 기준.
-    """
+    """최근 days 거래일 연속 외국인 순매수 종목 반환."""
     try:
         trading_dates = _last_n_trading_days(days)
-        with _conn() as c:
-            placeholders = ",".join("?" * len(trading_dates))
-            rows = c.execute(
-                f"SELECT code, name, COUNT(DISTINCT date) AS cnt "
-                f"FROM foreign_buy_history "
-                f"WHERE date IN ({placeholders}) AND amount > 0 "
-                f"GROUP BY code HAVING cnt >= ?",
-                (*trading_dates, days),
+        placeholders = ", ".join(f":d{i}" for i in range(len(trading_dates)))
+        params = {f"d{i}": d for i, d in enumerate(trading_dates)}
+        params["days"] = days
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    f"SELECT code, name, COUNT(DISTINCT date) AS cnt "
+                    f"FROM foreign_buy_history "
+                    f"WHERE date IN ({placeholders}) AND amount > 0 "
+                    f"GROUP BY code HAVING cnt >= :days"
+                ),
+                params,
             ).fetchall()
         return {r[0]: r[1] for r in rows}
     except Exception:
