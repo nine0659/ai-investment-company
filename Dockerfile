@@ -17,6 +17,9 @@ COPY . .
 # 데이터 디렉토리 (볼륨 마운트 또는 ephemeral)
 RUN mkdir -p data/logs
 
+# Windows에서 커밋된 경우 CRLF → LF 변환 + 실행 권한 부여
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
+
 # 포트 노출 (Railway/Render 환경변수 $PORT 우선)
 EXPOSE 8000
 
