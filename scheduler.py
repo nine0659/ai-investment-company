@@ -79,6 +79,13 @@ def job_intra2():
 def job_close():
     _run_safe(RUN_TYPE_CLOSE)
 
+def job_monitor():
+    from agents.realtime_monitor_agent import run as monitor_run
+    try:
+        monitor_run()
+    except Exception as e:
+        logger.error("실시간 모니터 실패: %s", e)
+
 
 def _parse_time(time_str: str) -> tuple[int, int]:
     h, m = time_str.split(":")
@@ -103,6 +110,22 @@ def setup_jobs():
             coalesce=True,
         )
         console.print(f"  [cyan]⏰ {time_str}[/cyan] {run_type}")
+
+    # 실시간 모니터: 장중 9:00-15:30, 15분마다
+    scheduler.add_job(
+        job_monitor,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute="*/15",
+            timezone=TIMEZONE_STR,
+        ),
+        id="realtime_monitor",
+        name="[15분] 실시간 진입신호·손절·목표가 모니터",
+        misfire_grace_time=120,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 09:00-15:30 매 15분[/cyan] 실시간 모니터")
 
 
 def shutdown(signum, frame):

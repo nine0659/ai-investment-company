@@ -1,10 +1,12 @@
 import logging
+import re
 from datetime import datetime, time as _time
 from graph.state import InvestmentState
 from clients.openai_client import chat_ceo
 from clients.us_stock_client import format_us_impact_for_prompt
 from clients.kis_client import KISClient
 from clients.market_data_client import fetch_kr_stock_technicals
+from clients.telegram_client import send_message
 from services.recommendation_service import (
     parse_recommendations, save_recommendations,
     update_close_prices, format_returns_for_report, get_performance_stats,
@@ -191,6 +193,13 @@ def _build_prompt_pre(has_price: bool) -> str:
 □ 갭업 +1~2%    → 계획 물량 절반만 진입
 □ 보합 출발     → 계획대로 전량 진입
 □ 갭하락        → 양봉 전환 확인 후 진입 / 미전환 시 당일 포기
+
+🔔 *3줄 즉시 실행 요약* (보고서 맨 마지막에 아래 형식 그대로 출력 — 한 글자도 바꾸지 말 것)
+╔═══ 📋 오늘 3줄 실행 ═══
+▶ [매수공격/선별매수/관망] — [이유 15자 이내]
+📌 종목: [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
+❌ 금지: [오늘 절대 하면 안 되는 행동 1가지]
+╚═════════════════════════
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
@@ -253,6 +262,13 @@ B [약세 시나리오]:  하락확률 YY%  |  주의 섹터: [OO]  |  포지션
 🌐 오늘 지배 서사: [글로벌 전문가 논의 중심]
 ⚡ 컨센서스 변화: [강화 / 약화 / 전환 — 이유 한 줄]
 → 내일 전략 함의: [서사 변화가 내일 포지션에 미치는 영향]
+
+🔔 *3줄 즉시 실행 요약* (보고서 맨 마지막에 아래 형식 그대로 출력 — 한 글자도 바꾸지 말 것)
+╔═══ 📋 오늘 3줄 실행 ═══
+▶ [매수공격/선별매수/관망] — [이유 15자 이내]
+📌 종목: [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
+❌ 금지: [오늘 절대 하면 안 되는 행동 1가지]
+╚═════════════════════════
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
@@ -281,6 +297,13 @@ _PROMPT_INTRA1 = f"""{_COMMON_HEADER}
 미국 프리마켓: S&P선물 [수치] → 오후 한국 [영향 방향]
 경계 임계값: [지표] [수준] 이탈 시 → [즉시 취할 행동]
 오후 주목 시간대: [시간] — [이유]
+
+🔔 *3줄 즉시 실행 요약* (보고서 맨 마지막에 아래 형식 그대로 출력 — 한 글자도 바꾸지 말 것)
+╔═══ 📋 오늘 3줄 실행 ═══
+▶ [매수공격/선별매수/관망] — [이유 15자 이내]
+📌 종목: [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
+❌ 금지: [오늘 절대 하면 안 되는 행동 1가지]
+╚═════════════════════════
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 _PROMPT_INTRA2 = f"""{_COMMON_HEADER}
@@ -306,6 +329,13 @@ _PROMPT_INTRA2 = f"""{_COMMON_HEADER}
 ③ 마감 전 주의사항  (수치 기반 — 추상적 표현 금지)
 ⚠️ [시간대]  [지표] [수준] 돌파/이탈 시  →  [즉시 취할 행동]
   예: 오후 2시 이후 외국인 순매도 전환 시 → 보유 물량 30% 즉시 축소
+
+🔔 *3줄 즉시 실행 요약* (보고서 맨 마지막에 아래 형식 그대로 출력 — 한 글자도 바꾸지 말 것)
+╔═══ 📋 오늘 3줄 실행 ═══
+▶ [매수공격/선별매수/관망] — [이유 15자 이내]
+📌 종목: [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
+❌ 금지: [오늘 절대 하면 안 되는 행동 1가지]
+╚═════════════════════════
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
@@ -565,6 +595,15 @@ def run(state: InvestmentState) -> InvestmentState:
 
         result  = chat_ceo(prompt, context, max_tokens=2000)
         state["ceo_report"] = result
+
+        # 3줄 요약 블록 추출 → 전체 리포트보다 먼저 별도 발송
+        try:
+            compact_match = re.search(r"(╔═══.*?╚═+)", result, re.DOTALL)
+            if compact_match:
+                send_message(compact_match.group(1))
+                logger.info("[CEO] 3줄 요약 먼저 발송 완료")
+        except Exception as e:
+            logger.debug("[CEO] 3줄 요약 발송 실패: %s", e)
 
         # 장전 브리핑: 추천 종목 파싱 → DB 저장
         if run_type == RUN_TYPE_PRE:
