@@ -118,38 +118,15 @@ def _send_telegram(message: str) -> bool:
 
 
 def _send_kakao(message: str) -> bool:
-    """카카오톡 나에게 보내기 (REST API).
-    환경변수 KAKAO_ACCESS_TOKEN 필요.
-    """
-    token = os.getenv("KAKAO_ACCESS_TOKEN", "")
-    if not token:
-        return False
+    """카카오톡 나에게 보내기 (토큰 자동 갱신 포함)."""
     try:
-        import urllib.request, urllib.parse, json as _json
-        payload = {
-            "object_type": "text",
-            "text": message[:2000],
-            "link": {"web_url": "", "mobile_web_url": ""},
-            "button_title": "확인",
-        }
-        data = urllib.parse.urlencode({
-            "template_object": _json.dumps(payload, ensure_ascii=False)
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://kapi.kakao.com/v2/api/talk/memo/default/send",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = _json.loads(resp.read().decode())
-            if result.get("result_code") == 0:
-                logger.info("카카오톡 발송 완료")
-                return True
-            logger.warning("카카오톡 발송 실패: %s", result)
+        from clients.kakao_client import send_message as kakao_send, is_configured
+        if not is_configured():
+            logger.warning(
+                "[카카오톡] 미설정 — python scripts/kakao_setup.py 를 실행해 연동하세요"
+            )
             return False
+        return kakao_send(message)
     except Exception as e:
         logger.error("카카오톡 발송 오류: %s", e)
         return False
