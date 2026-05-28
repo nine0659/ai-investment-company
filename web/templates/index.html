@@ -255,14 +255,120 @@
       <!-- ── 📊 포트폴리오 ─────────────────────────────────── -->
       <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='portfolio'">
         <div class="max-w-5xl mx-auto space-y-5">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between flex-wrap gap-2">
             <h2 class="text-lg font-bold">포트폴리오</h2>
-            <div class="flex gap-2">
+            <div class="flex gap-2 flex-wrap">
               <button @click="portfolioSubTab='positions'" class="text-xs px-3 py-1.5 rounded-lg transition"
                 :class="portfolioSubTab==='positions' ? 'bg-blue-700 text-white' : 'bg-slate-700 text-slate-300'">보유종목</button>
               <button @click="portfolioSubTab='history'; loadHistory()" class="text-xs px-3 py-1.5 rounded-lg transition"
                 :class="portfolioSubTab==='history' ? 'bg-blue-700 text-white' : 'bg-slate-700 text-slate-300'">매매이력</button>
-              <button @click="loadPortfolio()" class="text-xs text-blue-400 hover:text-blue-300 ml-2">새로고침</button>
+              <button @click="showAddPosition=true" class="text-xs px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg transition text-white">+ 종목 추가</button>
+              <button @click="loadPortfolio()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+            </div>
+          </div>
+
+          <!-- 종목 추가 모달 -->
+          <div x-show="showAddPosition" class="bg-slate-800 rounded-xl p-4 border border-green-800">
+            <div class="text-sm font-semibold mb-3 text-green-300">보유 종목 추가 / 추가매수</div>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">종목코드 *</label>
+                <input x-model="posForm.code" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="005930">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">종목명 *</label>
+                <input x-model="posForm.name" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="삼성전자">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">수량(주) *</label>
+                <input x-model.number="posForm.quantity" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="10">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">평균단가(원) *</label>
+                <input x-model.number="posForm.avg_price" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="75000">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">목표가(원)</label>
+                <input x-model.number="posForm.target_price" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="85000">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">손절가(원)</label>
+                <input x-model.number="posForm.stop_price" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="70000">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">투자전략</label>
+                <select x-model="posForm.timeframe" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+                  <option value="short">단기 (1주~1개월)</option>
+                  <option value="mid">중기 (1~6개월)</option>
+                  <option value="long">장기 (6개월+)</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">섹터</label>
+                <input x-model="posForm.sector" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="반도체">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="text-xs text-slate-400 mb-1 block">투자 근거 (메모)</label>
+              <input x-model="posForm.memo" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="HBM 수요 증가로 실적 턴어라운드 기대">
+            </div>
+            <div class="flex gap-2 justify-end">
+              <button @click="showAddPosition=false; posForm={code:'',name:'',quantity:null,avg_price:null,target_price:null,stop_price:null,timeframe:'short',sector:'',memo:''}"
+                class="text-xs px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition">취소</button>
+              <button @click="addPosition()"
+                class="text-xs px-4 py-2 bg-green-700 hover:bg-green-600 rounded-lg transition text-white">추가</button>
+            </div>
+          </div>
+
+          <!-- 매도 모달 -->
+          <div x-show="sellModal.show" class="bg-slate-800 rounded-xl p-4 border border-red-800">
+            <div class="text-sm font-semibold mb-3 text-red-300" x-text="'매도: '+(sellModal.name||'')"></div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">매도가(원) *</label>
+                <input x-model.number="sellModal.exit_price" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="80000">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">매도 수량 (미입력=전량)</label>
+                <input x-model.number="sellModal.partial_qty" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" :placeholder="sellModal.qty+'주 (전량)'">
+              </div>
+            </div>
+            <div class="flex gap-2 justify-end">
+              <button @click="sellModal.show=false" class="text-xs px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition">취소</button>
+              <button @click="closePosition()"
+                class="text-xs px-4 py-2 bg-red-700 hover:bg-red-600 rounded-lg transition text-white">매도 확인</button>
+            </div>
+          </div>
+
+          <!-- 목표가/손절가 수정 모달 -->
+          <div x-show="editModal.show" class="bg-slate-800 rounded-xl p-4 border border-yellow-800">
+            <div class="text-sm font-semibold mb-3 text-yellow-300" x-text="'수정: '+(editModal.name||'')"></div>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">목표가(원)</label>
+                <input x-model.number="editModal.target_price" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">손절가(원)</label>
+                <input x-model.number="editModal.stop_price" type="number" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+              </div>
+              <div>
+                <label class="text-xs text-slate-400 mb-1 block">투자전략</label>
+                <select x-model="editModal.timeframe" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+                  <option value="short">단기</option>
+                  <option value="mid">중기</option>
+                  <option value="long">장기</option>
+                </select>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="text-xs text-slate-400 mb-1 block">메모</label>
+              <input x-model="editModal.memo" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+            </div>
+            <div class="flex gap-2 justify-end">
+              <button @click="editModal.show=false" class="text-xs px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition">취소</button>
+              <button @click="updatePosition()"
+                class="text-xs px-4 py-2 bg-yellow-700 hover:bg-yellow-600 rounded-lg transition text-white">저장</button>
             </div>
           </div>
 
@@ -364,7 +470,11 @@
                         <div class="text-xs text-slate-400"
                           :class="(p.pnl_amt||0)>=0?'text-green-500':'text-red-500'"
                           x-text="((p.pnl_amt>=0?'+':'')+(p.pnl_amt||0).toLocaleString()+'원')"></div>
-                        <button @click="quickResearch(p.code)" class="mt-1 text-xs px-2 py-1 bg-slate-700 hover:bg-blue-700 rounded transition">분석</button>
+                        <div class="flex gap-1 flex-wrap justify-end mt-1">
+                          <button @click="quickResearch(p.code)" class="text-xs px-2 py-1 bg-slate-700 hover:bg-blue-700 rounded transition">분석</button>
+                          <button @click="openEditModal(p)" class="text-xs px-2 py-1 bg-slate-700 hover:bg-yellow-700 rounded transition">수정</button>
+                          <button @click="openSellModal(p)" class="text-xs px-2 py-1 bg-slate-700 hover:bg-red-800 rounded transition text-red-300">매도</button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -932,6 +1042,10 @@ function app() {
     portfolio: null, balance: null, portfolioSummary: null, portfolioLoading: false,
     portfolioSubTab: 'positions',
     tradeHistory: [], historyLoading: false,
+    showAddPosition: false,
+    posForm: { code:'', name:'', quantity:null, avg_price:null, target_price:null, stop_price:null, timeframe:'short', sector:'', memo:'' },
+    sellModal: { show:false, code:'', name:'', qty:0, exit_price:null, partial_qty:null },
+    editModal: { show:false, code:'', name:'', target_price:null, stop_price:null, timeframe:'short', memo:'' },
 
     // Watchlist
     watchlist: null, watchlistLoading: false,
@@ -1089,6 +1203,67 @@ function app() {
       this.researchQuery = code;
       this.tab = 'research';
       this.$nextTick(() => this.startResearch());
+    },
+
+    // ── Portfolio CRUD ────────────────────────────────────────
+    async addPosition() {
+      const f = this.posForm;
+      if (!f.code || !f.name || !f.quantity || !f.avg_price) {
+        alert('종목코드·종목명·수량·평균단가는 필수입니다'); return;
+      }
+      try {
+        const r = await fetch('/api/portfolio/add', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(f)
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.showAddPosition = false;
+          this.posForm = {code:'',name:'',quantity:null,avg_price:null,target_price:null,stop_price:null,timeframe:'short',sector:'',memo:''};
+          await this.loadPortfolio();
+        } else alert('추가 실패: ' + (d.error||'오류'));
+      } catch(e) { alert('오류: ' + e.message); }
+    },
+
+    openSellModal(p) {
+      this.sellModal = {show:true, code:p.code, name:p.name, qty:p.quantity, exit_price:p.current_price||null, partial_qty:null};
+    },
+
+    async closePosition() {
+      const m = this.sellModal;
+      if (!m.exit_price) { alert('매도가를 입력하세요'); return; }
+      try {
+        const r = await fetch('/api/portfolio/close', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({code:m.code, exit_price:m.exit_price, partial_qty:m.partial_qty||null})
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.sellModal.show = false;
+          await this.loadPortfolio();
+        } else alert('매도 실패: ' + (d.error||'오류'));
+      } catch(e) { alert('오류: ' + e.message); }
+    },
+
+    openEditModal(p) {
+      this.editModal = {show:true, code:p.code, name:p.name,
+        target_price:p.target_price||null, stop_price:p.stop_price||null,
+        timeframe:p.timeframe||'short', memo:p.memo||''};
+    },
+
+    async updatePosition() {
+      const m = this.editModal;
+      try {
+        const r = await fetch('/api/portfolio/'+m.code, {
+          method: 'PUT', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({target_price:m.target_price, stop_price:m.stop_price, timeframe:m.timeframe, memo:m.memo})
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.editModal.show = false;
+          await this.loadPortfolio();
+        } else alert('수정 실패: ' + (d.error||'오류'));
+      } catch(e) { alert('오류: ' + e.message); }
     },
 
     // ── Portfolio ─────────────────────────────────────────────

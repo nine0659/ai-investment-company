@@ -1,46 +1,49 @@
 """
 services/alert_service.py
-긴급 알림 서비스 — 명확한 기준 정의 + 텔레그램·카카오톡 발송
+긴급 기회 알림 서비스
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[긴급사항 정의 — Alert Level 기준]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[긴급 알림의 의미]
 
-🚨 LEVEL 1 — CRITICAL (즉시 발송, 30초 이내)
-  시장 충격:
-    - KOSPI or KOSDAQ 단일일 -2.5% 이상 하락
-    - VIX 32 이상 급등 (전일 대비 +5pt 이상)
-    - 원달러 환율 1,450원 돌파
-    - 미국 시장 서킷브레이커 발동
-  지정학:
-    - 키워드 감지: 전쟁선포 / 핵 / 미군기지 공격 / 이란 공습 / 호르무즈 봉쇄
-    - 중동 분쟁 확전 → 원유 +5% 이상 급등
-  포트폴리오:
-    - 보유 종목 단일일 -7% 이상 하락
-    - 손절가 도달 (realtime_monitor_agent에서 별도 처리)
+이 시스템의 "긴급 알림"은 단순 위험 경고가 아닙니다.
+"지금 이 순간 진입해야 기회를 잡을 수 있다"는 신호입니다.
 
-⚠️ LEVEL 2 — URGENT (장 시작 30분 전 또는 즉시)
-  시장:
-    - KOSPI or KOSDAQ -1.5% 이상
-    - 미국 선물 -1.5% 이상 (장 전 브리핑 보완)
-    - 원달러 환율 1,420원 돌파
-  수급:
-    - 국민연금·연기금 대규모 매도 기사 감지
-    - 외국인 KOSPI 5,000억 이상 단일일 순매도
-  포트폴리오:
-    - 보유 종목 단일일 -4% 이상 하락
-    - 목표가 도달 (realtime_monitor_agent에서 별도 처리)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 OPPORTUNITY (기회 긴급 — 지금 매수 진입)
 
-📌 LEVEL 3 — IMPORTANT (정규 스케줄 알림)
-  - 워치리스트 진입 신호 (realtime_monitor_agent 처리)
-  - DART 주요 공시 (dart_alert_agent 처리)
-  - 관심종목 RSI 과매도 진입 신호
+정의: 복수의 강한 상승 신호가 동시에 발생해 즉각 진입하지 않으면
+       기회를 놓칠 가능성이 높은 상황
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[카카오톡 연동 설정]
-  환경변수: KAKAO_ACCESS_TOKEN (카카오 REST API 토큰)
-  미설정 시: 텔레그램으로만 발송
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+발동 조건 (아래 중 2개 이상 동시 충족):
+  [기술적]
+  · 관심종목 RSI ≤ 28 (극과매도) + 볼린저밴드 하단 터치
+  · MA5/MA20 골든크로스 + 거래량 300% 이상 급증
+  · 전일 급락 후 장 초반 강한 반등(+2% 이상) 시작
+  [이벤트/뉴스 촉매]
+  · 지정학 이벤트 → 명확한 수혜 섹터 존재 (방산·원유·방어주 등)
+  · 정책 발표 → 특정 섹터 직접 수혜 (보조금·규제완화·금리인하)
+  · 실적 서프라이즈 → 경쟁사 동반 상승 기대
+  [수급 신호]
+  · 외국인 대규모 순매수 전환 + EWY/EEM ETF 급등
+  · 기관 대량 매수 + 공매도 잔고 감소
+
+🚨 RISK (위험 긴급 — 즉시 포지션 점검)
+
+정의: 예상치 못한 외부 충격으로 보유 포지션이 즉각 위협받는 상황
+
+발동 조건:
+  · 지정학 블랙스완 (미군기지 공격·핵·전쟁선포·서킷브레이커)
+  · KOSPI -2.5% 이상 + 외국인 대량 매도 동반
+  · 보유 종목 단일일 -7% 이상 급락
+  · 원달러 환율 1,450원 돌파 (외국인 이탈 가속)
+  · VIX 35 이상 패닉 수준 (시스템 리스크)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[카카오톡 설정]
+환경변수: KAKAO_ACCESS_TOKEN
+발급: https://developers.kakao.com → 앱 생성 → 카카오 로그인 → 액세스토큰
+미설정 시 텔레그램으로만 발송 (OPPORTUNITY·RISK 모두)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 import logging
 import os
@@ -53,48 +56,56 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
-# ── 레벨 상수 ──────────────────────────────────────────────────
+# ── 알림 타입 ────────────────────────────────────────────────────
+TYPE_OPPORTUNITY = "opportunity"  # 🚀 지금 진입 기회
+TYPE_RISK        = "risk"         # 🚨 즉각 포지션 점검
+TYPE_ENTRY       = "entry"        # ✅ 관심종목 진입 신호 (실시간모니터)
+TYPE_TARGET      = "target"       # 🎯 목표가 도달
+TYPE_STOP        = "stop"         # 🛑 손절선 도달
 
-LEVEL_CRITICAL  = 1   # 🚨 즉시 발송
-LEVEL_URGENT    = 2   # ⚠️ 긴급
-LEVEL_IMPORTANT = 3   # 📌 중요 (정규)
-
-_LEVEL_EMOJI = {
-    LEVEL_CRITICAL:  "🚨🚨🚨 *[긴급 CRITICAL]*",
-    LEVEL_URGENT:    "⚠️ *[URGENT 긴급]*",
-    LEVEL_IMPORTANT: "📌 *[IMPORTANT 중요]*",
+_EMOJI = {
+    TYPE_OPPORTUNITY: "🚀🚀🚀 *[기회 — 지금 진입]*",
+    TYPE_RISK:        "🚨🚨🚨 *[위험 — 즉시 점검]*",
+    TYPE_ENTRY:       "✅ *[진입 신호]*",
+    TYPE_TARGET:      "🎯 *[목표가 도달]*",
+    TYPE_STOP:        "🛑 *[손절선 도달]*",
 }
 
-# ── 긴급 기준 상수 ──────────────────────────────────────────────
+# ── 위험 임계값 ──────────────────────────────────────────────────
+RISK_KOSPI_CRASH   = -2.5    # KOSPI 급락 (%)
+RISK_VIX_PANIC     = 35.0    # VIX 패닉 수준
+RISK_USD_KRW       = 1450    # 원달러 긴급 수준 (원)
+RISK_STOCK_CRASH   = -7.0    # 보유 종목 단일일 급락 (%)
 
-CRITICAL_KOSPI_DROP      = -2.5   # KOSPI/KOSDAQ 하락률 기준 (%)
-CRITICAL_VIX_LEVEL       = 32.0   # VIX 절대 수준
-CRITICAL_VIX_SPIKE       = 5.0    # VIX 하루 상승폭 (pt)
-CRITICAL_USD_KRW         = 1450   # 원달러 환율 기준 (원)
-CRITICAL_OIL_SPIKE       = 5.0    # WTI 원유 단일일 상승률 (%)
-CRITICAL_PORTFOLIO_DROP  = -7.0   # 보유 종목 단일일 하락 기준 (%)
+# ── 기회 임계값 ──────────────────────────────────────────────────
+OPP_RSI_OVERSOLD   = 28      # RSI 극과매도
+OPP_BB_LOWER_PCT   = 5.0     # 볼린저밴드 하단 (%)
+OPP_VOL_SURGE      = 250     # 거래량 급증 (5일 평균 대비 %)
+OPP_REBOUND_PCT    = 2.0     # 반등 시작 (%)
 
-URGENT_KOSPI_DROP        = -1.5   # KOSPI 하락률
-URGENT_FUTURES_DROP      = -1.5   # 미국 선물 하락률
-URGENT_USD_KRW           = 1420   # 원달러 환율 기준
-URGENT_FOREIGN_SELL      = -500_000_000_000  # 외국인 순매도 5,000억 (원)
-URGENT_PORTFOLIO_DROP    = -4.0   # 보유 종목 단일일 하락 기준 (%)
-
-# 지정학 리스크 핵심 키워드 (이 키워드가 뉴스에 포함되면 CRITICAL)
-GEOPOLITICAL_KEYWORDS = [
-    "전쟁선포", "핵공격", "핵폭탄", "미군기지 공격", "이란 공습", "호르무즈 봉쇄",
-    "이란 미군", "iran attack", "us military strike", "nuclear", "war declaration",
-    "북한 핵", "북한 미사일", "서킷브레이커",
+# ── 지정학 RISK 키워드 ────────────────────────────────────────────
+GEOPOLITICAL_RISK_KEYWORDS = [
+    "전쟁선포", "미군기지 공격", "핵공격", "핵폭탄", "이란 공습",
+    "호르무즈 봉쇄", "서킷브레이커", "거래정지",
+    "iran attack", "us military strike", "nuclear", "war declaration",
+    "circuit breaker",
 ]
 
-# 기관수급 위험 키워드 (URGENT)
-INSTITUTIONAL_KEYWORDS = [
-    "국민연금 매도", "국민연금 주식 비율", "연기금 대규모", "공적자금 매도",
-    "외국인 대규모 매도", "외국인 순매도 급증",
+# ── 기회 뉴스 키워드 → 수혜 섹터 매핑 ───────────────────────────
+OPPORTUNITY_CATALYSTS: list[tuple[list[str], str, str]] = [
+    # (뉴스 키워드 목록, 수혜 섹터, 대표 ETF/종목)
+    (["이란", "중동 분쟁", "호르무즈"],     "방산·원유",   "한화에어로스페이스·현대로템"),
+    (["북한 도발", "북한 미사일"],           "방산",        "한화에어로스페이스·LIG넥스원"),
+    (["금리 인하", "기준금리 인하", "피벗"], "성장주·리츠", "카카오·크래프톤·리츠"),
+    (["반도체 보조금", "AI 투자 확대"],      "반도체·AI",   "삼성전자·SK하이닉스"),
+    (["원달러 급락", "달러 약세"],            "외국인 유입", "대형주·삼성전자"),
+    (["VIX 급락", "공포지수 하락"],          "위험자산",    "성장주·반도체"),
+    (["조선 수주", "LNG선 계약"],            "조선",        "HD현대중공업·삼성중공업"),
+    (["2차전지 수주", "전기차 확대"],         "배터리",      "LG에너지솔루션·에코프로비엠"),
 ]
 
 
-# ── 텔레그램 발송 ───────────────────────────────────────────────
+# ── 발송 함수 ─────────────────────────────────────────────────────
 
 def _send_telegram(message: str) -> bool:
     try:
@@ -106,28 +117,23 @@ def _send_telegram(message: str) -> bool:
         return False
 
 
-# ── 카카오톡 발송 ───────────────────────────────────────────────
-
 def _send_kakao(message: str) -> bool:
     """카카오톡 나에게 보내기 (REST API).
     환경변수 KAKAO_ACCESS_TOKEN 필요.
-    발급: https://developers.kakao.com → 내 애플리케이션 → 카카오 로그인 → 토큰 발급
     """
     token = os.getenv("KAKAO_ACCESS_TOKEN", "")
     if not token:
         return False
     try:
-        import urllib.request
-        import urllib.parse
-        import json
+        import urllib.request, urllib.parse, json as _json
         payload = {
             "object_type": "text",
-            "text": message[:2000],  # 카카오 메시지 최대 2000자
+            "text": message[:2000],
             "link": {"web_url": "", "mobile_web_url": ""},
             "button_title": "확인",
         }
         data = urllib.parse.urlencode({
-            "template_object": json.dumps(payload, ensure_ascii=False)
+            "template_object": _json.dumps(payload, ensure_ascii=False)
         }).encode("utf-8")
         req = urllib.request.Request(
             "https://kapi.kakao.com/v2/api/talk/memo/default/send",
@@ -138,31 +144,27 @@ def _send_kakao(message: str) -> bool:
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
+            result = _json.loads(resp.read().decode())
             if result.get("result_code") == 0:
                 logger.info("카카오톡 발송 완료")
                 return True
-            else:
-                logger.warning("카카오톡 발송 실패: %s", result)
-                return False
+            logger.warning("카카오톡 발송 실패: %s", result)
+            return False
     except Exception as e:
         logger.error("카카오톡 발송 오류: %s", e)
         return False
 
 
-# ── 통합 발송 함수 ──────────────────────────────────────────────
-
-def send_alert(level: int, title: str, body: str, code: str = "", name: str = "") -> None:
-    """긴급 알림 발송 + DB 저장.
-
-    level: LEVEL_CRITICAL / LEVEL_URGENT / LEVEL_IMPORTANT
+def send_alert(alert_type: str, title: str, body: str,
+               code: str = "", name: str = "") -> None:
+    """알림 발송 + DB 저장.
+    OPPORTUNITY·RISK는 텔레그램 + 카카오톡 동시 발송.
     """
-    today    = datetime.now(_KST).strftime("%Y-%m-%d")
-    emoji    = _LEVEL_EMOJI.get(level, "📌")
-    message  = f"{emoji}\n*{title}*\n\n{body}"
+    today   = datetime.now(_KST).strftime("%Y-%m-%d")
+    emoji   = _EMOJI.get(alert_type, "📌")
+    message = f"{emoji}\n*{title}*\n\n{body}"
 
-    # DB 저장 (웹 UI 표시용)
-    alert_type = {1: "critical", 2: "urgent", 3: "important"}.get(level, "important")
+    # DB 저장 (웹 대시보드 표시)
     try:
         with get_conn() as conn:
             conn.execute(
@@ -170,197 +172,320 @@ def send_alert(level: int, title: str, body: str, code: str = "", name: str = ""
                     "INSERT INTO alert_notifications (date, alert_type, code, name, message) "
                     "VALUES (:d, :t, :c, :n, :m)"
                 ),
-                {"d": today, "t": alert_type, "c": code, "n": name, "m": message},
+                {"d": today, "t": alert_type, "c": code or "MARKET", "n": name, "m": message},
             )
     except Exception as e:
         logger.debug("알림 DB 저장 실패: %s", e)
 
-    # 텔레그램은 모든 레벨 발송
+    # 텔레그램: 모든 타입
     _send_telegram(message)
 
-    # 카카오톡은 CRITICAL/URGENT만 발송
-    if level <= LEVEL_URGENT:
+    # 카카오톡: OPPORTUNITY·RISK만 (진짜 긴급한 것만)
+    if alert_type in (TYPE_OPPORTUNITY, TYPE_RISK):
         _send_kakao(message)
 
-    logger.info("[AlarmService] Level%d 발송: %s", level, title)
+    logger.info("[AlarmService] %s 발송: %s", alert_type.upper(), title)
 
 
-# ── 중복 발송 방지 ───────────────────────────────────────────────
+# ── 중복 방지 ─────────────────────────────────────────────────────
 
-def _already_sent(today: str, alert_key: str) -> bool:
+def _already_sent(today: str, code: str, alert_type: str) -> bool:
     try:
         with get_conn() as conn:
             row = conn.execute(
                 text("SELECT 1 FROM price_alert_log WHERE date=:d AND code=:c AND type=:t"),
-                {"d": today, "c": "ALERT", "t": alert_key},
+                {"d": today, "c": code, "t": alert_type},
             ).fetchone()
         return row is not None
     except Exception:
         return False
 
 
-def _mark_sent(today: str, alert_key: str) -> None:
+def _mark_sent(today: str, code: str, alert_type: str) -> None:
     try:
         with get_conn() as conn:
             conn.execute(
                 text("""
                     INSERT INTO price_alert_log (date, code, type)
-                    VALUES (:d, 'ALERT', :t)
+                    VALUES (:d, :c, :t)
                     ON CONFLICT (date, code, type) DO UPDATE SET sent_at=CURRENT_TIMESTAMP
                 """),
-                {"d": today, "t": alert_key},
+                {"d": today, "c": code, "t": alert_type},
             )
     except Exception:
         pass
 
 
-# ── 시장 긴급 상황 체크 함수들 ──────────────────────────────────
+# ── 기회 감지 ─────────────────────────────────────────────────────
 
-def check_market_crash(market_data: dict) -> None:
-    """KOSPI/KOSDAQ 급락, VIX 급등, 환율 급등 체크."""
-    today = datetime.now(_KST).strftime("%Y-%m-%d")
+def check_opportunity_signals(code: str, name: str, price: int, tech: dict,
+                               today: str) -> list[str]:
+    """특정 종목의 기회 신호 감지. 신호 목록 반환."""
+    signals = []
 
-    kospi = market_data.get("kospi", {})
-    if kospi:
-        chg = kospi.get("change_pct", 0) or 0
-        if chg <= CRITICAL_KOSPI_DROP:
-            key = "kospi_crash"
-            if not _already_sent(today, key):
-                send_alert(
-                    LEVEL_CRITICAL,
-                    f"KOSPI 급락 {chg:+.1f}%",
-                    f"KOSPI가 하루 {chg:+.1f}% 폭락하고 있습니다.\n"
-                    f"현재 지수: {kospi.get('current', 0):,.2f}\n"
-                    f"즉시 포지션 점검 및 손절 준비 필요합니다.",
-                )
-                _mark_sent(today, key)
-        elif chg <= URGENT_KOSPI_DROP:
-            key = "kospi_drop"
-            if not _already_sent(today, key):
-                send_alert(
-                    LEVEL_URGENT,
-                    f"KOSPI 하락 {chg:+.1f}%",
-                    f"KOSPI가 {chg:+.1f}% 하락 중입니다.\n"
-                    f"포지션 점검 권고. 손절 조건 확인 필요.",
-                )
-                _mark_sent(today, key)
+    rsi    = tech.get("rsi14", 50)
+    bb_pct = tech.get("bb_pct", 50)
+    vol    = tech.get("vol_ratio", 100)
+    golden = tech.get("golden_cross", False)
+    above  = tech.get("above_ma20", True)
+    ma20   = tech.get("ma20", 0)
 
-    vix = market_data.get("vix", {})
-    if vix:
-        vix_val = vix.get("close", 0) or 0
-        if vix_val >= CRITICAL_VIX_LEVEL:
-            key = "vix_critical"
-            if not _already_sent(today, key):
-                send_alert(
-                    LEVEL_CRITICAL,
-                    f"VIX 공포지수 {vix_val:.1f} — 패닉 구간",
-                    f"공포지수(VIX)가 {vix_val:.1f}로 패닉 수준에 도달했습니다.\n"
-                    f"RISK-OFF 전환. 신규 포지션 전면 중단 권고.\n"
-                    f"현금 비중 최대화. 역발상 매수 기회는 VIX 30 하향 후 검토.",
-                )
-                _mark_sent(today, key)
+    # 신호1: RSI 극과매도 + 볼린저 하단
+    if rsi <= OPP_RSI_OVERSOLD and bb_pct is not None and bb_pct <= OPP_BB_LOWER_PCT:
+        signals.append(f"RSI {rsi:.0f} 극과매도 + 볼린저밴드 하단 터치 — 강한 반등 기대")
 
-    usd_krw = market_data.get("usd_krw", {})
-    if usd_krw:
-        rate = usd_krw.get("close", 0) or 0
-        if rate >= CRITICAL_USD_KRW:
-            key = "usd_krw_critical"
-            if not _already_sent(today, key):
-                send_alert(
-                    LEVEL_CRITICAL,
-                    f"원달러 환율 {rate:,.0f}원 돌파",
-                    f"원달러 환율이 {rate:,.0f}원을 돌파했습니다.\n"
-                    f"외국인 대규모 KOSPI 매도 압력 우려.\n"
-                    f"환율 연동 수출주(전자·자동차) 수혜, 수입 비중 높은 업종 불리.",
-                )
-                _mark_sent(today, key)
-        elif rate >= URGENT_USD_KRW:
-            key = "usd_krw_urgent"
-            if not _already_sent(today, key):
-                send_alert(
-                    LEVEL_URGENT,
-                    f"원달러 환율 {rate:,.0f}원 — 외국인 수급 주의",
-                    f"원달러 환율 {rate:,.0f}원. 외국인 순매도 전환 가능성.\n"
-                    f"환율 1,450원 돌파 시 CRITICAL 경보 발령.",
-                )
-                _mark_sent(today, key)
+    # 신호2: 골든크로스 + 거래량 폭발
+    if golden and vol >= OPP_VOL_SURGE:
+        signals.append(f"MA5/MA20 골든크로스 발생 + 거래량 {vol:.0f}% 폭발 — 추세 전환 진입 시점")
+
+    # 신호3: MA20 지지 + 거래량 급증 (눌림목 후 반등)
+    if above and ma20 and price <= ma20 * 1.02 and vol >= 200:
+        signals.append(f"MA20 지지권 반등 + 거래량 {vol:.0f}% 급증 — 눌림목 매수 기회")
+
+    return signals
 
 
-def check_geopolitical_news(news_data: dict) -> None:
-    """지정학 리스크 키워드 감지 → CRITICAL 발령."""
-    today = datetime.now(_KST).strftime("%Y-%m-%d")
-    key = "geopolitical_critical"
-    if _already_sent(today, key):
+def check_news_opportunity(news_data: dict, today: str) -> None:
+    """뉴스 기반 기회 알림 — 특정 촉매 이벤트가 섹터 수혜를 만드는 경우."""
+    key = "news_opportunity"
+    if _already_sent(today, "MARKET", key):
         return
 
     all_titles = []
-    for source, items in news_data.items():
+    for items in news_data.values():
         for item in items:
-            all_titles.append(item.get("title", "").lower())
+            t = item.get("title", "")
+            if t:
+                all_titles.append(t)
 
-    matched = []
-    for kw in GEOPOLITICAL_KEYWORDS:
-        for title in all_titles:
-            if kw.lower() in title:
-                matched.append(kw)
-                break
-
-    if matched:
-        send_alert(
-            LEVEL_CRITICAL,
-            "지정학 리스크 — 긴급 뉴스 감지",
-            f"다음 위험 키워드가 뉴스에서 감지되었습니다:\n"
-            + "\n".join(f"  - {kw}" for kw in matched[:5])
-            + "\n\n즉각 포지션 점검 필요. 원유·방산·금 가격 확인.",
-        )
-        _mark_sent(today, key)
-
-
-def check_institutional_news(news_data: dict) -> None:
-    """국민연금·연기금 대규모 수급 이슈 감지 → URGENT 발령."""
-    today = datetime.now(_KST).strftime("%Y-%m-%d")
-    key = "institutional_urgent"
-    if _already_sent(today, key):
-        return
-
-    all_titles = []
-    for source, items in news_data.items():
-        for item in items:
-            all_titles.append(item.get("title", ""))
-
-    matched = []
-    for kw in INSTITUTIONAL_KEYWORDS:
-        for title in all_titles:
-            if kw in title:
-                matched.append((kw, title[:80]))
-                break
-
-    if matched:
-        send_alert(
-            LEVEL_URGENT,
-            "국내 기관 수급 이슈 감지",
-            "다음 기관 수급 관련 뉴스가 감지되었습니다:\n"
-            + "\n".join(f"  - {kw}: {title}" for kw, title in matched[:3])
-            + "\n\n국민연금·연기금의 수급 동향이 KOSPI에 직접 영향을 줄 수 있습니다.\n"
-            "외국인 수급과 동반 악화 시 주의.",
-        )
-        _mark_sent(today, key)
+    for keywords, sector, stocks in OPPORTUNITY_CATALYSTS:
+        matched_kws = [kw for kw in keywords if any(kw in t for t in all_titles)]
+        if len(matched_kws) >= 1:
+            _mark_sent(today, "MARKET", key)
+            send_alert(
+                TYPE_OPPORTUNITY,
+                f"뉴스 촉매 감지 → {sector} 섹터 기회",
+                f"다음 이슈가 {sector} 섹터 상승 촉매로 작용할 수 있습니다:\n"
+                f"감지 키워드: {', '.join(matched_kws)}\n\n"
+                f"주목 종목: {stocks}\n\n"
+                f"지금 진입 검토 — 섹터 ETF·뉴스·수급 동시 확인 후 결정",
+            )
+            break  # 하나만 발송
 
 
-def run_market_alert_check(market_data: dict, news_data: dict = None) -> None:
-    """시장 데이터 + 뉴스 종합 긴급 체크. 스케줄러에서 호출."""
+def check_watchlist_opportunity(today: str) -> None:
+    """관심종목 중 기회 신호 2개 이상 동시 발생 종목 → 긴급 진입 알림."""
     try:
-        check_market_crash(market_data)
+        from db.database import get_conn
+        from sqlalchemy import text
+        from clients.kis_client import KISClient
+        from clients.market_data_client import fetch_kr_stock_technicals
+
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT code, name, target_entry FROM watchlist_items "
+                    "WHERE status='active'"
+                )
+            ).fetchall()
+        if not rows:
+            return
+
+        kis = KISClient()
+        for code, name, target_entry in rows:
+            alert_key = f"opp_{code}"
+            if _already_sent(today, code, alert_key):
+                continue
+            try:
+                pd    = kis.get_stock_price(code, market=None)
+                price = pd.get("price", 0)
+                if not price:
+                    continue
+
+                # 기술적 지표
+                tech = {}
+                for sfx in ("KS", "KQ"):
+                    try:
+                        t = fetch_kr_stock_technicals(f"{code}.{sfx}")
+                        if t and t.get("rsi14"):
+                            tech = t
+                            break
+                    except Exception:
+                        pass
+
+                signals = check_opportunity_signals(code, name, price, tech, today)
+
+                # 목표 진입가 근접도 신호 추가
+                if target_entry and abs(price - target_entry) / target_entry <= 0.01:
+                    signals.append(f"목표진입가 {target_entry:,.0f}원 도달 (현재 {price:,}원)")
+
+                if len(signals) >= 2:
+                    _mark_sent(today, code, alert_key)
+                    tech_info = (
+                        f"RSI {tech['rsi14']:.0f} | "
+                        f"BB% {tech.get('bb_pct',50):.0f}% | "
+                        f"거래량 {tech.get('vol_ratio',100):.0f}%"
+                    ) if tech else "기술지표 없음"
+
+                    send_alert(
+                        TYPE_OPPORTUNITY,
+                        f"{name} — 지금이 진입 타이밍",
+                        f"종목: {name}({code})\n"
+                        f"현재가: {price:,}원 | {tech_info}\n\n"
+                        f"발동 신호:\n" + "\n".join(f"  ✅ {s}" for s in signals)
+                        + "\n\n복수 신호 동시 발생 — 지금 진입하지 않으면 기회를 놓칠 수 있습니다.",
+                        code=code, name=name,
+                    )
+                    logger.info("[기회알림] %s(%s) — 신호 %d개", name, code, len(signals))
+
+            except Exception as e:
+                logger.debug("[기회알림] %s 체크 실패: %s", code, e)
+
     except Exception as e:
-        logger.error("시장 급락 체크 실패: %s", e)
+        logger.error("[기회알림] 관심종목 기회 체크 실패: %s", e)
 
+
+# ── 위험 감지 ─────────────────────────────────────────────────────
+
+def check_risk_signals(market_data: dict, news_data: dict, today: str) -> None:
+    """시장·지정학 위험 신호 감지 → RISK 알림."""
+
+    # KOSPI 급락
+    kospi = market_data.get("kospi", {})
+    if isinstance(kospi, dict):
+        chg = kospi.get("change_pct", 0) or 0
+        if chg <= RISK_KOSPI_CRASH and not _already_sent(today, "KOSPI", "crash"):
+            _mark_sent(today, "KOSPI", "crash")
+            send_alert(
+                TYPE_RISK,
+                f"KOSPI 급락 {chg:+.1f}% — 즉시 포지션 점검",
+                f"KOSPI: {kospi.get('current', 0):,.2f}  ({chg:+.1f}%)\n\n"
+                f"손절 조건 확인 필요. 외국인 수급 동향 즉시 확인.\n"
+                f"반등 신호 없으면 현금 비중 확대 권고.",
+            )
+
+    # VIX 패닉
+    vix = market_data.get("vix", {})
+    if isinstance(vix, dict):
+        v = vix.get("close", 0) or 0
+        if v >= RISK_VIX_PANIC and not _already_sent(today, "VIX", "panic"):
+            _mark_sent(today, "VIX", "panic")
+            send_alert(
+                TYPE_RISK,
+                f"VIX {v:.1f} 패닉 수준 — RISK-OFF 전환",
+                f"공포지수(VIX)가 {v:.1f}로 패닉 구간 진입.\n\n"
+                f"신규 포지션 전면 중단. 현금 비중 최대화.\n"
+                f"역발상 매수 검토는 VIX 30 이하 복귀 확인 후.",
+            )
+
+    # 환율 급등
+    usd = market_data.get("usd_krw", {})
+    if isinstance(usd, dict):
+        rate = usd.get("close", 0) or 0
+        if rate >= RISK_USD_KRW and not _already_sent(today, "USDKRW", "crisis"):
+            _mark_sent(today, "USDKRW", "crisis")
+            send_alert(
+                TYPE_RISK,
+                f"원달러 {rate:,.0f}원 — 외국인 이탈 위험",
+                f"환율 {rate:,.0f}원 돌파. 외국인 KOSPI 대규모 매도 우려.\n\n"
+                f"환율 연동 수출주 수혜(삼성전자·현대차) 확인.\n"
+                f"외국인 수급 동향 실시간 모니터링 필요.",
+            )
+
+    # 지정학 블랙스완
     if news_data:
-        try:
-            check_geopolitical_news(news_data)
-        except Exception as e:
-            logger.error("지정학 리스크 체크 실패: %s", e)
+        all_titles = " ".join(
+            item.get("title", "") for items in news_data.values() for item in items
+        ).lower()
+        matched = [kw for kw in GEOPOLITICAL_RISK_KEYWORDS if kw.lower() in all_titles]
+        if matched and not _already_sent(today, "GEO", "blackswan"):
+            _mark_sent(today, "GEO", "blackswan")
+            send_alert(
+                TYPE_RISK,
+                "지정학 블랙스완 감지 — 즉시 포지션 점검",
+                f"위험 키워드 감지: {', '.join(matched[:4])}\n\n"
+                f"즉각 포지션 확인. 방산주 단기 수혜 가능성 확인.\n"
+                f"원유 가격 변동 확인 (에너지주·항공주 영향).",
+            )
 
-        try:
-            check_institutional_news(news_data)
-        except Exception as e:
-            logger.error("기관 수급 체크 실패: %s", e)
+
+def check_portfolio_risk(today: str) -> None:
+    """보유 종목 단일일 급락 감지."""
+    try:
+        from clients.kis_client import KISClient
+        from db.database import get_conn
+        from sqlalchemy import text
+
+        with get_conn() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT code, name, avg_price FROM portfolio_positions "
+                    "WHERE status='holding' AND quantity > 0"
+                )
+            ).fetchall()
+        if not rows:
+            return
+
+        kis = KISClient()
+        for code, name, avg_price in rows:
+            key = f"stock_crash_{code}"
+            if _already_sent(today, code, key):
+                continue
+            try:
+                pd      = kis.get_stock_price(code, market=None)
+                price   = pd.get("price", 0)
+                chg_pct = pd.get("change_pct", 0) or 0
+                if not price or chg_pct > RISK_STOCK_CRASH:
+                    continue
+
+                _mark_sent(today, code, key)
+                pnl = (price - avg_price) / avg_price * 100 if avg_price else 0
+                send_alert(
+                    TYPE_RISK,
+                    f"[보유종목] {name} 급락 {chg_pct:+.1f}%",
+                    f"종목: {name}({code})\n"
+                    f"현재가: {price:,}원  |  당일: {chg_pct:+.1f}%\n"
+                    f"평균단가: {avg_price:,.0f}원  |  총 손익: {pnl:+.1f}%\n\n"
+                    f"손절 조건 즉시 확인. 원인 파악 후 대응 결정.",
+                    code=code, name=name,
+                )
+            except Exception as e:
+                logger.debug("[위험] %s 급락 체크 실패: %s", code, e)
+
+    except Exception as e:
+        logger.error("[위험] 포트폴리오 점검 실패: %s", e)
+
+
+# ── 통합 실행 ─────────────────────────────────────────────────────
+
+def run_full_alert_check(market_data: dict, news_data: dict = None) -> None:
+    """기회 + 위험 통합 체크. 긴급 모니터에서 호출."""
+    today = datetime.now(_KST).strftime("%Y-%m-%d")
+    news_data = news_data or {}
+
+    # 1. 기회 감지
+    try:
+        check_watchlist_opportunity(today)
+    except Exception as e:
+        logger.error("[알림] 기회 체크 실패: %s", e)
+
+    try:
+        check_news_opportunity(news_data, today)
+    except Exception as e:
+        logger.error("[알림] 뉴스 기회 체크 실패: %s", e)
+
+    # 2. 위험 감지
+    try:
+        check_risk_signals(market_data, news_data, today)
+    except Exception as e:
+        logger.error("[알림] 위험 체크 실패: %s", e)
+
+    try:
+        check_portfolio_risk(today)
+    except Exception as e:
+        logger.error("[알림] 포트폴리오 위험 체크 실패: %s", e)
+
+
+# ── 하위 호환 (emergency_monitor_agent에서 호출) ───────────────────
+def run_market_alert_check(market_data: dict, news_data: dict = None) -> None:
+    run_full_alert_check(market_data, news_data)

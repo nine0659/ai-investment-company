@@ -118,8 +118,12 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         state["errors"].append(f"collect_kis: {e}")
 
     try:
-        state["raw_news_data"] = fetch_all_news(max_per_category=8)
-        logger.info("[데이터수집] 뉴스 완료")
+        # 시황 데이터를 함께 전달 → LLM이 동적 검색어 생성에 활용
+        state["raw_news_data"] = fetch_all_news(
+            max_per_category=8,
+            market_data=state.get("raw_market_data", {}),
+        )
+        logger.info("[데이터수집] 뉴스 완료 (동적 검색어 포함)")
     except Exception as e:
         logger.error("[데이터수집] 뉴스 실패: %s", e)
         state["raw_news_data"] = {}

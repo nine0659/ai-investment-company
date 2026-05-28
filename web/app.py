@@ -300,6 +300,73 @@ async def search_companies_api(body: dict):
         return {"results": [], "error": str(e)}
 
 
+@app.post("/api/portfolio/add")
+async def add_portfolio_api(body: dict):
+    """보유 종목 추가 또는 추가매수."""
+    code = (body.get("code") or "").strip()
+    name = (body.get("name") or "").strip()
+    qty  = body.get("quantity") or body.get("qty")
+    avg  = body.get("avg_price") or body.get("price")
+    if not code or not name or not qty or not avg:
+        return {"ok": False, "error": "code·name·quantity·avg_price는 필수입니다"}
+    try:
+        from services.portfolio_service import add_position
+        row_id = add_position(
+            code=code, name=name,
+            quantity=int(qty), avg_price=float(avg),
+            timeframe=body.get("timeframe", "short"),
+            sector=body.get("sector") or None,
+            target_price=float(body["target_price"]) if body.get("target_price") else None,
+            stop_price=float(body["stop_price"]) if body.get("stop_price") else None,
+            memo=body.get("memo") or None,
+        )
+        return {"ok": True, "id": row_id}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/portfolio/close")
+async def close_portfolio_api(body: dict):
+    """종목 매도 (전량 또는 부분)."""
+    code = (body.get("code") or "").strip()
+    exit_price  = body.get("exit_price")
+    partial_qty = body.get("partial_qty")
+    if not code:
+        return {"ok": False, "error": "code 필수"}
+    try:
+        from services.portfolio_service import close_position
+        result = close_position(
+            code=code,
+            exit_price=float(exit_price) if exit_price else None,
+            partial_qty=int(partial_qty) if partial_qty else None,
+        )
+        return {"ok": bool(result), "result": result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.put("/api/portfolio/{code}")
+async def update_portfolio_api(code: str, body: dict):
+    """포지션 정보 업데이트 (목표가·손절가·메모·전략)."""
+    try:
+        from services.portfolio_service import update_position
+        allowed = {
+            "target_price": lambda v: float(v) if v else None,
+            "stop_price":   lambda v: float(v) if v else None,
+            "memo":         lambda v: str(v) if v else None,
+            "timeframe":    lambda v: str(v) if v else None,
+            "sector":       lambda v: str(v) if v else None,
+        }
+        updates = {}
+        for k, cast in allowed.items():
+            if k in body:
+                updates[k] = cast(body[k])
+        ok = update_position(code, **updates) if updates else False
+        return {"ok": ok}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/portfolio/summary")
 async def get_portfolio_summary_api():
     """포트폴리오 전체 요약 통계."""
