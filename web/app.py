@@ -101,8 +101,7 @@ def _stream_via_thread(target_fn, *args) -> StreamingResponse:
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request, _: None = Depends(_check_auth)):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "has_password": bool(_WEB_PASSWORD),
     })
 
