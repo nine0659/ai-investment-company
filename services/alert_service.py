@@ -158,7 +158,10 @@ def _send_kakao(message: str) -> bool:
 def send_alert(alert_type: str, title: str, body: str,
                code: str = "", name: str = "") -> None:
     """알림 발송 + DB 저장.
-    OPPORTUNITY·RISK는 텔레그램 + 카카오톡 동시 발송.
+
+    발송 채널:
+      OPPORTUNITY · RISK → 카카오톡만 (긴급 기회/위험)
+      ENTRY · TARGET · STOP · 기타 → 텔레그램
     """
     today   = datetime.now(_KST).strftime("%Y-%m-%d")
     emoji   = _EMOJI.get(alert_type, "📌")
@@ -177,12 +180,17 @@ def send_alert(alert_type: str, title: str, body: str,
     except Exception as e:
         logger.debug("알림 DB 저장 실패: %s", e)
 
-    # 텔레그램: 모든 타입
-    _send_telegram(message)
-
-    # 카카오톡: OPPORTUNITY·RISK만 (진짜 긴급한 것만)
     if alert_type in (TYPE_OPPORTUNITY, TYPE_RISK):
-        _send_kakao(message)
+        # 긴급 기회·위험 → 카카오톡만
+        sent = _send_kakao(message)
+        if not sent:
+            logger.warning(
+                "[AlarmService] 카카오톡 발송 실패 — KAKAO_ACCESS_TOKEN 미설정이면 "
+                ".env에 KAKAO_ACCESS_TOKEN=<토큰> 추가 필요"
+            )
+    else:
+        # 일반 알림 (진입신호·목표가·손절) → 텔레그램
+        _send_telegram(message)
 
     logger.info("[AlarmService] %s 발송: %s", alert_type.upper(), title)
 
