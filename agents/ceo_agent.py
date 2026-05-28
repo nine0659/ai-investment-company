@@ -334,6 +334,25 @@ def run(state: InvestmentState) -> InvestmentState:
             f"\n[리스크]\n{chr(10).join(state.get('risks', [])[:3])}",
         ]
 
+        # ── 누적 데이터 컨텍스트 주입 (DB 아카이브 → 추세 파악용) ──────
+        try:
+            from services.market_archive_service import (
+                get_market_trend_context,
+                get_intelligence_context,
+            )
+            trend_ctx = get_market_trend_context(days=7)
+            if trend_ctx:
+                context_parts.append(
+                    f"\n[최근 7일 시장 추세 — 오늘과 비교하여 흐름 판단]\n{trend_ctx}"
+                )
+            intel_ctx = get_intelligence_context(days=5)
+            if intel_ctx:
+                context_parts.append(
+                    f"\n[최근 인텔리전스 아카이브 — 서사 변화 추적]\n{intel_ctx}"
+                )
+        except Exception as _e:
+            logger.debug("[CEO] 누적 데이터 컨텍스트 주입 실패: %s", _e)
+
         has_price = False  # 실시간 가격 데이터 주입 여부 추적
 
         if run_type == RUN_TYPE_PRE:

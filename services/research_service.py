@@ -52,6 +52,11 @@ def _load_corp_name_map() -> dict[str, dict]:
 def resolve_code(code_or_name: str) -> tuple[str, str]:
     """입력값(코드 또는 회사명) → (stock_code, corp_name).
     못 찾으면 ('', '') 반환.
+
+    우선순위:
+      1) 정확 일치
+      2) 앞에서부터 일치 (startswith) → 가장 짧은 이름
+      3) query가 corp_name에 포함 → 가장 짧은 이름
     """
     query = code_or_name.strip()
 
@@ -62,22 +67,32 @@ def resolve_code(code_or_name: str) -> tuple[str, str]:
         name = corp_map.get(code, {}).get("name", code)
         return code, name
 
-    # 이름 검색 — 정확 일치 우선, 그 다음 부분 일치
     corp_map = _load_corp_name_map()
-    candidates = []
-    for sc, info in corp_map.items():
-        corp_name = info.get("name", "")
-        if corp_name == query:
-            return sc, corp_name          # 정확 일치
-        if query in corp_name or corp_name in query:
-            candidates.append((sc, corp_name))
 
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        # 가장 짧은(=더 정확한) 이름 반환
-        candidates.sort(key=lambda x: len(x[1]))
-        return candidates[0]
+    # 1. 정확 일치
+    for sc, info in corp_map.items():
+        if info.get("name", "") == query:
+            return sc, info["name"]
+
+    # 2. 앞에서부터 일치 (예: "LG디스플레이" → "LG디스플레이" 반환, "LG" 미반환)
+    starts: list[tuple[str, str]] = [
+        (sc, info["name"])
+        for sc, info in corp_map.items()
+        if info.get("name", "").startswith(query)
+    ]
+    if starts:
+        starts.sort(key=lambda x: len(x[1]))
+        return starts[0]
+
+    # 3. query가 corp_name 안에 포함 (단방향 — "LG" in "LG전자")
+    contains: list[tuple[str, str]] = [
+        (sc, info["name"])
+        for sc, info in corp_map.items()
+        if query in info.get("name", "")
+    ]
+    if contains:
+        contains.sort(key=lambda x: len(x[1]))
+        return contains[0]
 
     return "", ""
 
@@ -193,13 +208,17 @@ def search_companies(query: str) -> list[dict]:
     각 항목: {code, name}
     """
     corp_map = _load_corp_name_map()
-    results = []
+    starts, contains = [], []
     for sc, info in corp_map.items():
         corp_name = info.get("name", "")
-        if query in corp_name:
-            results.append({"code": sc, "name": corp_name})
-        if len(results) >= 20:
-            break
-    # 이름 길이 순 정렬 (더 정확한 매치 우선)
-    results.sort(key=lambda x: len(x["name"]))
-    return results[:5]
+        if not corp_name:
+            continue
+        if corp_name.startswith(query):
+            starts.append({"code": sc, "name": corp_name})
+        elif query in corp_name:
+            contains.append({"code": sc, "name": corp_name})
+    # 앞에서부터 일치 우선, 각각 이름 길이순 정렬
+    starts.sort(key=lambda x: len(x["name"]))
+    contains.sort(key=lambda x: len(x["name"]))
+    combined = starts + contains
+    return combined[:5]

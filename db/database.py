@@ -191,6 +191,39 @@ us_invest_recommendations = Table("us_invest_recommendations", metadata,
     Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
 )
 
+# ── 데이터 축적 테이블 ──────────────────────────────────────────────
+
+market_snapshots = Table("market_snapshots", metadata,
+    Column("id",          Integer, primary_key=True, autoincrement=True),
+    Column("date",        Text,    nullable=False),
+    Column("run_type",    Text,    nullable=False),
+    Column("kospi",       Float),
+    Column("kospi_chg",   Float),
+    Column("kosdaq",      Float),
+    Column("kosdaq_chg",  Float),
+    Column("usd_krw",     Float),
+    Column("vix",         Float),
+    Column("oil_wti",     Float),
+    Column("gold",        Float),
+    Column("us10y",       Float),
+    Column("sp500_fut",   Float),
+    Column("sp500_chg",   Float),
+    Column("nasdaq_fut",  Float),
+    Column("nasdaq_chg",  Float),
+    Column("created_at",  Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
+intelligence_archive = Table("intelligence_archive", metadata,
+    Column("id",          Integer, primary_key=True, autoincrement=True),
+    Column("date",        Text,    nullable=False),
+    Column("run_type",    Text,    nullable=False),
+    Column("source_type", Text),   # blog / telegram / global / securities
+    Column("summary",     Text),   # 핵심 인사이트 요약 텍스트
+    Column("sentiment",   Text),   # 강세 / 약세 / 중립
+    Column("key_themes",  Text),   # 쉼표 구분 키워드
+    Column("created_at",  Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
 # ── 초기화 ─────────────────────────────────────────────────────────
 
 def init_db():

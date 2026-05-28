@@ -184,6 +184,37 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[리포트저장] 실패: %s", e)
         state["errors"].append(f"save_report: {e}")
+
+    # ── 시장 스냅샷 아카이브 저장 ───────────────────────────────
+    try:
+        from services.market_archive_service import save_market_snapshot, save_intelligence_summary
+        save_market_snapshot(
+            date=state["date"],
+            run_type=state["run_type"],
+            market_data=state.get("raw_market_data", {}),
+        )
+        # 인텔리전스 요약 저장 (market_intelligence_report에서 추출)
+        intel_report = state.get("market_intelligence_report", "")
+        if intel_report:
+            # 감성 키워드 간단 추출
+            sentiment = "강세" if "강세" in intel_report else ("약세" if "약세" in intel_report else "중립")
+            # 테마 키워드 (AI/반도체/금리/환율 등)
+            themes = ",".join(
+                kw for kw in ["AI", "반도체", "금리", "환율", "중국", "미국", "수급", "실적"]
+                if kw in intel_report
+            )
+            save_intelligence_summary(
+                date=state["date"],
+                run_type=state["run_type"],
+                source_type="market_intelligence",
+                summary=intel_report[:800],
+                sentiment=sentiment,
+                key_themes=themes,
+            )
+        logger.info("[아카이브] 저장 완료")
+    except Exception as e:
+        logger.warning("[아카이브] 저장 실패: %s", e)
+
     return state
 
 
