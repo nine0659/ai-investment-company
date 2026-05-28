@@ -30,7 +30,8 @@ class InvestmentState(TypedDict):
     event_risk_level: str            # 높음 / 중간 / 낮음
     market_intelligence_report: str  # 글로벌 전문가 서사·강세론/약세론·컨센서스 변화
     sector_report: str
-    issue_stocks_report: str  # 이슈종목 발굴 — 거래량/수급/미국연동 기반, 1~3주 대응전략
+    issue_stocks_report: str   # 이슈종목 발굴 — 거래량/수급/미국연동 기반, 1~3주 대응전략
+    midterm_stock_report: str  # 중장기 종목 추천 — 3~12개월 밸류에이션·섹터사이클 기반
     money_flow_report: str
     risk_report: str
     committee_report: str

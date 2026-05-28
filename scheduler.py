@@ -87,6 +87,15 @@ def job_monitor():
         logger.error("실시간 모니터 실패: %s", e)
 
 
+def job_emergency():
+    """5분마다 실행 — KOSPI 급락·VIX 급등·환율 급등·지정학 뉴스 감지"""
+    from agents.emergency_monitor_agent import run as emergency_run
+    try:
+        emergency_run()
+    except Exception as e:
+        logger.error("긴급 모니터 실패: %s", e)
+
+
 def _parse_time(time_str: str) -> tuple[int, int]:
     h, m = time_str.split(":")
     return int(h), int(m)
@@ -126,6 +135,23 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 09:00-15:30 매 15분[/cyan] 실시간 모니터")
+
+    # 긴급 모니터: 장중 9:00-15:30, 5분마다
+    # KOSPI 급락 / VIX 급등 / 원달러 급등 / 지정학 뉴스 / 보유 종목 급락 체크
+    scheduler.add_job(
+        job_emergency,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute="*/5",
+            timezone=TIMEZONE_STR,
+        ),
+        id="emergency_monitor",
+        name="[5분] 긴급알림 — KOSPI급락·VIX·환율·지정학·보유종목",
+        misfire_grace_time=60,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 09:00-15:30 매 5분[/cyan] 긴급 알림 모니터")
 
 
 def shutdown(signum, frame):

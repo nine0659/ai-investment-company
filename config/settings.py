@@ -31,6 +31,11 @@ KIS_ACCOUNT_PROD_CD = os.getenv("KIS_ACCOUNT_PROD_CD", "01")
 
 DART_API_KEY = os.getenv("DART_API_KEY", "")
 
+# ── 카카오톡 긴급 알림 (선택) ─────────────────────────────────────
+# 발급: https://developers.kakao.com → 앱 생성 → 카카오 로그인 → 토큰 발급
+# 미설정 시 텔레그램으로만 발송
+KAKAO_ACCESS_TOKEN = os.getenv("KAKAO_ACCESS_TOKEN", "")
+
 # ── 데이터베이스 ─────────────────────────────────────────────────
 # 설정 시 PostgreSQL(Supabase), 미설정 시 SQLite 로컬
 DATABASE_URL = os.getenv("DATABASE_URL", "")

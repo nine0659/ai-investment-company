@@ -560,6 +560,13 @@ def run(state: InvestmentState) -> InvestmentState:
                     "\n[오늘 주요 DART 공시]\n" + dart_text
                 )
 
+        # 중장기 종목 추천 (3~12개월 관점) — 장전/장마감 브리핑에만 포함
+        if run_type in (RUN_TYPE_PRE, RUN_TYPE_CLOSE) and state.get("midterm_stock_report"):
+            context_parts.append(
+                "\n[중장기 유망주 분석 — 브리핑 말미에 '📐 중장기 유망주' 섹션으로 반드시 포함]\n"
+                + state["midterm_stock_report"]
+            )
+
         # 포트폴리오 매니저 분석 (보유 종목 행동 지시 + 워치리스트 트리거)
         if state.get("portfolio_report"):
             context_parts.append(

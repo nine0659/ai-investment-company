@@ -24,6 +24,7 @@ import agents.issue_stock_agent          as issue_stock_agent
 import agents.review_feedback_team      as review_feedback_team
 import agents.investment_committee      as investment_committee
 import agents.portfolio_manager_agent   as portfolio_manager_agent
+import agents.midterm_stock_agent       as midterm_stock_agent
 import agents.ceo_agent                 as ceo_agent
 
 from clients.kis_client          import KISClient
@@ -160,6 +161,7 @@ def node_intelligence(state):  return market_intelligence_team.run(state)
 def node_risk(state):          return risk_management_team.run(state)
 def node_committee(state):          return investment_committee.run(state)
 def node_portfolio_manager(state):  return portfolio_manager_agent.run(state)
+def node_midterm_stocks(state):     return midterm_stock_agent.run(state)
 def node_ceo(state):                return ceo_agent.run(state)
 
 def node_review(state):
@@ -258,6 +260,7 @@ def build_graph() -> StateGraph:
         ("review_feedback_team",   node_review),
         ("investment_committee",   node_committee),
         ("portfolio_manager_agent", node_portfolio_manager),  # 실제 포트폴리오 + 워치리스트 분석
+        ("midterm_stock_agent",    node_midterm_stocks),     # 중장기(3~12개월) 종목 추천
         ("ceo_agent",              node_ceo),
         ("save_report",            node_save_report),
         ("send_telegram",          node_send_telegram),
@@ -318,6 +321,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "market_intelligence_report": "",
         "sector_report": "",
         "issue_stocks_report": "",
+        "midterm_stock_report": "",
         "money_flow_report": "",
         "risk_report": "",
         "committee_report": "",
