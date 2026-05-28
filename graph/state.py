@@ -30,10 +30,12 @@ class InvestmentState(TypedDict):
     event_risk_level: str            # 높음 / 중간 / 낮음
     market_intelligence_report: str  # 글로벌 전문가 서사·강세론/약세론·컨센서스 변화
     sector_report: str
+    issue_stocks_report: str  # 이슈종목 발굴 — 거래량/수급/미국연동 기반, 1~3주 대응전략
     money_flow_report: str
     risk_report: str
     committee_report: str
     review_report: str
+    portfolio_report: str  # 포트폴리오 매니저 분석 (보유 종목 행동 지시 + 워치리스트 트리거)
     ceo_report: str
 
     candidates: list[dict]

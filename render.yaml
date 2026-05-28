@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: ai-investment-company
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    startCommand: bash start.sh
+    # 무료 플랜: 15분 비활성 시 슬립 → UptimeRobot으로 /api/status 5분마다 핑하여 해결
+    plan: free
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_MODEL_CEO
+        value: gpt-4o
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: KIS_APP_KEY
+        sync: false
+      - key: KIS_APP_SECRET
+        sync: false
+      - key: KIS_ACCOUNT_NO
+        sync: false
+      - key: KIS_ACCOUNT_PROD_CD
+        value: "01"
+      - key: DART_API_KEY
+        sync: false
+      - key: WEB_PASSWORD
+        sync: false

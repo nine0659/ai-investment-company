@@ -9,12 +9,37 @@ main.py
   python main.py --type close        # 장마감 복기
   python main.py --type midterm      # 중기 분석 (1~6개월)
   python main.py --type longterm     # 장기 분석 (1년+)
+  python main.py --type strategy     # 주간 종합 투자전략 (단기/중기/장기 통합)
   python main.py --type dart         # DART 공시 알림 (즉시)
   python main.py --type price-alert  # 가격 알림 (즉시)
   python main.py --type weekly       # 주간 적중률 리포트
   python main.py --type trend        # 주간 KOSPI 추세 분석 (일요일 18:00 KST)
   python main.py --type monthly      # 월간 자기학습 분석
   python main.py --type us-invest    # 미국 주식 주간 추천
+
+  # 기업 리서치 (종목코드 또는 회사명)
+  python main.py --research 005930           # 삼성전자 종합 투자 분석
+  python main.py --research "삼성전자"       # 회사명으로도 검색 가능
+  python main.py --research 005930 --telegram  # 분석 후 텔레그램 발송
+
+  # 텔레그램 대화형 봇 (명령 수신)
+  python main.py --bot                       # 봇 시작 (/research /price /balance ...)
+
+  # 포트폴리오 관리
+  python main.py --portfolio list                              # 보유 종목 조회
+  python main.py --portfolio add CODE NAME QTY PRICE          # 종목 추가 (단기)
+  python main.py --portfolio add CODE NAME QTY PRICE mid      # 종목 추가 (중기)
+  python main.py --portfolio add CODE NAME QTY PRICE long     # 종목 추가 (장기)
+  python main.py --portfolio close CODE [EXIT_PRICE]          # 전량 매도
+  python main.py --portfolio target CODE TARGET STOP          # 목표가/손절가 설정
+  python main.py --portfolio memo CODE "메모 내용"             # 투자근거 기록
+
+  # 워치리스트 관리
+  python main.py --watchlist list                             # 관심종목 조회
+  python main.py --watchlist add CODE NAME [TARGET_PRICE]     # 관심종목 추가
+  python main.py --watchlist remove CODE                      # 관심종목 제거
+  python main.py --watchlist check                            # 진입 조건 점검 (텔레그램 발송)
+
   python main.py --check             # 환경변수 검증만
   python main.py --init-db           # DB 초기화
 """
@@ -47,21 +72,229 @@ def setup_logging(level: str = "INFO"):
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def _run_portfolio_cmd(args):
+    """포트폴리오 관리 명령 처리."""
+    from services.portfolio_service import (
+        add_position, close_position, update_position,
+        get_portfolio, calculate_pnl, format_portfolio_for_briefing
+    )
+    from services.review_service import init_db
+    init_db()
+
+    sub = args.portfolio[0] if args.portfolio else "list"
+
+    if sub == "list":
+        try:
+            from clients.kis_client import KISClient
+            kis = KISClient()
+        except Exception:
+            kis = None
+        text = format_portfolio_for_briefing(kis)
+        console.print(text)
+
+    elif sub == "add":
+        if len(args.portfolio) < 5:
+            console.print("[red]사용법: --portfolio add CODE NAME QTY PRICE [timeframe=short/mid/long][/red]")
+            return
+        code     = args.portfolio[1]
+        name     = args.portfolio[2]
+        qty      = int(args.portfolio[3])
+        price    = float(args.portfolio[4].replace(",", ""))
+        timeframe = args.portfolio[5] if len(args.portfolio) > 5 else "short"
+        tf_map   = {"단기": "short", "중기": "mid", "장기": "long",
+                    "short": "short", "mid": "mid", "long": "long"}
+        timeframe = tf_map.get(timeframe, "short")
+        add_position(code, name, qty, price, timeframe=timeframe)
+        console.print(f"[green]✅ 포지션 추가: {name}({code}) {qty}주 @{price:,.0f}원 [{timeframe}][/green]")
+
+    elif sub == "close":
+        if len(args.portfolio) < 2:
+            console.print("[red]사용법: --portfolio close CODE [EXIT_PRICE][/red]")
+            return
+        code = args.portfolio[1]
+        exit_price = float(args.portfolio[2].replace(",", "")) if len(args.portfolio) > 2 else None
+        result = close_position(code, exit_price)
+        if result:
+            console.print(
+                f"[green]✅ 매도 완료: {result['name']}({code}) "
+                f"{result['sell_qty']}주 @{result['exit_price']:,.0f}원 "
+                f"({result['return_pct']:+.2f}%)[/green]"
+            )
+        else:
+            console.print(f"[red]❌ 보유 중인 {code} 없음[/red]")
+
+    elif sub == "target":
+        if len(args.portfolio) < 4:
+            console.print("[red]사용법: --portfolio target CODE TARGET_PRICE STOP_PRICE[/red]")
+            return
+        code   = args.portfolio[1]
+        target = float(args.portfolio[2].replace(",", ""))
+        stop   = float(args.portfolio[3].replace(",", ""))
+        update_position(code, target_price=target, stop_price=stop)
+        console.print(f"[green]✅ {code} 목표가 {target:,.0f}원 | 손절가 {stop:,.0f}원 설정 완료[/green]")
+
+    elif sub == "memo":
+        if len(args.portfolio) < 3:
+            console.print("[red]사용법: --portfolio memo CODE \"메모 내용\"[/red]")
+            return
+        code = args.portfolio[1]
+        memo = " ".join(args.portfolio[2:])
+        update_position(code, memo=memo)
+        console.print(f"[green]✅ {code} 투자근거 기록 완료[/green]")
+
+    else:
+        console.print(f"[red]알 수 없는 명령: {sub}[/red]")
+
+
+def _run_watchlist_cmd(args):
+    """워치리스트 관리 명령 처리."""
+    from services.watchlist_service import (
+        add_to_watchlist, remove_from_watchlist,
+        get_watchlist, check_triggers, format_watchlist_for_briefing
+    )
+    from services.review_service import init_db
+    from clients.telegram_client import send_message
+    init_db()
+
+    sub = args.watchlist[0] if args.watchlist else "list"
+
+    if sub == "list":
+        try:
+            from clients.kis_client import KISClient
+            kis = KISClient()
+        except Exception:
+            kis = None
+        text = format_watchlist_for_briefing(kis)
+        console.print(text)
+
+    elif sub == "add":
+        if len(args.watchlist) < 3:
+            console.print("[red]사용법: --watchlist add CODE NAME [TARGET_PRICE] [timeframe] [reason...][/red]")
+            return
+        code   = args.watchlist[1]
+        name   = args.watchlist[2]
+        target = float(args.watchlist[3].replace(",", "")) if len(args.watchlist) > 3 else None
+        tf_raw = args.watchlist[4] if len(args.watchlist) > 4 else "short"
+        tf_map = {"단기": "short", "중기": "mid", "장기": "long",
+                  "short": "short", "mid": "mid", "long": "long"}
+        timeframe = tf_map.get(tf_raw, "short")
+        reason = " ".join(args.watchlist[5:]) if len(args.watchlist) > 5 else None
+        add_to_watchlist(code, name, target_entry=target, timeframe=timeframe, reason=reason)
+        console.print(
+            f"[green]✅ 워치리스트 추가: {name}({code})"
+            + (f" | 목표진입 {target:,.0f}원" if target else "") + f" [{timeframe}][/green]"
+        )
+
+    elif sub == "remove":
+        if len(args.watchlist) < 2:
+            console.print("[red]사용법: --watchlist remove CODE[/red]")
+            return
+        code = args.watchlist[1]
+        ok = remove_from_watchlist(code)
+        if ok:
+            console.print(f"[green]✅ {code} 워치리스트에서 제거[/green]")
+        else:
+            console.print(f"[red]❌ {code} 워치리스트에 없음[/red]")
+
+    elif sub == "check":
+        try:
+            from clients.kis_client import KISClient
+            kis = KISClient()
+        except Exception:
+            kis = None
+        triggered = check_triggers(kis)
+        if triggered:
+            msg_lines = ["🚨 워치리스트 진입 조건 충족 종목:"]
+            for t in triggered:
+                msg_lines.append(
+                    f"✅ {t['name']}({t['code']}) — {t.get('trigger_msg', '')}"
+                    + (f"\n   주목 이유: {t['reason']}" if t.get("reason") else "")
+                )
+            msg = "\n".join(msg_lines)
+            console.print(msg)
+            try:
+                send_message(msg)
+                console.print("[green]텔레그램 발송 완료[/green]")
+            except Exception as e:
+                console.print(f"[yellow]텔레그램 발송 실패: {e}[/yellow]")
+        else:
+            console.print("[yellow]진입 조건 충족 종목 없음[/yellow]")
+
+    else:
+        console.print(f"[red]알 수 없는 명령: {sub}[/red]")
+
+
 def main():
     parser = argparse.ArgumentParser(description="AI Investment Research Company")
     parser.add_argument(
         "--type",
         choices=["pre", "intra1", "intra2", "close", "midterm", "longterm",
-                 "dart", "price-alert", "weekly", "trend", "monthly", "us-invest"],
+                 "strategy", "dart", "price-alert", "weekly", "trend", "monthly", "us-invest"],
         default="pre",
         help="실행 타입 (기본: pre)",
     )
     parser.add_argument("--check", action="store_true", help="환경변수 검증")
     parser.add_argument("--init-db", action="store_true", help="DB 초기화")
     parser.add_argument("--log-level", default="INFO", help="로그 레벨")
+    parser.add_argument(
+        "--research", metavar="CODE_OR_NAME",
+        help="기업 종합 투자 분석 (종목코드 또는 회사명). 예: --research 005930 또는 --research 삼성전자"
+    )
+    parser.add_argument(
+        "--telegram", action="store_true",
+        help="--research 결과를 텔레그램으로도 발송"
+    )
+    parser.add_argument(
+        "--bot", action="store_true",
+        help="텔레그램 대화형 봇 시작 (long-polling). /research /price /balance 명령 수신"
+    )
+    parser.add_argument(
+        "--portfolio", nargs="+", metavar="CMD",
+        help="포트폴리오 관리: list | add CODE NAME QTY PRICE [timeframe] | close CODE [PRICE] | target CODE TARGET STOP | memo CODE TEXT"
+    )
+    parser.add_argument(
+        "--watchlist", nargs="+", metavar="CMD",
+        help="워치리스트 관리: list | add CODE NAME [TARGET] [timeframe] [reason] | remove CODE | check"
+    )
     args = parser.parse_args()
 
     setup_logging(args.log_level)
+
+    # 포트폴리오/워치리스트 명령 (환경변수 없어도 실행 가능)
+    if args.portfolio:
+        _run_portfolio_cmd(args)
+        return
+    if args.watchlist:
+        _run_watchlist_cmd(args)
+        return
+
+    # ── 기업 리서치 ─────────────────────────────────────────────
+    if args.research:
+        from services.research_service import research_company
+        query = args.research
+        console.print(f"[bold cyan]🔍 기업 리서치 시작: {query}[/bold cyan]")
+        try:
+            report = research_company(query)
+            console.print(report)
+            if args.telegram:
+                from clients.telegram_client import send_message
+                send_message(report)
+                console.print("[green]✅ 텔레그램 발송 완료[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ 리서치 실패: {e}[/red]")
+            sys.exit(1)
+        return
+
+    # ── 텔레그램 봇 ─────────────────────────────────────────────
+    if args.bot:
+        console.print("[bold cyan]🤖 텔레그램 봇 시작...[/bold cyan]")
+        console.print("[yellow]Ctrl+C 로 종료[/yellow]")
+        from clients.telegram_bot import run_bot
+        try:
+            run_bot()
+        except KeyboardInterrupt:
+            console.print("\n[yellow]봇 종료[/yellow]")
+        return
 
     # 환경변수 검증 (run_type 전달 → KIS 불필요 타입은 KIS 검증 스킵)
     from config.settings import validate_env
@@ -92,6 +325,17 @@ def main():
         logger.warning("DB 초기화 경고: %s", e)
 
     # ── 중기 / 장기 분석 (독립 실행) ──────────────────────────
+    if args.type == "strategy":
+        console.print("[bold cyan]🗓 주간 종합 투자전략 수립 시작[/bold cyan]")
+        from agents.strategy_agent import run_strategy
+        try:
+            run_strategy()
+            console.print("[green]✅ 주간 전략 발송 완료[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ 주간 전략 실패: {e}[/red]")
+            sys.exit(1)
+        return
+
     if args.type == "midterm":
         console.print("[bold cyan]📊 중기 투자 분석 시작 (1~6개월)[/bold cyan]")
         from agents.midterm_agent import run_analysis

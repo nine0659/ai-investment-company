@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="ko" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 투자 어시스턴트</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .prose-chat { line-height: 1.65; }
+    .prose-chat h1,.prose-chat h2,.prose-chat h3 { font-weight:700; margin:0.75em 0 0.4em; color:#e2e8f0; }
+    .prose-chat h1 { font-size:1.2em; border-bottom:1px solid #334155; padding-bottom:0.3em; }
+    .prose-chat h2 { font-size:1.05em; }
+    .prose-chat p  { margin:0.5em 0; }
+    .prose-chat ul,.prose-chat ol { margin:0.4em 0 0.4em 1.2em; }
+    .prose-chat li { margin:0.2em 0; }
+    .prose-chat strong { color:#93c5fd; font-weight:600; }
+    .prose-chat code { background:#1e3a5f; padding:0.1em 0.35em; border-radius:3px; font-size:0.88em; color:#7dd3fc; }
+    .prose-chat pre  { background:#0f172a; padding:0.75em 1em; border-radius:6px; overflow-x:auto; margin:0.5em 0; }
+    .prose-chat blockquote { border-left:3px solid #3b82f6; padding-left:0.75em; color:#94a3b8; margin:0.5em 0; }
+    .prose-chat hr  { border-color:#334155; margin:0.8em 0; }
+    .scrollbar-thin::-webkit-scrollbar { width:4px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background:transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background:#334155; border-radius:2px; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .cursor-blink { animation:blink 1s infinite; }
+    .tab-active { background:#1e40af; color:#fff; }
+    .tab-inactive { color:#94a3b8; }
+    .tab-inactive:hover { background:#1e293b; color:#e2e8f0; }
+  </style>
+</head>
+<body class="h-full bg-slate-900 text-slate-100 font-sans"
+  x-data="app()" x-init="init()" x-cloak>
+
+<!-- ── LAYOUT ──────────────────────────────────────────────── -->
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar (desktop) -->
+  <aside class="hidden md:flex flex-col w-56 bg-slate-800 border-r border-slate-700 flex-shrink-0">
+    <!-- Logo -->
+    <div class="px-4 py-4 border-b border-slate-700">
+      <div class="text-blue-400 font-bold text-sm">🤖 AI 투자 어시스턴트</div>
+      <div class="text-slate-400 text-xs mt-0.5" x-text="clock"></div>
+    </div>
+    <!-- Market status -->
+    <div class="px-4 py-2 border-b border-slate-700">
+      <span class="text-xs px-2 py-0.5 rounded-full"
+        :class="marketOpen ? 'bg-green-900 text-green-300' : 'bg-slate-700 text-slate-400'"
+        x-text="marketOpen ? '● 장 운영중' : '● 장 마감'"></span>
+    </div>
+    <!-- Nav -->
+    <nav class="flex-1 px-2 py-3 space-y-0.5">
+      <template x-for="t in tabs" :key="t.id">
+        <button @click="tab=t.id" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition"
+          :class="tab===t.id ? 'tab-active' : 'tab-inactive'">
+          <span x-text="t.icon"></span>
+          <span x-text="t.label"></span>
+        </button>
+      </template>
+    </nav>
+    <!-- Portfolio quick stats -->
+    <div class="px-4 py-3 border-t border-slate-700 text-xs space-y-1" x-show="portfolioStats">
+      <div class="text-slate-400">포트폴리오</div>
+      <div class="text-slate-200" x-text="portfolioStats?.total_eval ? portfolioStats.total_eval.toLocaleString()+'원' : '-'"></div>
+      <div :class="portfolioStats?.pnl_pct >= 0 ? 'text-green-400' : 'text-red-400'"
+           x-text="portfolioStats?.pnl_pct != null ? (portfolioStats.pnl_pct >= 0 ? '+' : '') + portfolioStats.pnl_pct.toFixed(2)+'%' : ''"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex flex-col flex-1 min-w-0">
+
+    <!-- Mobile header -->
+    <header class="md:hidden flex items-center justify-between px-4 py-3 bg-slate-800 border-b border-slate-700">
+      <span class="text-blue-400 font-bold text-sm">🤖 AI 투자 어시스턴트</span>
+      <div class="flex items-center gap-3">
+        <span class="text-xs" :class="marketOpen ? 'text-green-400' : 'text-slate-400'"
+              x-text="marketOpen ? '● 장중' : '● 마감'"></span>
+        <span class="text-slate-400 text-xs" x-text="clock"></span>
+      </div>
+    </header>
+
+    <!-- Tab content -->
+    <main class="flex-1 overflow-hidden">
+
+      <!-- ── 💬 채팅 ───────────────────────────────────────── -->
+      <div class="h-full flex flex-col" x-show="tab==='chat'">
+        <!-- Messages -->
+        <div class="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4" id="chatMessages">
+          <!-- Welcome -->
+          <template x-if="messages.length === 0">
+            <div class="text-center py-16 text-slate-400">
+              <div class="text-5xl mb-4">🤖</div>
+              <div class="text-lg font-semibold text-slate-300 mb-2">AI 투자 어시스턴트</div>
+              <div class="text-sm space-y-1">
+                <div>"삼성전자 지금 살 만한가요?"</div>
+                <div>"오늘 반도체 섹터 전망은?"</div>
+                <div>"FOMC 금리 결정이 한국 주식에 미치는 영향"</div>
+              </div>
+              <div class="mt-4 text-xs text-slate-500">기업 심층 분석은 상단 <strong class="text-blue-400">리서치</strong> 탭을 이용하세요</div>
+            </div>
+          </template>
+          <!-- Messages -->
+          <template x-for="(msg, i) in messages" :key="i">
+            <div class="flex" :class="msg.role==='user' ? 'justify-end' : 'justify-start'">
+              <div class="max-w-[85%] md:max-w-[75%]">
+                <!-- User -->
+                <template x-if="msg.role==='user'">
+                  <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm" x-text="msg.content"></div>
+                </template>
+                <!-- AI -->
+                <template x-if="msg.role==='assistant'">
+                  <div class="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 text-sm">
+                    <div class="prose-chat" x-html="renderMarkdown(msg.content)"></div>
+                    <span x-show="msg.streaming" class="cursor-blink text-blue-400 ml-0.5">▍</span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+          <!-- Loading -->
+          <template x-if="chatLoading && messages[messages.length-1]?.role !== 'assistant'">
+            <div class="flex justify-start">
+              <div class="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3">
+                <div class="flex gap-1.5">
+                  <span class="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style="animation-delay:0s"></span>
+                  <span class="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style="animation-delay:.15s"></span>
+                  <span class="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style="animation-delay:.3s"></span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <!-- Input -->
+        <div class="border-t border-slate-700 p-4">
+          <div class="flex gap-2">
+            <input x-model="chatInput" @keydown.enter.prevent="sendChat()"
+              class="flex-1 bg-slate-800 border border-slate-600 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+              placeholder="투자 질문을 입력하세요..." :disabled="chatLoading">
+            <button @click="sendChat()" :disabled="chatLoading || !chatInput.trim()"
+              class="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-xl text-sm font-medium transition">
+              전송
+            </button>
+          </div>
+          <div class="text-xs text-slate-500 mt-1.5 px-1">Enter로 전송 · 기업 심층 분석은 리서치 탭 이용</div>
+        </div>
+      </div>
+
+      <!-- ── 📊 포트폴리오 ─────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='portfolio'">
+        <div class="max-w-4xl mx-auto space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">포트폴리오</h2>
+            <button @click="loadPortfolio()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+          <!-- Loading -->
+          <template x-if="portfolioLoading">
+            <div class="text-center py-8 text-slate-400 text-sm">데이터 불러오는 중...</div>
+          </template>
+          <!-- Empty -->
+          <template x-if="!portfolioLoading && portfolio?.length === 0">
+            <div class="text-center py-12 text-slate-400">
+              <div class="text-4xl mb-3">📭</div>
+              <div class="text-sm">보유 종목이 없습니다</div>
+              <div class="text-xs mt-1 text-slate-500">python main.py --portfolio add CODE NAME QTY PRICE</div>
+            </div>
+          </template>
+          <!-- KIS balance -->
+          <template x-if="!portfolioLoading && balance">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div class="bg-slate-800 rounded-xl p-4">
+                <div class="text-xs text-slate-400 mb-1">예수금</div>
+                <div class="font-semibold text-sm" x-text="(balance.cash||0).toLocaleString()+'원'"></div>
+              </div>
+              <div class="bg-slate-800 rounded-xl p-4">
+                <div class="text-xs text-slate-400 mb-1">평가금액</div>
+                <div class="font-semibold text-sm" x-text="(balance.total_eval||0).toLocaleString()+'원'"></div>
+              </div>
+              <div class="bg-slate-800 rounded-xl p-4 col-span-2">
+                <div class="text-xs text-slate-400 mb-1">계좌 모드</div>
+                <div class="font-semibold text-sm" x-text="balance.mode==='real' ? '실계좌' : '모의계좌'"></div>
+              </div>
+            </div>
+          </template>
+          <!-- Positions table -->
+          <template x-if="!portfolioLoading && portfolio?.length > 0">
+            <div class="bg-slate-800 rounded-xl overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-700/50 text-slate-400 text-xs">
+                  <tr>
+                    <th class="px-4 py-3 text-left">종목</th>
+                    <th class="px-4 py-3 text-right">수량</th>
+                    <th class="px-4 py-3 text-right">평균단가</th>
+                    <th class="px-4 py-3 text-right hidden md:table-cell">현재가</th>
+                    <th class="px-4 py-3 text-right">수익률</th>
+                    <th class="px-4 py-3 text-right hidden md:table-cell">전략</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-700">
+                  <template x-for="p in portfolio" :key="p.code">
+                    <tr class="hover:bg-slate-700/30 transition">
+                      <td class="px-4 py-3">
+                        <div class="font-medium text-slate-100" x-text="p.name"></div>
+                        <div class="text-xs text-slate-400" x-text="p.code"></div>
+                      </td>
+                      <td class="px-4 py-3 text-right" x-text="(p.qty||0).toLocaleString()+'주'"></td>
+                      <td class="px-4 py-3 text-right text-slate-300" x-text="(p.avg_price||0).toLocaleString()+'원'"></td>
+                      <td class="px-4 py-3 text-right text-slate-300 hidden md:table-cell" x-text="p.current_price ? p.current_price.toLocaleString()+'원' : '-'"></td>
+                      <td class="px-4 py-3 text-right font-semibold"
+                          :class="(p.return_pct||0) >= 0 ? 'text-green-400' : 'text-red-400'"
+                          x-text="p.return_pct != null ? ((p.return_pct>=0?'+':'')+p.return_pct.toFixed(2)+'%') : '-'"></td>
+                      <td class="px-4 py-3 text-right hidden md:table-cell">
+                        <span class="text-xs px-2 py-0.5 rounded-full"
+                          :class="{'bg-blue-900 text-blue-300':p.timeframe==='short','bg-purple-900 text-purple-300':p.timeframe==='mid','bg-amber-900 text-amber-300':p.timeframe==='long'}"
+                          x-text="{'short':'단기','mid':'중기','long':'장기'}[p.timeframe]||p.timeframe"></span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+          <!-- KIS Holdings (from account) -->
+          <template x-if="!portfolioLoading && balance?.holdings?.length > 0">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-300 mb-2">KIS 계좌 보유종목</h3>
+              <div class="bg-slate-800 rounded-xl overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead class="bg-slate-700/50 text-slate-400 text-xs">
+                    <tr>
+                      <th class="px-4 py-3 text-left">종목</th>
+                      <th class="px-4 py-3 text-right">수량</th>
+                      <th class="px-4 py-3 text-right">수익률</th>
+                      <th class="px-4 py-3 text-right hidden md:table-cell">평가손익</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-700">
+                    <template x-for="h in balance.holdings" :key="h.code">
+                      <tr class="hover:bg-slate-700/30">
+                        <td class="px-4 py-3">
+                          <div class="font-medium" x-text="h.name||h.code"></div>
+                          <div class="text-xs text-slate-400" x-text="h.code"></div>
+                        </td>
+                        <td class="px-4 py-3 text-right" x-text="(h.qty||0).toLocaleString()+'주'"></td>
+                        <td class="px-4 py-3 text-right font-semibold"
+                            :class="(h.pnl_pct||0) >= 0 ? 'text-green-400' : 'text-red-400'"
+                            x-text="((h.pnl_pct>=0?'+':'')+h.pnl_pct.toFixed(2)+'%')"></td>
+                        <td class="px-4 py-3 text-right hidden md:table-cell"
+                            :class="(h.pnl_amt||0) >= 0 ? 'text-green-400' : 'text-red-400'"
+                            x-text="((h.pnl_amt>=0?'+':'')+h.pnl_amt.toLocaleString()+'원')"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ── 📋 워치리스트 ──────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='watchlist'">
+        <div class="max-w-3xl mx-auto space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">관심종목</h2>
+            <button @click="loadWatchlist()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+          <template x-if="watchlistLoading">
+            <div class="text-center py-8 text-slate-400 text-sm">불러오는 중...</div>
+          </template>
+          <template x-if="!watchlistLoading && watchlist?.length === 0">
+            <div class="text-center py-12 text-slate-400">
+              <div class="text-4xl mb-3">📋</div>
+              <div class="text-sm">관심종목이 없습니다</div>
+              <div class="text-xs mt-1 text-slate-500">python main.py --watchlist add CODE NAME</div>
+            </div>
+          </template>
+          <div class="space-y-2" x-show="!watchlistLoading && watchlist?.length > 0">
+            <template x-for="w in watchlist" :key="w.code">
+              <div class="bg-slate-800 rounded-xl px-4 py-3 flex items-center gap-4">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium" x-text="w.name"></span>
+                    <span class="text-xs text-slate-400" x-text="w.code"></span>
+                    <span class="text-xs px-2 py-0.5 rounded-full"
+                      :class="{'bg-blue-900 text-blue-300':w.timeframe==='short','bg-purple-900 text-purple-300':w.timeframe==='mid','bg-amber-900 text-amber-300':w.timeframe==='long'}"
+                      x-text="{'short':'단기','mid':'중기','long':'장기'}[w.timeframe]||''"></span>
+                  </div>
+                  <div class="text-xs text-slate-400 mt-0.5" x-text="w.reason||''"></div>
+                </div>
+                <div class="text-right">
+                  <template x-if="w.current_price">
+                    <div>
+                      <div class="font-semibold text-sm" x-text="w.current_price.toLocaleString()+'원'"></div>
+                      <div class="text-xs" :class="(w.change_pct||0)>=0?'text-green-400':'text-red-400'"
+                           x-text="((w.change_pct>=0?'+':'')+w.change_pct?.toFixed(2)+'%')"></div>
+                    </div>
+                  </template>
+                </div>
+                <button @click="quickResearch(w.code)"
+                  class="text-xs px-3 py-1.5 bg-slate-700 hover:bg-blue-700 rounded-lg transition">분석</button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 📰 브리핑 ─────────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='briefing'">
+        <div class="max-w-3xl mx-auto space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">브리핑 히스토리</h2>
+            <button @click="loadBriefings()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+          <template x-if="briefingsLoading">
+            <div class="text-center py-8 text-slate-400 text-sm">불러오는 중...</div>
+          </template>
+          <template x-if="!briefingsLoading && briefings?.length === 0">
+            <div class="text-center py-12 text-slate-400">
+              <div class="text-4xl mb-3">📭</div>
+              <div class="text-sm">저장된 브리핑이 없습니다</div>
+            </div>
+          </template>
+          <div class="space-y-2" x-show="!briefingsLoading">
+            <template x-for="(b, i) in briefings" :key="i">
+              <div class="bg-slate-800 rounded-xl overflow-hidden">
+                <button @click="b._open = !b._open"
+                  class="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-700/50 transition">
+                  <div class="text-left">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-medium" x-text="b.date"></span>
+                      <span class="text-xs px-2 py-0.5 rounded-full"
+                        :class="{
+                          'bg-orange-900 text-orange-300': b.run_type==='pre_market',
+                          'bg-blue-900 text-blue-300': b.run_type?.includes('intra'),
+                          'bg-purple-900 text-purple-300': b.run_type==='close_market'
+                        }"
+                        x-text="{'pre_market':'장전','intra_market_1':'장중1차','intra_market_2':'장중2차','close_market':'장마감'}[b.run_type]||b.run_type"></span>
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5 truncate max-w-xs" x-text="b.preview?.slice(0,80)+'...'"></div>
+                  </div>
+                  <span class="text-slate-400 ml-2" x-text="b._open ? '▲' : '▼'"></span>
+                </button>
+                <div x-show="b._open" x-transition class="px-4 pb-4">
+                  <div class="prose-chat text-sm border-t border-slate-700 pt-3 whitespace-pre-wrap" x-text="b.full"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 🔍 리서치 ─────────────────────────────────────── -->
+      <div class="h-full flex flex-col" x-show="tab==='research'">
+        <!-- Search bar -->
+        <div class="border-b border-slate-700 p-4 bg-slate-800/50">
+          <div class="max-w-2xl mx-auto">
+            <div class="flex gap-2">
+              <input x-model="researchQuery"
+                @keydown.enter.prevent="startResearch()"
+                class="flex-1 bg-slate-800 border border-slate-600 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                placeholder="종목코드(005930) 또는 회사명(삼성전자)으로 검색..." :disabled="researchLoading">
+              <button @click="startResearch()" :disabled="researchLoading || !researchQuery.trim()"
+                class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-xl text-sm font-medium transition whitespace-nowrap">
+                <span x-show="!researchLoading">분석 시작</span>
+                <span x-show="researchLoading">분석 중...</span>
+              </button>
+            </div>
+            <!-- Quick search results -->
+            <div class="mt-2 space-y-1" x-show="searchResults.length > 0">
+              <div class="text-xs text-slate-400 mb-1">검색 결과</div>
+              <template x-for="r in searchResults" :key="r.code">
+                <button @click="researchQuery=r.code; searchResults=[]; startResearch()"
+                  class="block w-full text-left text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition">
+                  <span class="text-blue-300" x-text="r.code"></span>
+                  <span class="ml-2 text-slate-200" x-text="r.name"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Result area -->
+        <div class="flex-1 overflow-y-auto scrollbar-thin p-4 md:p-6">
+          <div class="max-w-3xl mx-auto">
+            <!-- Status messages -->
+            <template x-if="researchStatus">
+              <div class="text-sm text-blue-300 mb-4 animate-pulse" x-text="researchStatus"></div>
+            </template>
+            <!-- Empty state -->
+            <template x-if="!researchLoading && !researchResult && !researchStatus">
+              <div class="text-center py-16 text-slate-400">
+                <div class="text-5xl mb-4">🔍</div>
+                <div class="text-lg font-semibold text-slate-300 mb-2">기업 투자 분석</div>
+                <div class="text-sm space-y-1">
+                  <div>종목코드 또는 회사명 입력 → AI 리서치 리포트 생성</div>
+                  <div class="text-xs text-slate-500 mt-2">투자등급 · 목표주가 · 보유기간 · 매수/매도 전략 포함</div>
+                </div>
+              </div>
+            </template>
+            <!-- Report -->
+            <template x-if="researchResult">
+              <div class="bg-slate-800 rounded-xl p-5">
+                <div class="prose-chat text-sm" x-html="renderMarkdown(researchResult)"></div>
+                <span x-show="researchLoading" class="cursor-blink text-blue-400 ml-0.5">▍</span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Mobile bottom nav -->
+    <nav class="md:hidden flex border-t border-slate-700 bg-slate-800">
+      <template x-for="t in tabs" :key="t.id">
+        <button @click="tab=t.id" class="flex-1 flex flex-col items-center py-2.5 text-xs gap-0.5 transition"
+          :class="tab===t.id ? 'text-blue-400' : 'text-slate-400'">
+          <span class="text-lg leading-none" x-text="t.icon"></span>
+          <span x-text="t.label"></span>
+        </button>
+      </template>
+    </nav>
+  </div>
+</div>
+
+<script>
+marked.setOptions({ breaks: true, gfm: true });
+
+function app() {
+  return {
+    tab: 'chat',
+    clock: '',
+    marketOpen: false,
+    tabs: [
+      { id: 'chat',      icon: '💬', label: '채팅' },
+      { id: 'research',  icon: '🔍', label: '리서치' },
+      { id: 'portfolio', icon: '📊', label: '포트폴리오' },
+      { id: 'watchlist', icon: '📋', label: '워치리스트' },
+      { id: 'briefing',  icon: '📰', label: '브리핑' },
+    ],
+
+    // Chat
+    messages: [],
+    chatInput: '',
+    chatLoading: false,
+
+    // Portfolio
+    portfolio: null,
+    balance: null,
+    portfolioStats: null,
+    portfolioLoading: false,
+
+    // Watchlist
+    watchlist: null,
+    watchlistLoading: false,
+
+    // Briefings
+    briefings: null,
+    briefingsLoading: false,
+
+    // Research
+    researchQuery: '',
+    researchResult: '',
+    researchStatus: '',
+    researchLoading: false,
+    searchResults: [],
+    searchTimer: null,
+
+    init() {
+      this.updateClock();
+      setInterval(() => this.updateClock(), 1000);
+      this.checkStatus();
+      setInterval(() => this.checkStatus(), 60000);
+      this.$watch('tab', (t) => {
+        if (t === 'portfolio' && this.portfolio === null) this.loadPortfolio();
+        if (t === 'watchlist' && this.watchlist === null) this.loadWatchlist();
+        if (t === 'briefing'  && this.briefings === null) this.loadBriefings();
+      });
+      // Debounced search while typing
+      this.$watch('researchQuery', (q) => {
+        clearTimeout(this.searchTimer);
+        if (q.length >= 2 && !q.match(/^\d/)) {
+          this.searchTimer = setTimeout(() => this.searchCompanies(q), 400);
+        } else {
+          this.searchResults = [];
+        }
+      });
+    },
+
+    updateClock() {
+      this.clock = new Date().toLocaleTimeString('ko-KR', {
+        timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+    },
+
+    async checkStatus() {
+      try {
+        const r = await fetch('/api/status');
+        const d = await r.json();
+        this.marketOpen = d.market === 'open';
+      } catch {}
+    },
+
+    renderMarkdown(text) {
+      if (!text) return '';
+      try { return marked.parse(text); } catch { return text; }
+    },
+
+    // ── Chat ──────────────────────────────────────────────────
+    async sendChat() {
+      const msg = this.chatInput.trim();
+      if (!msg || this.chatLoading) return;
+      this.chatInput = '';
+      this.chatLoading = true;
+
+      const history = this.messages.slice(-10).map(m => ({ role: m.role, content: m.content }));
+      this.messages.push({ role: 'user', content: msg });
+      this.messages.push({ role: 'assistant', content: '', streaming: true });
+      const aiIdx = this.messages.length - 1;
+      this.$nextTick(() => this.scrollChat());
+
+      try {
+        const resp = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg, history })
+        });
+        await this.readStream(resp, (type, content) => {
+          if (type === 'chunk') {
+            this.messages[aiIdx].content += content;
+            this.scrollChat();
+          }
+        });
+      } catch (e) {
+        this.messages[aiIdx].content = '⚠️ 오류: ' + e.message;
+      } finally {
+        this.messages[aiIdx].streaming = false;
+        this.chatLoading = false;
+        this.scrollChat();
+      }
+    },
+
+    scrollChat() {
+      this.$nextTick(() => {
+        const el = document.getElementById('chatMessages');
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+
+    // ── Research ─────────────────────────────────────────────
+    async startResearch() {
+      const q = this.researchQuery.trim();
+      if (!q || this.researchLoading) return;
+      this.researchLoading = true;
+      this.researchResult = '';
+      this.researchStatus = '';
+      this.searchResults = [];
+
+      try {
+        const resp = await fetch('/api/research', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q })
+        });
+        await this.readStream(resp, (type, content) => {
+          if (type === 'status') {
+            this.researchStatus = content;
+          } else if (type === 'start') {
+            this.researchStatus = '';
+            this.researchResult = content;
+          } else if (type === 'chunk') {
+            this.researchResult += content;
+          } else if (type === 'error') {
+            this.researchStatus = '';
+            this.researchResult = '⚠️ ' + content;
+          }
+        });
+      } finally {
+        this.researchLoading = false;
+        this.researchStatus = '';
+      }
+    },
+
+    async searchCompanies(q) {
+      try {
+        const r = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q })
+        });
+        const d = await r.json();
+        this.searchResults = d.results || [];
+      } catch {}
+    },
+
+    quickResearch(code) {
+      this.researchQuery = code;
+      this.tab = 'research';
+      this.$nextTick(() => this.startResearch());
+    },
+
+    // ── Portfolio ────────────────────────────────────────────
+    async loadPortfolio() {
+      this.portfolioLoading = true;
+      try {
+        const [pr, br] = await Promise.all([
+          fetch('/api/portfolio').then(r => r.json()),
+          fetch('/api/balance').then(r => r.json())
+        ]);
+        this.portfolio = pr.positions || [];
+        this.balance   = br.error ? null : br;
+        // Quick stats
+        if (this.balance?.total_eval) {
+          const pnl = (this.balance.total_eval - this.balance.purchase_amt);
+          this.portfolioStats = {
+            total_eval: this.balance.total_eval,
+            pnl_pct: this.balance.purchase_amt
+              ? +(pnl / this.balance.purchase_amt * 100).toFixed(2)
+              : 0
+          };
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        this.portfolioLoading = false;
+      }
+    },
+
+    // ── Watchlist ────────────────────────────────────────────
+    async loadWatchlist() {
+      this.watchlistLoading = true;
+      try {
+        const r = await fetch('/api/watchlist');
+        const d = await r.json();
+        this.watchlist = d.items || [];
+      } finally {
+        this.watchlistLoading = false;
+      }
+    },
+
+    // ── Briefings ────────────────────────────────────────────
+    async loadBriefings() {
+      this.briefingsLoading = true;
+      try {
+        const r = await fetch('/api/briefings?limit=30');
+        const d = await r.json();
+        this.briefings = (d.briefings || []).map(b => ({ ...b, _open: false }));
+      } finally {
+        this.briefingsLoading = false;
+      }
+    },
+
+    // ── SSE stream reader ────────────────────────────────────
+    async readStream(resp, onEvent) {
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop(); // keep incomplete line
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const ev = JSON.parse(line.slice(6));
+              onEvent(ev.type, ev.content);
+            } catch {}
+          }
+        }
+      }
+    }
+  };
+}
+</script>
+</body>
+</html>

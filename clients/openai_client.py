@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from openai import OpenAI
 from config.settings import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_MODEL_CEO
 
@@ -27,3 +28,31 @@ def chat(system: str, user: str, model: str | None = None, max_tokens: int = 200
         temperature=0.3,
     )
     return resp.choices[0].message.content.strip()
+
+
+def chat_stream(
+    system: str,
+    user: str,
+    history: list[dict] | None = None,
+    model: str | None = None,
+    max_tokens: int = 3000,
+) -> Generator[str, None, None]:
+    """텍스트 청크를 yield 하는 스트리밍 버전.
+    history: [{"role": "user"|"assistant", "content": "..."}, ...]
+    """
+    messages = [{"role": "system", "content": system}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user})
+
+    stream = get_client().chat.completions.create(
+        model=model or OPENAI_MODEL,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=0.4,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta

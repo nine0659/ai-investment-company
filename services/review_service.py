@@ -64,6 +64,49 @@ def init_db():
                 amount REAL,
                 PRIMARY KEY (date, code)
             );
+            CREATE TABLE IF NOT EXISTS portfolio_positions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                code         TEXT NOT NULL UNIQUE,
+                name         TEXT NOT NULL,
+                quantity     INTEGER NOT NULL DEFAULT 0,
+                avg_price    REAL NOT NULL,
+                entry_date   TEXT,
+                timeframe    TEXT DEFAULT 'short',
+                sector       TEXT,
+                target_price REAL,
+                stop_price   REAL,
+                memo         TEXT,
+                status       TEXT DEFAULT 'holding',
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS portfolio_history (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                code       TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                quantity   INTEGER,
+                avg_price  REAL,
+                exit_price REAL,
+                exit_date  TEXT,
+                return_pct REAL,
+                timeframe  TEXT,
+                memo       TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS watchlist_items (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                code          TEXT NOT NULL UNIQUE,
+                name          TEXT NOT NULL,
+                target_entry  REAL,
+                timeframe     TEXT DEFAULT 'short',
+                reason        TEXT,
+                trigger_type  TEXT DEFAULT 'price_below',
+                trigger_value REAL,
+                priority      TEXT DEFAULT 'normal',
+                status        TEXT DEFAULT 'active',
+                added_date    TEXT,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+            );
         """)
     logger.info("DB 초기화 완료")
 

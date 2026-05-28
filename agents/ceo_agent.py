@@ -39,19 +39,24 @@ def _fetch_price_context(candidates: list[dict], kis: KISClient) -> str:
             if not price:
                 logger.debug("현재가 0 — 스킵 (%s)", code)
                 continue
-            # 즉시진입 (현재가/전일 종가 기준)
-            entry1  = price
-            stop1   = round(price * 0.97)
-            target1 = round(price * 1.06)
-            # 눌림진입 (-1% 기준)
-            entry2  = round(price * 0.99)
-            stop2   = round(entry2 * 0.97)
-            target2 = round(entry2 * 1.06)
-
-            # 기술적 지표 (yfinance — 실패해도 진행)
+            # 기술적 지표 먼저 수집 (손절·목표가 계산에 활용)
             market_sfx = c.get("market", "KOSPI")
             yfin_sym   = f"{code}.{'KS' if market_sfx == 'KOSPI' else 'KQ'}"
             tech = fetch_kr_stock_technicals(yfin_sym)
+
+            # 즉시진입 (현재가/전일 종가 기준)
+            entry1   = price
+            # MA5 아래로 내려가면 더 빠른 손절 — RSI 과매수이면 손절 타이트
+            stop_pct = 0.97 if not tech or tech["rsi14"] < 70 else 0.975
+            stop1    = round(price * stop_pct)
+            target1a = round(price * 1.05)   # 1차 목표 +5%
+            target1b = round(price * 1.10)   # 2차 목표 +10%
+            # 눌림진입 (-1.5% 기준 — 분할 진입 시 평단 낮추기)
+            entry2   = round(price * 0.985)
+            stop2    = round(entry2 * stop_pct)
+            target2a = round(entry2 * 1.05)
+            target2b = round(entry2 * 1.10)
+
             tech_line = ""
             if tech:
                 rsi_flag = " ⚠️과매수" if tech["rsi14"] >= 70 else (" 🟢과매도권" if tech["rsi14"] <= 30 else "")
@@ -64,8 +69,8 @@ def _fetch_price_context(candidates: list[dict], kis: KISClient) -> str:
             lines.append(
                 f"{name}({code}) | {price_label} {price:,}원"
                 + ("" if is_market_hours else " ⚠️장 전이므로 시초가 확인 후 조정 필요")
-                + f"\n  즉시진입: 1차 {entry1:,}원 | 손절 {stop1:,}원 | 목표 {target1:,}원\n"
-                f"  눌림진입(-1%): 1차 {entry2:,}원 | 손절 {stop2:,}원 | 목표 {target2:,}원"
+                + f"\n  즉시진입: {entry1:,}원 | 손절 {stop1:,}원 | 1차목표 {target1a:,}원(+5%) | 2차목표 {target1b:,}원(+10%)"
+                f"\n  분할진입(-1.5%): {entry2:,}원 | 손절 {stop2:,}원 | 1차목표 {target2a:,}원 | 2차목표 {target2b:,}원"
                 + tech_line
             )
         except Exception as e:
@@ -155,21 +160,33 @@ def _build_prompt_pre(has_price: bool) -> str:
 ③ 오늘 매매 지시서  (확신 있는 1~2개. 없으면 "③ 오늘은 관망" 선언)
 {stock_block}
 
+📌 이슈종목 중기전략  (이슈종목팀 기반 — 1~3주 보유. 없으면 이 섹션 생략)
+종목명(6자리코드) | 주목기간: X주 | 발굴신호: [①거래량/②거래대금/③외기동반/④미국연동/⑤선물]
+  진입전략: [즉시/분할/눌림/돌파] → 조건
+  1차목표: +X% → 도달 시 절반 익절
+  2차목표: +Y% → 나머지 익절 또는 홀드 재판단
+  손절선: -Z% (이탈 즉시 전량 — 예외 없음)
+  핵심근거: [팩트 한 줄]
+(최대 3종목. 오늘 매매지시서와 중복 종목은 생략)
+
 ④ 오늘 하면 안 되는 것  (데이터 근거 1개 — 추상적 경고 금지)
 ❌ [구체적 행동 금지] — 이유: [수치/데이터 근거]
 
-⑤ 레이더 (오늘은 아니지만 내일 이후 주목할 종목 2~3개)
+⑤ 보유 포지션 오늘 행동 지시  (포트폴리오 매니저 분석 기반 — 없으면 이 섹션 생략)
+💼 [종목명]: [홀드/추가매수/분할매도/전량매도] — 이유 한 줄 (오늘 시장 연동)
+
+⑥ 레이더 (오늘은 아니지만 내일 이후 주목할 종목 2~3개)
 👀 [종목(코드)] — [ETF 연동 / 수급 근거]  |  수혜 확률 XX%
 
-⑥ 이벤트 리스크 경고  (이벤트 리스크팀 리포트 기반 — 없으면 이 섹션 생략)
+⑦ 이벤트 리스크 경고  (이벤트 리스크팀 리포트 기반 — 없으면 이 섹션 생략)
 ⚠️ [이벤트명]  [예상 날짜]  →  [포지션 조정 권고]
 
-⑦ 글로벌 전문가 서사 & 시장 심리  (인텔리전스팀 기반 — 없으면 이 섹션 생략)
+⑧ 글로벌 전문가 서사 & 시장 심리  (인텔리전스팀 기반 — 없으면 이 섹션 생략)
 🌐 지배 서사: [지금 글로벌 전문가들의 시각 핵심 한 줄]
 🐂 강세 논리: [핵심 1가지]  /  🐻 약세 논리: [핵심 1가지]
 → 오늘 KOSPI 함의: [이 서사가 오늘 포지션에 미치는 영향 한 줄]
 
-⑧ 시초가 체크리스트
+⑨ 시초가 체크리스트
 □ 갭업 +2% 이상  → 추격 금지, 눌림 대기
 □ 갭업 +1~2%    → 계획 물량 절반만 진입
 □ 보합 출발     → 계획대로 전량 진입
@@ -210,17 +227,29 @@ def _build_prompt_close(has_price: bool) -> str:
 A [강세 시나리오]:  상승확률 XX%  |  주도 섹터: [OO]  |  포지션: [공격/유지]
 B [약세 시나리오]:  하락확률 YY%  |  주의 섹터: [OO]  |  포지션: [축소/현금]
 
-⑥ 내일 매매 지시서  (오늘 실제 거래대금·수급 확인된 종목 우선)
+⑥ 보유 포지션 내일 행동 지시  (포트폴리오 매니저 분석 기반 — 없으면 이 섹션 생략)
+💼 [종목명]: [홀드/추가매수/분할매도/전량매도] — 이유: [오늘 종가 기준]
+
+⑦ 내일 매매 지시서  (오늘 실제 거래대금·수급 확인된 종목 우선)
 오늘 하락·소외됐다는 이유만으로 "저가 매수 기회"로 추천 금지.
 {stock_block}
 
-⑦ 내일 하면 안 되는 것
+📌 이슈종목 중기전략  (이슈종목팀 기반 — 1~3주 보유. 없으면 이 섹션 생략)
+종목명(6자리코드) | 주목기간: X주 | 발굴신호: [①거래량/②거래대금/③외기동반/④미국연동/⑤선물]
+  진입전략: [즉시/분할/눌림/돌파] → 조건
+  1차목표: +X% → 도달 시 절반 익절
+  2차목표: +Y% → 나머지 익절 또는 홀드 재판단
+  손절선: -Z% (이탈 즉시 전량 — 예외 없음)
+  핵심근거: [팩트 한 줄]
+(최대 3종목. 오늘 장에서 거래대금·수급이 실제로 확인된 종목 우선)
+
+⑧ 내일 하면 안 되는 것
 ❌ [구체적 행동 금지]  —  이유: [오늘 데이터 근거]
 
-⑧ 이벤트 리스크 경고  (이벤트 리스크팀 리포트 기반 — 없으면 이 섹션 생략)
+⑨ 이벤트 리스크 경고  (이벤트 리스크팀 리포트 기반 — 없으면 이 섹션 생략)
 ⚠️ [이벤트명]  [예상 날짜]  →  [포지션 조정 권고]
 
-⑨ 글로벌 전문가 서사 변화  (인텔리전스팀 기반 — 없으면 이 섹션 생략)
+⑩ 글로벌 전문가 서사 변화  (인텔리전스팀 기반 — 없으면 이 섹션 생략)
 🌐 오늘 지배 서사: [글로벌 전문가 논의 중심]
 ⚡ 컨센서스 변화: [강화 / 약화 / 전환 — 이유 한 줄]
 → 내일 전략 함의: [서사 변화가 내일 포지션에 미치는 영향]
@@ -324,6 +353,11 @@ def run(state: InvestmentState) -> InvestmentState:
                     "\n[오늘 주도 섹터 분석]\n"
                     + state["sector_report"]
                 )
+            if state.get("issue_stocks_report"):
+                context_parts.append(
+                    "\n[이슈종목 발굴 분석 — 📌 이슈종목 중기전략 섹션의 근거 데이터]\n"
+                    + state["issue_stocks_report"]
+                )
             if state.get("money_flow_report"):
                 context_parts.append(
                     "\n[수급 분석 — 외국인·기관 순매수]\n"
@@ -394,6 +428,11 @@ def run(state: InvestmentState) -> InvestmentState:
                 context_parts.append(
                     "\n[오늘 섹터·테마 흐름]\n"
                     + state["sector_report"]
+                )
+            if state.get("issue_stocks_report"):
+                context_parts.append(
+                    "\n[이슈종목 발굴 분석 — 📌 이슈종목 중기전략 섹션의 근거 데이터]\n"
+                    + state["issue_stocks_report"]
                 )
             if state.get("money_flow_report"):
                 context_parts.append(
@@ -471,6 +510,13 @@ def run(state: InvestmentState) -> InvestmentState:
                 context_parts.append(
                     "\n[오늘 주요 DART 공시]\n" + dart_text
                 )
+
+        # 포트폴리오 매니저 분석 (보유 종목 행동 지시 + 워치리스트 트리거)
+        if state.get("portfolio_report"):
+            context_parts.append(
+                "\n[포트폴리오 매니저 분석 — ⑤번 보유 포지션 행동 지시의 기반]\n"
+                + state["portfolio_report"]
+            )
 
         if state.get("review_report"):
             context_parts.append(f"\n[복기]\n{state['review_report']}")
