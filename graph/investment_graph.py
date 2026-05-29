@@ -234,7 +234,13 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         logger.info("[텔레그램] 발송 완료")
         errors = state.get("errors", [])
         if errors:
-            send_message("⚠️ 일부 데이터 수집 실패:\n" + "\n".join(f"- {e}" for e in errors[:5]))
+            # DB 연결 오류(Supabase/psycopg2)는 텔레그램 발송 제외 — 로그에만 기록
+            _SKIP_PATTERNS = ("psycopg2", "OperationalError", "supabase", "connection to server")
+            filtered = [e for e in errors if not any(p in e for p in _SKIP_PATTERNS)]
+            if filtered:
+                send_message("⚠️ 일부 데이터 수집 실패:\n" + "\n".join(f"- {e}" for e in filtered[:5]))
+            if len(errors) != len(filtered):
+                logger.warning("[텔레그램] DB 연결 오류 %d건 — 텔레그램 발송 생략 (로그 확인)", len(errors) - len(filtered))
     except Exception as e:
         logger.error("[텔레그램] 발송 실패: %s", e)
     return state
