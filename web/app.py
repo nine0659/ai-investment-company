@@ -165,21 +165,29 @@ async def get_portfolio_api():
 
 
 @app.get("/api/watchlist")
-async def get_watchlist_api():
-    """관심종목."""
+async def get_watchlist_api(prices: bool = False):
+    """관심종목. prices=true 일 때만 KIS 실시간 가격 조회 (기본은 빠른 응답 우선)."""
     try:
         from services.watchlist_service import get_watchlist
-        from clients.kis_client import KISClient
         items = get_watchlist()
-        try:
-            kis = KISClient()
-            for item in items:
-                pd = kis.get_stock_price(item["code"], market=None)
-                if pd:
-                    item["current_price"] = pd.get("price", 0)
-                    item["change_pct"]    = pd.get("change_pct", 0)
-        except Exception:
-            pass
+        if prices and items:
+            try:
+                from clients.kis_client import KISClient
+                import asyncio
+                loop = asyncio.get_event_loop()
+                kis = KISClient()
+                def _fetch_prices():
+                    for item in items:
+                        try:
+                            pd = kis.get_stock_price(item["code"], market=None)
+                            if pd:
+                                item["current_price"] = pd.get("price", 0)
+                                item["change_pct"]    = pd.get("change_pct", 0)
+                        except Exception:
+                            pass
+                await loop.run_in_executor(None, _fetch_prices)
+            except Exception:
+                pass
         return {"items": items}
     except Exception as e:
         return {"items": [], "error": str(e)}

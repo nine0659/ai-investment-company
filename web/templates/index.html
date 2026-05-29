@@ -1344,13 +1344,21 @@ function app() {
     async loadWatchlist() {
       this.watchlistLoading = true;
       try {
+        // 1단계: 빠른 목록 우선 로드
         const [wr, ar] = await Promise.all([
           fetch('/api/watchlist').then(r => r.json()),
           fetch('/api/alerts?days=14').then(r => r.json()),
         ]);
         this.watchlist       = wr.items || [];
         this.watchlistAlerts = ar.alerts || [];
-      } finally {
+        this.watchlistLoading = false;
+        // 2단계: 가격 정보 비동기 추가 (UI 블로킹 없이)
+        if (this.watchlist.length > 0) {
+          fetch('/api/watchlist?prices=true').then(r => r.json()).then(d => {
+            if (d.items) this.watchlist = d.items;
+          }).catch(() => {});
+        }
+      } catch(e) {
         this.watchlistLoading = false;
       }
     },
