@@ -158,13 +158,16 @@ def send_alert(alert_type: str, title: str, body: str,
         logger.debug("알림 DB 저장 실패: %s", e)
 
     if alert_type in (TYPE_OPPORTUNITY, TYPE_RISK):
-        # 긴급 기회·위험 → 카카오톡만
-        sent = _send_kakao(message)
-        if not sent:
-            logger.warning(
-                "[AlarmService] 카카오톡 발송 실패 — KAKAO_ACCESS_TOKEN 미설정이면 "
-                ".env에 KAKAO_ACCESS_TOKEN=<토큰> 추가 필요"
+        # 긴급 기회·위험 → 카카오톡 우선, 실패 시 텔레그램 fallback
+        kakao_ok = _send_kakao(message)
+        if not kakao_ok:
+            # 카카오 미설정 또는 실패 → 텔레그램으로 발송 (긴급 표시 강화)
+            urgent_message = (
+                "🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴\n"
+                + message +
+                "\n🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴"
             )
+            _send_telegram(urgent_message)
     else:
         # 일반 알림 (진입신호·목표가·손절) → 텔레그램
         _send_telegram(message)

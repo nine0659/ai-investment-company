@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>카카오톡 연동 — AI 투자 어시스턴트</title>
+  <script src="https://developers.kakao.com/sdk/js/kakao.min.js"></script>
+  <style>
+    body { background:#0f172a; color:#e2e8f0; font-family:sans-serif; display:flex; justify-content:center; align-items:center; min-height:100vh; margin:0; }
+    .box { background:#1e293b; border-radius:16px; padding:40px; max-width:600px; width:90%; text-align:center; }
+    h1 { color:#3b82f6; font-size:1.3rem; margin-bottom:8px; }
+    p  { color:#94a3b8; font-size:0.9rem; margin-bottom:24px; }
+    .btn { background:#FEE500; color:#000; border:none; border-radius:10px; padding:14px 32px; font-size:1rem; font-weight:700; cursor:pointer; }
+    .btn:hover { background:#FFD700; }
+    .result { margin-top:28px; text-align:left; }
+    .label { font-size:0.8rem; color:#64748b; margin-bottom:4px; }
+    .token { background:#0f172a; border:1px solid #334155; border-radius:8px; padding:12px; font-size:0.75rem; color:#22c55e; word-break:break-all; margin-bottom:16px; }
+    .copy-btn { background:#3b82f6; color:#fff; border:none; border-radius:6px; padding:6px 14px; font-size:0.8rem; cursor:pointer; margin-top:6px; }
+    .copy-btn:hover { background:#2563eb; }
+    .step { background:#1e3a5f; border-radius:8px; padding:12px 16px; margin-bottom:12px; font-size:0.85rem; color:#93c5fd; text-align:left; }
+    .success { color:#22c55e; font-size:1.1rem; margin-bottom:16px; }
+    .error { color:#ef4444; font-size:0.9rem; margin-top:16px; }
+    code { background:#1e293b; padding:2px 6px; border-radius:4px; font-size:0.8rem; }
+  </style>
+</head>
+<body>
+<div class="box">
+  <h1>🤖 AI 투자 어시스턴트</h1>
+  <p>카카오톡 긴급 알림 연동</p>
+
+  <div id="step1">
+    <div class="step">✅ 1단계: 아래 버튼을 클릭해 카카오 계정으로 로그인</div>
+    <div class="step">✅ 2단계: 로그인 후 이 페이지에 토큰이 표시됨</div>
+    <div class="step">✅ 3단계: 터미널에 명령어 복사 후 실행</div>
+    <br>
+    <button class="btn" onclick="kakaoLogin()">카카오 로그인</button>
+  </div>
+
+  <div id="step2" style="display:none" class="result">
+    <div class="success">✅ 로그인 성공! 아래 명령어를 터미널에서 실행하세요.</div>
+
+    <div class="label">터미널 실행 명령어 (복사 후 붙여넣기):</div>
+    <div class="token" id="cmd_text"></div>
+    <button class="copy-btn" onclick="copyCmd()">📋 명령어 복사</button>
+
+    <br><br>
+    <div class="label">액세스 토큰:</div>
+    <div class="token" id="access_token_text"></div>
+
+    <div class="label" id="refresh_label" style="display:none">리프레시 토큰:</div>
+    <div class="token" id="refresh_token_text" style="display:none"></div>
+  </div>
+
+  <div id="error_msg" class="error"></div>
+</div>
+
+<script>
+  // JavaScript 키 초기화
+  Kakao.init('8a51d2753d2ca59edccf9377b83e7d4e');
+
+  function kakaoLogin() {
+    Kakao.Auth.login({
+      throughTalk: false,
+      success: function(authObj) {
+        var at = authObj.access_token || '';
+        var rt = authObj.refresh_token || '';
+
+        document.getElementById('step1').style.display = 'none';
+        document.getElementById('step2').style.display = 'block';
+
+        var cmd = 'python scripts/kakao_save_token.py "' + at + '" "' + rt + '"';
+        document.getElementById('cmd_text').textContent = cmd;
+        document.getElementById('access_token_text').textContent = at;
+
+        if (rt) {
+          document.getElementById('refresh_label').style.display = 'block';
+          document.getElementById('refresh_token_text').style.display = 'block';
+          document.getElementById('refresh_token_text').textContent = rt;
+        }
+      },
+      fail: function(err) {
+        document.getElementById('error_msg').textContent =
+          '로그인 실패: ' + JSON.stringify(err) +
+          '\n\n개발자 콘솔 → 카카오 로그인 → 동의항목 → 카카오톡 메시지 전송 확인';
+      }
+    });
+  }
+
+  function copyCmd() {
+    var text = document.getElementById('cmd_text').textContent;
+    navigator.clipboard.writeText(text).then(function() {
+      alert('복사됐습니다! 터미널에 붙여넣으세요.');
+    });
+  }
+</script>
+</body>
+</html>
