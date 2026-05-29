@@ -30,18 +30,7 @@ logger = logging.getLogger(__name__)
 _DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
-def _make_engine():
-    if _DATABASE_URL:
-        # Supabase / Heroku: postgres:// → postgresql://
-        url = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
-        logger.info("[DB] PostgreSQL 연결: %s", url[:40] + "...")
-        return create_engine(
-            url,
-            pool_pre_ping=True,
-            pool_size=3,
-            max_overflow=7,
-        )
-    # 로컬 SQLite fallback
+def _make_sqlite() -> "Engine":
     db_path = Path(__file__).parent.parent / "data" / "database.sqlite3"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("[DB] SQLite 로컬: %s", db_path)
@@ -50,6 +39,30 @@ def _make_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+
+def _make_engine() -> "Engine":
+    if _DATABASE_URL:
+        # Supabase / Heroku: postgres:// → postgresql://
+        url = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        logger.info("[DB] PostgreSQL 연결 시도: %s", url[:40] + "...")
+        try:
+            engine = create_engine(
+                url,
+                pool_pre_ping=True,
+                pool_size=3,
+                max_overflow=7,
+                connect_args={"connect_timeout": 10},
+            )
+            # 실제 연결 테스트
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            logger.info("[DB] PostgreSQL 연결 성공")
+            return engine
+        except Exception as e:
+            logger.warning("[DB] PostgreSQL 연결 실패 → SQLite 자동 전환: %s", e)
+            return _make_sqlite()
+    return _make_sqlite()
 
 
 engine = _make_engine()
