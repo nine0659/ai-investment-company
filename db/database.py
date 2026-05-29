@@ -113,7 +113,7 @@ foreign_buy_history = Table("foreign_buy_history", metadata,
 
 portfolio_positions = Table("portfolio_positions", metadata,
     Column("id",           Integer, primary_key=True, autoincrement=True),
-    Column("code",         Text,    nullable=False, unique=True),
+    Column("code",         Text,    nullable=False),
     Column("name",         Text,    nullable=False),
     Column("quantity",     Integer, nullable=False, default=0),
     Column("avg_price",    Float,   nullable=False),
