@@ -144,6 +144,28 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.warning("[데이터수집] 한국 지수 실시간 실패: %s", e)
         state["kr_index_realtime"] = {}
 
+    # ── 애널리스트 컨센서스 목표주가 수집 ─────────────────────────────
+    try:
+        from clients.consensus_client import fetch_consensus_batch
+        from agents.ceo_agent import _BLUECHIP_ALWAYS_FETCH
+
+        bluechip_codes = [s["code"] for s in _BLUECHIP_ALWAYS_FETCH]
+        name_map = {s["code"]: s["name"] for s in _BLUECHIP_ALWAYS_FETCH}
+        market_map = {s["code"]: s["market"] for s in _BLUECHIP_ALWAYS_FETCH}
+
+        # 배치 수집 (rate limit 준수)
+        consensus_raw = fetch_consensus_batch(bluechip_codes, delay=0.3, market_map=market_map)
+
+        # raw 컨센서스 + name_map 저장 (현재가와 조합은 ceo_agent에서 수행)
+        state["consensus_data"] = {
+            "_raw": consensus_raw,
+            "_name_map": name_map,
+        }
+        logger.info("[데이터수집] 컨센서스 목표주가 완료: %d종목", len(consensus_raw))
+    except Exception as e:
+        logger.warning("[데이터수집] 컨센서스 수집 실패 (무시): %s", e)
+        state["consensus_data"] = {}
+
     return state
 
 
@@ -317,6 +339,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "bigfigure_news": [],
         "dart_disclosures": [],
         "kr_index_realtime": {},
+        "consensus_data": {},
         "futures_report": "",
         "us_market_report": "",
         "us_impact_report": "",

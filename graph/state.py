@@ -16,6 +16,7 @@ class InvestmentState(TypedDict):
     bigfigure_news: list[dict]       # 글로벌 빅피겨 최신 뉴스
     dart_disclosures: list[dict]     # 오늘 주요 DART 공시 (브리핑 통합용)
     kr_index_realtime: dict[str, Any]  # 장중 KOSPI·KOSDAQ 실시간 현재 지수
+    consensus_data: dict[str, Any]   # 종목별 컨센서스 목표주가 데이터
 
     futures_report: str
     us_market_report: str

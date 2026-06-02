@@ -183,6 +183,13 @@ def generate_trend_report() -> str:
     stance = _determine_stance(trend, rsi)
 
     # ── 대표 종목 분석 ───────────────────────────────────────────
+    # KIS 클라이언트: yfinance 가격 검증 및 실제 현재가 표시에 사용
+    try:
+        from clients.kis_client import KISClient as _KIS
+        _kis = _KIS()
+    except Exception:
+        _kis = None
+
     stock_lines    = []
     stock_summaries = []
     for chip in _BLUE_CHIPS:
@@ -191,18 +198,35 @@ def generate_trend_report() -> str:
             if sh.empty or len(sh) < 6:
                 continue
             sc    = sh["Close"].tolist()
-            sp    = sc[-1]
+            sp_yfin = sc[-1]  # yfinance 종가 (기술지표 계산용)
             sw    = (sc[-1] / sc[-6]  - 1) * 100 if len(sc) >= 6  else 0.0
             sm    = (sc[-1] / sc[-22] - 1) * 100 if len(sc) >= 22 else 0.0
             sma20 = _ma(sc, 20)
-            vs20  = "▲" if sp > sma20 else "▼"
             srsi  = _rsi(sc)
+
+            # KIS 실제 현재가로 표시 — yfinance 가격이 크게 다를 경우 KIS 우선
+            sp = sp_yfin
+            price_note = ""
+            code6 = chip["code"].replace(".KS", "").replace(".KQ", "")
+            if _kis:
+                try:
+                    kis_data = _kis.get_stock_price(code6, market=None)
+                    kis_price = kis_data.get("price", 0)
+                    if kis_price > 0:
+                        ratio = sp_yfin / kis_price if sp_yfin > 0 else 0
+                        if not (0.7 <= ratio <= 1.3):
+                            sp = kis_price
+                            price_note = "★"  # yfinance 불일치, KIS 가격 사용
+                except Exception:
+                    pass
+
+            vs20 = "▲" if sp > sma20 else "▼"
             stock_lines.append(
-                f"  {chip['name']}({chip['code'].replace('.KS', '')}): "
-                f"{sp:,.0f}원 ({'+' if sw >= 0 else ''}{sw:.1f}%주간) {vs20}20MA  RSI {srsi}"
+                f"  {chip['name']}({code6}): "
+                f"{sp:,.0f}원{price_note} ({'+' if sw >= 0 else ''}{sw:.1f}%주간) {vs20}20MA  RSI {srsi}"
             )
             stock_summaries.append(
-                f"{chip['name']}({chip['sector']}): {sp:,.0f}원 | "
+                f"{chip['name']}({chip['sector']}): {sp:,.0f}원{price_note} | "
                 f"주간{'+' if sw >= 0 else ''}{sw:.1f}% | "
                 f"월간{'+' if sm >= 0 else ''}{sm:.1f}% | "
                 f"20MA {'위' if sp > sma20 else '아래'} | RSI {srsi}"
@@ -256,7 +280,9 @@ def generate_trend_report() -> str:
         f"{_TREND_EMOJI.get(trend, '❓')} *{trend}*\n"
         f"(MA60 기울기 {ma60_slope:+.2f}% / RSI {rsi})\n\n"
         f"━━ 대표 종목 동향 ━━\n"
-        + "\n".join(stock_lines or ["  데이터 수집 실패"]) + "\n\n"
+        + "\n".join(stock_lines or ["  데이터 수집 실패"])
+        + ("\n  ★ KIS 실시간가 적용(yfinance 괴리 감지)" if any("★" in l for l in stock_lines) else "")
+        + "\n\n"
         f"━━ 투자 판단 ━━\n"
         f"{_STANCE_EMOJI.get(stance, '❓')} *{stance}*\n\n"
         f"━━ AI 분석 & 다음 주 전략 ━━\n{analysis}"

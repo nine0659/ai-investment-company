@@ -15,7 +15,10 @@ _TZ = ZoneInfo("Asia/Seoul")
 # ── 파싱 ──────────────────────────────────────────────────────────
 
 _HEADER_RE = re.compile(r"([가-힣A-Za-z()·&·\s]{1,25}?)\s*\((\d{6})\)")
-_ENTRY1_RE    = re.compile(r"1차[^\n]{0,30}?([\d,]{4,})\s*원")
+# "진입①(즉시): XXXXX원" 또는 "진입②(눌림): XXXXX원" 형식 (현재 브리핑 포맷)
+_ENTRY_NUMBERED_RE = re.compile(r"진입[①②][^\n]{0,30}?([\d,]{4,})\s*원")
+# "즉시진입: XXXXX원" 또는 구형 "진입가: XXXXX원" 형식
+# '진입' 부분문자열로 '즉시진입: XXX원' 도 매칭됨
 _ENTRY_OLD_RE = re.compile(r"진입[가격：: ]{0,5}([\d,]{4,})\s*원")
 _STOP_RE      = re.compile(r"손절[가격：: ·]{0,5}([\d,]{4,})\s*원")
 _TARGET_RE    = re.compile(r"목표[가격：: ·]{0,5}([\d,]{4,})\s*원")
@@ -48,7 +51,8 @@ def parse_recommendations(report_text: str) -> list[dict]:
             continue
 
         block = "\n".join(lines[i: i + 10])
-        entry  = _extract_price(_ENTRY1_RE, block) or _extract_price(_ENTRY_OLD_RE, block)
+        # 진입①(즉시): 우선, 즉시진입:/진입가: 차선으로 시도
+        entry  = _extract_price(_ENTRY_NUMBERED_RE, block) or _extract_price(_ENTRY_OLD_RE, block)
         stop   = _extract_price(_STOP_RE, block)
         target = _extract_price(_TARGET_RE, block)
 
