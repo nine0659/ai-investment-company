@@ -16,6 +16,7 @@ import os
 import signal
 import sys
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -29,6 +30,17 @@ from config.settings import (
     validate_env,
 )
 from clients.telegram_client import send_error_alert
+
+_KST = ZoneInfo(TIMEZONE_STR)
+
+# 각 run_type별 허용 실행 시간 윈도우 (KST 기준, 시작~종료 분)
+# 스케줄 시간 ±30분 이내에만 실제 브리핑 발송
+_TIME_WINDOWS: dict[str, tuple[int, int]] = {
+    RUN_TYPE_PRE:    (7 * 60 + 50,  9 * 60 + 30),   # 07:50 ~ 09:30
+    RUN_TYPE_INTRA1: (9 * 60 + 30, 11 * 60),         # 09:30 ~ 11:00
+    RUN_TYPE_INTRA2: (12 * 60 + 30, 14 * 60),        # 12:30 ~ 14:00
+    RUN_TYPE_CLOSE:  (15 * 60 + 20, 17 * 60 + 30),  # 15:20 ~ 17:30
+}
 
 _LOG_DIR = os.path.join(os.path.dirname(__file__), "data", "logs")
 os.makedirs(_LOG_DIR, exist_ok=True)
@@ -52,9 +64,45 @@ console = Console()
 scheduler = BlockingScheduler(timezone=TIMEZONE_STR)
 
 
+def _in_time_window(run_type: str) -> bool:
+    """현재 KST 시각이 run_type의 허용 시간 윈도우 안에 있는지 확인."""
+    window = _TIME_WINDOWS.get(run_type)
+    if not window:
+        return True  # 윈도우 미정의 run_type은 허용
+    now = datetime.now(_KST)
+    cur_min = now.hour * 60 + now.minute
+    return window[0] <= cur_min <= window[1]
+
+
+def _already_sent_today(run_type: str) -> bool:
+    """오늘 해당 run_type 브리핑이 이미 성공적으로 발송됐는지 확인."""
+    try:
+        from services.report_service import already_ran_today
+        from datetime import datetime
+        today = datetime.now(_KST).strftime("%Y-%m-%d")
+        return already_ran_today(today, run_type)
+    except Exception:
+        return False
+
+
 def _run_safe(run_type: str):
-    """에러 처리 포함 파이프라인 실행"""
+    """에러 처리 + 중복 방지 + 시간 윈도우 검증 포함 파이프라인 실행"""
     from graph.investment_graph import run_pipeline
+
+    # ① 시간 윈도우 검증 — 예상 시간대가 아니면 경고만 하고 중단
+    if not _in_time_window(run_type):
+        now_str = datetime.now(_KST).strftime("%H:%M KST")
+        logger.warning(
+            "⏰ [시간 윈도우 초과] %s 는 %s 에 실행할 수 없습니다 — 발송 차단",
+            run_type, now_str,
+        )
+        return
+
+    # ② 당일 중복 방지 — 같은 run_type이 오늘 이미 완료됐으면 스킵
+    if _already_sent_today(run_type):
+        logger.info("⏭️ [중복 스킵] %s 브리핑이 오늘 이미 발송됐습니다", run_type)
+        return
+
     try:
         logger.info("스케줄 실행 시작: %s", run_type)
         run_pipeline(run_type)

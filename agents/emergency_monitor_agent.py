@@ -73,15 +73,16 @@ def run() -> None:
 
 def _check_portfolio_crash() -> None:
     """보유 종목 단일일 급락 체크."""
-    from datetime import date
     from clients.kis_client import KISClient
     from services.alert_service import (
         send_alert, _already_sent, _mark_sent,
-        LEVEL_CRITICAL, LEVEL_URGENT,
-        CRITICAL_PORTFOLIO_DROP, URGENT_PORTFOLIO_DROP,
+        TYPE_RISK,
+        RISK_STOCK_CRASH,          # -7.0%  즉시 손절 검토
     )
     from db.database import get_conn
     from sqlalchemy import text
+
+    _URGENT_DROP = -4.0  # -4% 이상 하락 시 경고 (alert_service 기준)
 
     today = datetime.now(_KST).strftime("%Y-%m-%d")
 
@@ -112,12 +113,11 @@ def _check_portfolio_crash() -> None:
             if not price:
                 continue
 
-            if chg_pct <= CRITICAL_PORTFOLIO_DROP:
-                key = f"portfolio_crash_{code}"
-                if not _already_sent(today, key):
+            if chg_pct <= RISK_STOCK_CRASH:
+                if not _already_sent(today, code, "portfolio_crash"):
                     pnl = (price - avg_price) / avg_price * 100
                     send_alert(
-                        LEVEL_CRITICAL,
+                        TYPE_RISK,
                         f"[보유종목] {name} 급락 {chg_pct:+.1f}%",
                         f"종목: {name}({code})\n"
                         f"현재가: {price:,}원  |  당일 등락: {chg_pct:+.1f}%\n"
@@ -125,20 +125,19 @@ def _check_portfolio_crash() -> None:
                         f"즉시 손절 여부 검토 필요합니다.",
                         code=code, name=name,
                     )
-                    _mark_sent(today, key)
+                    _mark_sent(today, code, "portfolio_crash")
 
-            elif chg_pct <= URGENT_PORTFOLIO_DROP:
-                key = f"portfolio_drop_{code}"
-                if not _already_sent(today, key):
+            elif chg_pct <= _URGENT_DROP:
+                if not _already_sent(today, code, "portfolio_drop"):
                     send_alert(
-                        LEVEL_URGENT,
+                        TYPE_RISK,
                         f"[보유종목] {name} 하락 {chg_pct:+.1f}%",
                         f"종목: {name}({code})\n"
                         f"현재가: {price:,}원  |  당일 등락: {chg_pct:+.1f}%\n"
                         f"포지션 점검 권고. 손절가와의 거리 확인 필요.",
                         code=code, name=name,
                     )
-                    _mark_sent(today, key)
+                    _mark_sent(today, code, "portfolio_drop")
 
         except Exception as e:
             logger.debug("[긴급모니터] %s 종목 체크 실패: %s", code, e)
