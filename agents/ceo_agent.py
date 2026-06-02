@@ -133,7 +133,22 @@ def _fetch_price_context(
             data = kis.get_stock_price(code, market=None)
             price = data.get("price", 0)
             if not price:
-                logger.debug("현재가 0 — 스킵 (%s)", code)
+                # KIS 실패 → yfinance analyst_price_targets.current 로 fallback
+                market_sfx = c.get("market", "KOSPI")
+                yfin_sym = f"{code}.{'KS' if market_sfx == 'KOSPI' else 'KQ'}"
+                try:
+                    import yfinance as yf
+                    apt = yf.Ticker(yfin_sym).analyst_price_targets
+                    yf_cur = round(apt.get("current", 0)) if apt else 0
+                    if yf_cur:
+                        price = yf_cur
+                        logger.warning(
+                            "[가격] %s(%s) KIS 0 → yfinance fallback %s원", name, code, f"{price:,}"
+                        )
+                except Exception:
+                    pass
+            if not price:
+                logger.debug("현재가 조회 불가 — 스킵 (%s)", code)
                 continue
             # 기술적 지표 먼저 수집 (손절·목표가 계산에 활용)
             market_sfx = c.get("market", "KOSPI")

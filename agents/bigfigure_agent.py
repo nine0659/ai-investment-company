@@ -42,6 +42,18 @@ def _mark_sent_today():
     except Exception:
         pass
 
+
+def _ensure_alert_table():
+    try:
+        with get_conn() as conn:
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS bigfigure_alert_log "
+                "(date TEXT PRIMARY KEY)"
+            ))
+    except Exception as e:
+        logger.debug("[빅피겨] 테이블 생성 실패: %s", e)
+
+
 # AI 거부 응답 감지 (첫 100자 기준)
 _REFUSAL_PHRASES = [
     "I'm sorry", "I cannot assist", "I can't assist",
