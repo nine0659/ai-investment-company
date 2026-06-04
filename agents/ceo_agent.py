@@ -231,6 +231,48 @@ _RR_ENTRY1_RE = re.compile(r'(?:즉시진입|진입[①①][^:：]*[:：]?)\s*([
 _RR_STOP_RE   = re.compile(r'손절\D{0,12}([\d,]{4,})\s*원')
 
 
+def _fix_price_placeholders(compact: str, price_ctx: str) -> str:
+    """3줄 요약 블록에서 X,XXX원 플레이스홀더를 price_ctx의 실제 가격으로 교체.
+
+    LLM이 어떤 형식으로 플레이스홀더를 출력하든 코드 레벨에서 강제 치환한다.
+    교체 불가 시 '시초가 확인 필요'로 대체 — 절대 플레이스홀더가 발송되지 않도록 보장.
+    """
+    # 플레이스홀더 패턴: X,XXX / X,000 / X.XXX / 0,000 등 — \b 제거하여 붙어써도 잡힘
+    _PLACEHOLDER_RE = re.compile(
+        r'(?<!\d)(?:X,XXX|X,000|0,000|X\.XXX|[Xx][,.]?[Xx0][Xx0][Xx0])\s*원'
+    )
+
+    if not _PLACEHOLDER_RE.search(compact):
+        return compact  # 플레이스홀더 없으면 그대로
+
+    # price_ctx에서 종목코드 → (즉시진입가, 손절가) 매핑 빌드
+    price_map: dict[str, tuple[str, str]] = {}
+    lines = price_ctx.split('\n')
+    for i, line in enumerate(lines):
+        code_m = re.search(r'\((\d{6})\)', line)
+        if code_m and i + 1 < len(lines):
+            code = code_m.group(1)
+            next_line = lines[i + 1]
+            em = re.search(r'즉시진입\s*:?\s*([\d,]+)\s*원', next_line)
+            sm = re.search(r'손절\s+([\d,]+)\s*원', next_line)
+            if em and sm:
+                price_map[code] = (em.group(1), sm.group(1))
+
+    # compact의 📌 줄에서 종목코드 추출
+    code_in_line = re.search(r'\((\d{6})\)', compact)
+    if code_in_line:
+        code = code_in_line.group(1)
+        if code in price_map:
+            entry_str, stop_str = price_map[code]
+            # 첫 번째 플레이스홀더 = 진입가, 두 번째 = 손절가
+            compact = _PLACEHOLDER_RE.sub(f'{entry_str}원', compact, count=1)
+            compact = _PLACEHOLDER_RE.sub(f'{stop_str}원', compact, count=1)
+
+    # 남은 플레이스홀더 처리 (여러 번 등장하거나 코드 매핑 실패)
+    compact = _PLACEHOLDER_RE.sub('시초가 확인 필요', compact)
+    return compact
+
+
 def _parse_rr_price(pattern: re.Pattern, text: str) -> int:
     m = pattern.search(text)
     if m:
@@ -850,7 +892,8 @@ def run(state: InvestmentState) -> InvestmentState:
         except Exception as _e:
             logger.debug("[CEO] 누적 데이터 컨텍스트 주입 실패: %s", _e)
 
-        has_price = False  # 실시간 가격 데이터 주입 여부 추적
+        has_price = False        # 실시간 가격 데이터 주입 여부 추적
+        _price_ctx_snap = ""    # 3줄 요약 후처리용 가격 스냅샷 (has_price=True 시 저장)
 
         # ── 월간 투자 테제 주입 — 최최우선 컨텍스트 (모든 판단의 헌법) ──────
         investment_thesis = state.get("investment_thesis", "")
@@ -977,6 +1020,7 @@ def run(state: InvestmentState) -> InvestmentState:
                         + price_ctx
                     )
                     has_price = True
+                    _price_ctx_snap = price_ctx
                     logger.info("[CEO] 실시간 가격 데이터 주입 완료")
                 else:
                     context_parts.append(
@@ -1109,6 +1153,7 @@ def run(state: InvestmentState) -> InvestmentState:
                         + price_ctx
                     )
                     has_price = True
+                    _price_ctx_snap = price_ctx
                     logger.info("[CEO] 장마감 실시간 가격 데이터 주입 완료")
                 else:
                     context_parts.append(
@@ -1146,6 +1191,7 @@ def run(state: InvestmentState) -> InvestmentState:
                         + price_ctx
                     )
                     has_price = True
+                    _price_ctx_snap = price_ctx  # 3줄 후처리용 저장
                     logger.info("[CEO] 장중 실시간 가격 데이터 주입 완료")
                 else:
                     context_parts.append(
@@ -1225,14 +1271,22 @@ def run(state: InvestmentState) -> InvestmentState:
             except Exception as _rr_e:
                 logger.warning("[CEO] 손익비 검증 실패 — 원본 유지: %s", _rr_e)
 
-        # 3줄 요약 블록 추출 → 전체 리포트보다 먼저 별도 발송
+        # 3줄 요약 블록 추출 → X,XXX원 플레이스홀더 강제 치환 → 먼저 발송
         try:
             compact_match = re.search(r"(╔═══.*?╚═+)", result, re.DOTALL)
             if compact_match:
-                send_message(compact_match.group(1))
+                compact = compact_match.group(1)
+                # 실제 가격으로 강제 치환 (LLM 출력 패턴에 무관하게 코드 레벨 보장)
+                compact = _fix_price_placeholders(compact, _price_ctx_snap)
+                send_message(compact)
                 logger.info("[CEO] 3줄 요약 먼저 발송 완료")
         except Exception as e:
             logger.debug("[CEO] 3줄 요약 발송 실패: %s", e)
+
+        # 전체 리포트에서도 플레이스홀더 제거 후 state 저장
+        if _price_ctx_snap:
+            result = _fix_price_placeholders(result, _price_ctx_snap)
+            state["ceo_report"] = result
 
         # 장전 브리핑: 추천 종목 파싱 → DB 저장
         if run_type == RUN_TYPE_PRE:
