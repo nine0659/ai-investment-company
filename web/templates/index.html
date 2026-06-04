@@ -780,7 +780,201 @@
         </div>
       </div>
 
-      <!-- ── 📈 백테스트 ─────────────────────────────────── -->
+      <!-- ── 📜 투자 테제 ─────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='thesis'">
+        <div class="max-w-4xl mx-auto space-y-5">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">📜 월간 투자 테제</h2>
+            <button @click="loadThesis()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+          <template x-if="thesisLoading">
+            <div class="text-slate-400 text-sm text-center py-8">테제 로딩 중...</div>
+          </template>
+          <template x-if="!thesisLoading && !thesis">
+            <div class="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-sm">
+              <p class="mb-2">투자 테제가 없습니다.</p>
+              <p class="text-xs">터미널에서 실행: <code class="bg-slate-700 px-2 py-0.5 rounded">python main.py --type thesis</code></p>
+            </div>
+          </template>
+          <template x-if="!thesisLoading && thesis">
+            <div class="space-y-4">
+              <!-- 핵심 지표 카드 -->
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="bg-slate-800 rounded-xl p-4">
+                  <div class="text-xs text-slate-400 mb-1">기준일</div>
+                  <div class="font-bold text-sm" x-text="thesis.date || '-'"></div>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                  <div class="text-xs text-slate-400 mb-1">사이클 단계</div>
+                  <div class="font-bold text-sm text-blue-300" x-text="thesis.cycle_stage || '-'"></div>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                  <div class="text-xs text-slate-400 mb-1">매크로 레짐</div>
+                  <div class="font-bold text-sm"
+                    :class="thesis.macro_regime?.includes('ON') ? 'text-green-400' : thesis.macro_regime?.includes('OFF') ? 'text-red-400' : 'text-yellow-400'"
+                    x-text="thesis.macro_regime || '-'"></div>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                  <div class="text-xs text-slate-400 mb-1">확대 섹터</div>
+                  <div class="font-bold text-sm text-green-300 text-xs" x-text="(thesis.sector_overweight||[]).join(', ') || '-'"></div>
+                </div>
+              </div>
+              <!-- CEO 요약 -->
+              <div class="bg-slate-800 rounded-xl p-5">
+                <div class="text-sm font-semibold text-blue-300 mb-3">📋 CEO 주입 요약</div>
+                <div class="prose-chat text-sm leading-relaxed whitespace-pre-wrap text-slate-200"
+                  x-text="thesis.ceo_summary || ''"></div>
+              </div>
+              <!-- 6개월 전망 -->
+              <template x-if="thesis.outlook_6m">
+                <div class="bg-slate-800 rounded-xl p-5">
+                  <div class="text-sm font-semibold mb-2 text-yellow-300">🔮 6개월 전망</div>
+                  <p class="text-sm text-slate-300" x-text="thesis.outlook_6m"></p>
+                </div>
+              </template>
+              <!-- 테제 무효 조건 -->
+              <template x-if="thesis.invalidation">
+                <div class="bg-red-900/30 border border-red-700/40 rounded-xl p-5">
+                  <div class="text-sm font-semibold mb-2 text-red-300">⛔ 테제 무효 조건 (이 신호 발생 시 즉시 재검토)</div>
+                  <p class="text-sm text-red-200 whitespace-pre-wrap" x-text="thesis.invalidation"></p>
+                </div>
+              </template>
+              <!-- 전체 리포트 -->
+              <details class="bg-slate-800 rounded-xl">
+                <summary class="p-4 cursor-pointer text-sm font-semibold text-slate-300 hover:text-white">전체 테제 리포트 보기</summary>
+                <div class="px-5 pb-5 prose-chat text-sm whitespace-pre-wrap text-slate-300"
+                  x-text="thesis.full_report || ''"></div>
+              </details>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ── 📈 자산 성장 (NAV) ─────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='nav'">
+        <div class="max-w-4xl mx-auto space-y-5">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">📈 포트폴리오 자산 성장</h2>
+            <button @click="loadNav()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+          <template x-if="navLoading">
+            <div class="text-slate-400 text-sm text-center py-8">NAV 데이터 로딩 중...</div>
+          </template>
+          <template x-if="!navLoading && !navData && !navHistory.length">
+            <div class="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-sm">
+              <p>NAV 데이터가 없습니다.</p>
+              <p class="text-xs mt-1">장마감 브리핑(15:50) 실행 후 자동 기록됩니다.</p>
+            </div>
+          </template>
+          <template x-if="navData">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div class="bg-slate-800 rounded-xl p-4">
+                <div class="text-xs text-slate-400 mb-1">최신 기준일</div>
+                <div class="font-bold text-sm" x-text="navData.date || '-'"></div>
+              </div>
+              <div class="bg-slate-800 rounded-xl p-4">
+                <div class="text-xs text-slate-400 mb-1">포트폴리오 연초대비</div>
+                <div class="font-bold text-sm"
+                  :class="(navData.nav_pct_ytd||0)>=0?'text-green-400':'text-red-400'"
+                  x-text="navData.nav_pct_ytd != null ? ((navData.nav_pct_ytd>=0?'+':'')+navData.nav_pct_ytd.toFixed(2)+'%') : '-'"></div>
+              </div>
+              <div class="bg-slate-800 rounded-xl p-4">
+                <div class="text-xs text-slate-400 mb-1">KOSPI 연초대비</div>
+                <div class="font-bold text-sm text-slate-300"
+                  x-text="navData.total_pnl_pct != null ? ((navData.total_pnl_pct>=0?'+':'')+navData.total_pnl_pct.toFixed(2)+'%') : '-'"></div>
+              </div>
+              <div class="bg-slate-800 rounded-xl p-4">
+                <div class="text-xs text-slate-400 mb-1">Alpha (초과수익)</div>
+                <div class="font-bold text-sm"
+                  :class="(navData.alpha_ytd||0)>=0?'text-blue-400':'text-orange-400'"
+                  x-text="navData.alpha_ytd != null ? ((navData.alpha_ytd>=0?'+':'')+navData.alpha_ytd.toFixed(2)+'%') : '-'"></div>
+              </div>
+            </div>
+          </template>
+          <!-- NAV 이력 테이블 -->
+          <template x-if="navHistory.length > 0">
+            <div class="bg-slate-800 rounded-xl overflow-hidden">
+              <div class="px-4 py-3 border-b border-slate-700 text-sm font-semibold">NAV 이력</div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead class="text-slate-400 border-b border-slate-700">
+                    <tr>
+                      <th class="text-left px-4 py-2">날짜</th>
+                      <th class="text-right px-4 py-2">포트 연초대비</th>
+                      <th class="text-right px-4 py-2">Alpha</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="n in navHistory.slice().reverse().slice(0,30)" :key="n.date">
+                      <tr class="border-b border-slate-700/50 hover:bg-slate-700/30">
+                        <td class="px-4 py-2" x-text="n.date"></td>
+                        <td class="px-4 py-2 text-right font-mono"
+                          :class="(n.nav_pct_ytd||0)>=0?'text-green-400':'text-red-400'"
+                          x-text="(n.nav_pct_ytd>=0?'+':'')+n.nav_pct_ytd?.toFixed(2)+'%'"></td>
+                        <td class="px-4 py-2 text-right font-mono"
+                          :class="(n.alpha_ytd||0)>=0?'text-blue-400':'text-orange-400'"
+                          x-text="(n.alpha_ytd>=0?'+':'')+n.alpha_ytd?.toFixed(2)+'%'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ── 🎯 귀인 분석 ───────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='attribution'">
+        <div class="max-w-4xl mx-auto space-y-5">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">🎯 주간 성과 귀인 분석</h2>
+            <button @click="loadAttribution()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+          <template x-if="attributionLoading">
+            <div class="text-slate-400 text-sm text-center py-8">귀인 분석 로딩 중...</div>
+          </template>
+          <template x-if="!attributionLoading && !attributions.length">
+            <div class="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-sm">
+              <p>귀인 분석 데이터가 없습니다.</p>
+              <p class="text-xs mt-1">매주 일요일 19:00 자동 실행 또는: <code class="bg-slate-700 px-2 py-0.5 rounded">python main.py --type attribution</code></p>
+            </div>
+          </template>
+          <template x-for="a in attributions" :key="a.week_end">
+            <div class="bg-slate-800 rounded-xl p-5 space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="font-semibold text-sm" x-text="a.week_end + ' 주간 분석'"></div>
+                <div class="text-lg font-bold"
+                  :class="(a.total||0)>=7?'text-green-400':(a.total||0)>=5?'text-yellow-400':'text-red-400'"
+                  x-text="'종합 ' + (a.total||0).toFixed(1) + '/10'"></div>
+              </div>
+              <!-- 5축 점수 바 -->
+              <div class="grid grid-cols-5 gap-2 text-xs text-center">
+                <template x-for="[label, score] in [['매크로',a.macro],['섹터',a.sector],['종목',a.stock],['타이밍',a.timing],['테제',a.thesis]]" :key="label">
+                  <div>
+                    <div class="text-slate-400 mb-1" x-text="label"></div>
+                    <div class="progress-bar">
+                      <div class="progress-fill"
+                        :style="'width:'+(score||0)*10+'%;background:'+(score>=7?'#22c55e':score>=5?'#eab308':'#ef4444')"
+                      ></div>
+                    </div>
+                    <div class="mt-1 font-mono"
+                      :class="(score||0)>=7?'text-green-400':(score||0)>=5?'text-yellow-400':'text-red-400'"
+                      x-text="(score||0).toFixed(1)"></div>
+                  </div>
+                </template>
+              </div>
+              <!-- 핵심 교훈 -->
+              <template x-if="a.key_learnings">
+                <div class="bg-slate-700/50 rounded-lg p-3 text-xs text-slate-300 whitespace-pre-wrap"
+                  x-text="a.key_learnings"></div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ── 🔬 백테스트 ─────────────────────────────────────── -->
       <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='backtest'">
         <div class="max-w-5xl mx-auto space-y-5">
           <div class="flex items-center justify-between flex-wrap gap-3">
@@ -1026,13 +1220,16 @@ function app() {
     clock: '',
     marketOpen: false,
     tabs: [
-      { id: 'dashboard', icon: '🏠', label: '대시보드' },
-      { id: 'chat',      icon: '💬', label: '채팅' },
-      { id: 'research',  icon: '🔍', label: '리서치' },
-      { id: 'portfolio', icon: '📊', label: '포트폴리오' },
-      { id: 'watchlist', icon: '📋', label: '워치리스트' },
-      { id: 'briefing',  icon: '📰', label: '브리핑' },
-      { id: 'backtest',  icon: '📈', label: '백테스트' },
+      { id: 'dashboard',   icon: '🏠', label: '대시보드' },
+      { id: 'chat',        icon: '💬', label: '채팅' },
+      { id: 'research',    icon: '🔍', label: '리서치' },
+      { id: 'portfolio',   icon: '📊', label: '포트폴리오' },
+      { id: 'watchlist',   icon: '📋', label: '워치리스트' },
+      { id: 'briefing',    icon: '📰', label: '브리핑' },
+      { id: 'thesis',      icon: '📜', label: '투자테제' },
+      { id: 'nav',         icon: '📈', label: '자산성장' },
+      { id: 'attribution', icon: '🎯', label: '귀인분석' },
+      { id: 'backtest',    icon: '🔬', label: '백테스트' },
     ],
 
     // Chat
@@ -1063,6 +1260,13 @@ function app() {
     // Dashboard
     dashAlerts: [], dashWatchlist: null, dashLatestBriefing: null,
 
+    // Thesis
+    thesis: null, thesisLoading: false,
+    // NAV
+    navData: null, navHistory: [], navLoading: false,
+    // Attribution
+    attributions: [], attributionLoading: false,
+
     // Backtest
     btSubTab: 'ai', btDays: 20, btLoading: false,
     btStats: null, btItems: [], btChartData: [],
@@ -1082,7 +1286,10 @@ function app() {
         if (t === 'portfolio' && this.portfolio === null) this.loadPortfolio();
         if (t === 'watchlist' && this.watchlist === null) this.loadWatchlist();
         if (t === 'briefing'  && this.briefings === null) this.loadBriefings();
-        if (t === 'backtest'  && !this.btStats && !this.btLoading) this.loadBacktest();
+        if (t === 'backtest'    && !this.btStats && !this.btLoading) this.loadBacktest();
+        if (t === 'thesis'      && !this.thesis && !this.thesisLoading) this.loadThesis();
+        if (t === 'nav'         && !this.navData && !this.navLoading)   this.loadNav();
+        if (t === 'attribution' && !this.attributions.length && !this.attributionLoading) this.loadAttribution();
       });
 
       this.$watch('researchQuery', (q) => {
@@ -1408,6 +1615,37 @@ function app() {
       } finally {
         this.briefingsLoading = false;
       }
+    },
+
+    // ── Thesis ────────────────────────────────────────────────
+    async loadThesis() {
+      this.thesisLoading = true;
+      try {
+        const r = await fetch('/api/thesis');
+        const d = await r.json();
+        this.thesis = d.thesis || null;
+      } finally { this.thesisLoading = false; }
+    },
+
+    // ── NAV ───────────────────────────────────────────────────
+    async loadNav() {
+      this.navLoading = true;
+      try {
+        const r = await fetch('/api/nav?days=90');
+        const d = await r.json();
+        this.navData    = d.latest || null;
+        this.navHistory = d.history || [];
+      } finally { this.navLoading = false; }
+    },
+
+    // ── Attribution ───────────────────────────────────────────
+    async loadAttribution() {
+      this.attributionLoading = true;
+      try {
+        const r = await fetch('/api/attribution?limit=12');
+        const d = await r.json();
+        this.attributions = d.attributions || [];
+      } finally { this.attributionLoading = false; }
     },
 
     // ── Backtest ──────────────────────────────────────────────

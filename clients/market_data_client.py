@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
 import yfinance as yf
+from utils.retry import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -117,20 +118,25 @@ _INDEX_REALTIME = {
 
 
 def fetch_kr_index_realtime() -> dict:
-    """KOSPI·KOSDAQ 장중 실시간 현재 지수 수집 (5분봉 최근 1일).
-    intra 브리핑(10:00, 13:00 KST)에서 현재 지수 수준 파악용.
+    """KOSPI·KOSDAQ 장중 실시간 현재 지수 수집.
+    전일 종가를 일봉(5d)에서 가져와 변동률을 정확히 계산.
     반환: {"kospi": {current, prev_close, change_pct}, "kosdaq": {...}}
     """
     result: dict = {}
     key_map = {"^KS11": "kospi", "^KQ11": "kosdaq"}
     for sym, key in key_map.items():
         try:
-            hist = yf.Ticker(sym).history(period="1d", interval="5m")
-            if hist.empty:
+            # 전일 종가: 일봉 5일치에서 안정적으로 확보
+            daily = yf.Ticker(sym).history(period="5d", interval="1d")
+            if len(daily) < 2:
                 continue
-            current    = float(hist.iloc[-1]["Close"])
-            prev_close = float(hist.iloc[0]["Open"])
-            chg_pct    = (current - prev_close) / prev_close * 100 if prev_close else 0
+            prev_close = float(daily.iloc[-2]["Close"])  # 전일 종가
+
+            # 장중 현재가: 5분봉 최근 1일
+            intra = yf.Ticker(sym).history(period="1d", interval="5m")
+            current = float(intra.iloc[-1]["Close"]) if not intra.empty else float(daily.iloc[-1]["Close"])
+
+            chg_pct = (current - prev_close) / prev_close * 100 if prev_close else 0
             result[key] = {
                 "current":    round(current, 2),
                 "prev_close": round(prev_close, 2),
@@ -228,6 +234,7 @@ def fetch_kr_stock_technicals(symbol: str) -> dict:
         return {}
 
 
+@with_retry(max_attempts=3, base_delay=2.0, exceptions=(Exception,))
 def fetch_global_market_data() -> dict:
     result: dict = {}
     symbols = list(TICKERS.values())
@@ -286,14 +293,23 @@ _FRESHNESS_KEYS = [
 
 
 def _biz_days_ago(data_date: date, today: date) -> int:
-    """data_date 가 today 기준 몇 영업일(평일) 전인지 반환."""
+    """data_date가 today 기준 몇 거래일(공휴일 제외 평일) 전인지 반환."""
     if data_date >= today:
         return 0
+    # 한국 공휴일 로드 (가능하면)
+    kr_holidays: set = set()
+    try:
+        import holidays
+        kr = holidays.KR(years={data_date.year, today.year})
+        kr_holidays = set(kr.keys())
+    except ImportError:
+        pass
+
     count = 0
     d = today
     while d > data_date:
         d -= timedelta(days=1)
-        if d.weekday() < 5:
+        if d.weekday() < 5 and d not in kr_holidays:
             count += 1
     return count
 

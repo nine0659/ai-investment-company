@@ -83,6 +83,23 @@ def run(state: InvestmentState) -> InvestmentState:
 
         context = "\n\n".join(parts)
         result = chat(_SYSTEM, context, max_tokens=2500)
+
+        # 확률 합계 검증 — "상승확률 XX% / 하락확률 YY%" 추출 후 합산
+        up_m   = re.search(r"상승확률[^\d]*(\d+)", result)
+        down_m = re.search(r"하락확률[^\d]*(\d+)", result)
+        if up_m and down_m:
+            up_pct   = int(up_m.group(1))
+            down_pct = int(down_m.group(1))
+            total    = up_pct + down_pct
+            if total != 100:
+                # 비율 유지하며 100%로 정규화
+                if total > 0:
+                    adj_up   = round(up_pct / total * 100)
+                    adj_down = 100 - adj_up
+                    result = result.replace(up_m.group(0), f"상승확률 {adj_up}%")
+                    result = result.replace(down_m.group(0), f"하락확률 {adj_down}%")
+                    logger.warning("[투자위원회] 확률 합계 %d%% → 100%%로 자동 보정", total)
+
         state["committee_report"] = result
         # "시장 방향성: XXX" 라벨 우선 추출, 없으면 첫 발견 단어로 폴백
         m = _DIR_LABEL_RE.search(result)
@@ -92,7 +109,10 @@ def run(state: InvestmentState) -> InvestmentState:
         else:
             direction = next((d for d in _DIRECTIONS if d in result), "중립")
         state["market_direction"] = direction
-        logger.info("[투자위원회] 완료 — 방향: %s", direction)
+        logger.info("[투자위원회] 완료 — 방향: %s (상승확률 %s%% / 하락확률 %s%%)",
+                    direction,
+                    up_m.group(1) if up_m else "?",
+                    down_m.group(1) if down_m else "?")
     except Exception as e:
         logger.error("[투자위원회] 실패: %s", e)
         state["committee_report"] = "위원회 의견 생성 실패"

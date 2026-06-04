@@ -46,3 +46,6 @@ psycopg2-binary>=2.9.0
 
 # DB (SQLite, built-in — no extra package)
 # KIS API uses requests
+
+# Korean public holiday calendar (KRX 비거래일 감지용)
+holidays>=0.45

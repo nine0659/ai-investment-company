@@ -47,6 +47,16 @@ KIS_BASE_URL = (
     else "https://openapivts.koreainvestment.com:29443"
 )
 
+# KIS_IS_REAL 오설정 조기 경고 — 모의투자/실전계좌 의도치 않은 전환 방지
+if KIS_ACCOUNT_PROD_CD and KIS_ACCOUNT_PROD_CD not in ("01", "02"):
+    import warnings
+    warnings.warn(
+        f"KIS_ACCOUNT_PROD_CD='{KIS_ACCOUNT_PROD_CD}' — 올바른 값은 '01'(실전) 또는 '02'(모의). "
+        f"현재 KIS_IS_REAL={KIS_IS_REAL}로 설정됨.",
+        UserWarning,
+        stacklevel=2,
+    )
+
 
 # KIS API가 필요하지 않은 실행 타입 (미국주식·주간통계·월간학습·DART는 KIS 불필요)
 _NO_KIS_TYPES = {"us-invest", "weekly", "monthly", "dart"}

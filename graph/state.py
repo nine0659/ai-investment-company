@@ -17,6 +17,8 @@ class InvestmentState(TypedDict):
     dart_disclosures: list[dict]     # 오늘 주요 DART 공시 (브리핑 통합용)
     kr_index_realtime: dict[str, Any]  # 장중 KOSPI·KOSDAQ 실시간 현재 지수
     consensus_data: dict[str, Any]   # 종목별 컨센서스 목표주가 데이터
+    weekly_strategy_summary: str     # 최신 주간 전략 요약 (CEO 컨텍스트 주입용)
+    investment_thesis: str           # 현재 월간 투자 테제 요약 (CEO 최우선 컨텍스트)
 
     futures_report: str
     us_market_report: str
@@ -47,3 +49,4 @@ class InvestmentState(TypedDict):
     market_direction: str
 
     errors: list[str]
+    nav_recorded: dict   # 장마감 후 기록된 NAV 스냅샷 (optional — 없으면 {})

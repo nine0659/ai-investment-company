@@ -236,6 +236,34 @@ market_snapshots = Table("market_snapshots", metadata,
     Column("created_at",  Text,    server_default="CURRENT_TIMESTAMP"),
 )
 
+investment_thesis = Table("investment_thesis", metadata,
+    Column("id",              Integer, primary_key=True, autoincrement=True),
+    Column("date",            Text,    nullable=False),   # YYYY-MM-DD
+    Column("cycle_stage",     Text),   # 경기 사이클: 초기확장/중기확장/후기확장/수축
+    Column("macro_regime",    Text),   # RISK-ON / RISK-OFF / NEUTRAL
+    Column("outlook_6m",      Text),   # 6개월 전망 요약
+    Column("outlook_12m",     Text),   # 12개월 전망 요약
+    Column("sector_overweight",  Text),  # 비중 확대 섹터 (JSON 리스트)
+    Column("sector_underweight", Text),  # 비중 축소 섹터 (JSON 리스트)
+    Column("conviction_ideas",   Text),  # 핵심 확신 아이디어 (JSON)
+    Column("bull_scenario",   Text),   # 강세 시나리오 + 확률
+    Column("base_scenario",   Text),   # 기본 시나리오 + 확률
+    Column("bear_scenario",   Text),   # 약세 시나리오 + 확률
+    Column("invalidation",    Text),   # 테제 무효 조건
+    Column("full_report",     Text),   # 전체 리포트 원문
+    Column("ceo_summary",     Text),   # CEO 일일 주입용 압축 요약 (~600자)
+    Column("created_at",      Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
+strategy_reports = Table("strategy_reports", metadata,
+    Column("id",           Integer, primary_key=True, autoincrement=True),
+    Column("date",         Text,    nullable=False),   # 실행 날짜 (YYYY-MM-DD)
+    Column("report_type",  Text,    default="weekly"), # weekly / longterm
+    Column("report",       Text),                      # 전체 전략 리포트
+    Column("ceo_summary",  Text),                      # CEO 일일 브리핑 주입용 압축 요약 (~500자)
+    Column("created_at",   Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
 intelligence_archive = Table("intelligence_archive", metadata,
     Column("id",          Integer, primary_key=True, autoincrement=True),
     Column("date",        Text,    nullable=False),
@@ -245,6 +273,35 @@ intelligence_archive = Table("intelligence_archive", metadata,
     Column("sentiment",   Text),   # 강세 / 약세 / 중립
     Column("key_themes",  Text),   # 쉼표 구분 키워드
     Column("created_at",  Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
+attribution_log = Table("attribution_log", metadata,
+    Column("id",            Integer, primary_key=True, autoincrement=True),
+    Column("week_end",      Text,    nullable=False),  # 분석 기준 주 마지막날 (YYYY-MM-DD)
+    Column("macro_score",   Float),  # 매크로 판단 정확도 점수 (0~10)
+    Column("sector_score",  Float),  # 섹터 선택 점수
+    Column("stock_score",   Float),  # 종목 선택 점수
+    Column("timing_score",  Float),  # 타이밍 점수
+    Column("thesis_score",  Float),  # 테제 정합도 점수
+    Column("total_score",   Float),  # 종합 점수
+    Column("key_learnings", Text),   # 핵심 교훈 (다음 테제에 반영할 내용)
+    Column("full_report",   Text),   # 전체 귀인 분석 리포트
+    Column("created_at",    Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
+portfolio_nav = Table("portfolio_nav", metadata,
+    Column("id",            Integer, primary_key=True, autoincrement=True),
+    Column("date",          Text,    nullable=False, unique=True),  # YYYY-MM-DD
+    Column("total_value",   Float),   # 포트폴리오 총 평가금액 (원)
+    Column("total_cost",    Float),   # 포트폴리오 총 매입금액 (원)
+    Column("total_pnl",     Float),   # 총 손익금액 (원)
+    Column("total_pnl_pct", Float),   # 총 손익률 (%)
+    Column("kospi_close",   Float),   # 당일 KOSPI 종가
+    Column("kospi_pct_ytd", Float),   # KOSPI 연초 대비 등락률 (%)
+    Column("nav_pct_ytd",   Float),   # 포트폴리오 연초 대비 등락률 (%)
+    Column("alpha_ytd",     Float),   # 초과수익률 = nav_pct_ytd - kospi_pct_ytd
+    Column("position_count",Integer), # 보유 종목 수
+    Column("created_at",    Text,     server_default="CURRENT_TIMESTAMP"),
 )
 
 # ── 초기화 ─────────────────────────────────────────────────────────

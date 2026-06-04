@@ -19,9 +19,10 @@ _KST = ZoneInfo("Asia/Seoul")
 
 
 def _is_market_hours() -> bool:
-    now = datetime.now(_KST)
-    if now.weekday() >= 5:
+    from utils.market_calendar import is_krx_trading_day
+    if not is_krx_trading_day():
         return False
+    now = datetime.now(_KST)
     h, m = now.hour, now.minute
     return (9, 0) <= (h, m) <= (15, 30)
 
@@ -47,11 +48,11 @@ def run() -> None:
         logger.warning("[긴급모니터] 시장 데이터 수집 실패: %s", e)
         market_data = {}
 
-    # 2. 뉴스 수집 (5분마다 전체 수집은 과도 → 지정학 쿼리만)
+    # 2. 뉴스 수집 (5분마다 전체 수집은 과도 → 고정 RSS만 빠르게 수집)
     news_data: dict = {}
     try:
-        from clients.news_client import fetch_compound_news
-        news_data = fetch_compound_news(max_items=3)
+        from clients.news_client import fetch_static_rss
+        news_data = fetch_static_rss(max_per=2)
     except Exception as e:
         logger.debug("[긴급모니터] 뉴스 수집 실패: %s", e)
 
@@ -68,7 +69,86 @@ def run() -> None:
     except Exception as e:
         logger.debug("[긴급모니터] 포트폴리오 급락 체크 실패: %s", e)
 
+    # 5. 투자 테제 무효조건 감지 (1시간마다 1회 — 중복 발송 방지)
+    now_dt = datetime.now(_KST)
+    if now_dt.minute < 5:  # 매 시간 :00~:04 에만 실행
+        try:
+            _check_thesis_invalidation(market_data, news_data)
+        except Exception as e:
+            logger.debug("[긴급모니터] 테제 무효조건 체크 실패: %s", e)
+
     logger.debug("[긴급모니터] 완료 — %s", now_str)
+
+
+def _check_thesis_invalidation(market_data: dict, news_data: dict) -> None:
+    """현재 투자 테제의 무효조건이 발동됐는지 LLM으로 판단, 발동 시 즉시 알림."""
+    from services.thesis_service import get_active_thesis
+    from services.alert_service import send_alert, _already_sent, _mark_sent, TYPE_RISK
+    from clients.openai_client import chat
+
+    thesis = get_active_thesis()
+    if not thesis or not thesis.get("invalidation"):
+        return
+
+    today = datetime.now(_KST).strftime("%Y-%m-%d")
+    alert_key = "thesis_invalidation"
+    if _already_sent(today, "thesis", alert_key):
+        return
+
+    # 시장 현재 수준 요약
+    def _v(k, f="close"):
+        return market_data.get(k, {}).get(f, "N/A")
+
+    market_summary = (
+        f"KOSPI: {_v('kospi')} ({_v('kospi','change_pct'):+.2f}%)"
+        f" | VIX: {_v('vix')} | USD/KRW: {_v('usd_krw')}"
+        f" | 미국10Y금리: {_v('us10y')}%"
+    )
+
+    prompt = f"""현재 시장 상황과 투자 테제의 무효조건을 비교하여,
+무효조건이 발동됐는지 판단하라.
+
+[투자 테제 무효조건]
+{thesis['invalidation']}
+
+[현재 시장 수준]
+{market_summary}
+
+[최근 뉴스 헤드라인]
+{_fmt_news_headlines(news_data)}
+
+판단: 무효조건 발동 여부를 YES/NO로만 답하고,
+YES인 경우 어떤 조건이 어떻게 발동됐는지 2~3줄로 설명하라.
+형식: YES: [발동 조건 설명] 또는 NO"""
+
+    try:
+        result = chat("당신은 투자 리스크 감시 전문가입니다.", prompt, max_tokens=200)
+        if result.strip().upper().startswith("YES"):
+            detail = result[4:].strip() if len(result) > 4 else result
+            send_alert(
+                TYPE_RISK,
+                "🔴 투자 테제 무효조건 감지",
+                f"현재 투자 테제의 무효조건이 발동되었습니다.\n\n"
+                f"{detail}\n\n"
+                f"📋 테제 재검토가 필요합니다.\n"
+                f"→ python main.py --type thesis 로 새 테제를 수립하세요.",
+                code="thesis", name="투자테제",
+            )
+            _mark_sent(today, "thesis", alert_key)
+            logger.warning("[긴급모니터] 투자 테제 무효조건 발동: %s", detail[:100])
+    except Exception as e:
+        logger.debug("[긴급모니터] 테제 무효조건 LLM 판단 실패: %s", e)
+
+
+def _fmt_news_headlines(news_data: dict) -> str:
+    lines = []
+    for source, articles in (news_data or {}).items():
+        for a in (articles or [])[:2]:
+            if t := a.get("title"):
+                lines.append(f"  [{source}] {t}")
+        if len(lines) >= 8:
+            break
+    return "\n".join(lines) if lines else "없음"
 
 
 def _check_portfolio_crash() -> None:

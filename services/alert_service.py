@@ -176,8 +176,18 @@ def send_alert(alert_type: str, title: str, body: str,
 
 
 # ── 중복 방지 ─────────────────────────────────────────────────────
+# 종목 코드별 오늘 발송된 알림 타입을 메모리 캐시로도 관리 (DB 조회 감소 + 즉각 중복 차단)
+import threading
+_sent_cache: dict[str, set] = {}   # {today: {(code, type), ...}}
+_sent_lock = threading.Lock()
+
 
 def _already_sent(today: str, code: str, alert_type: str) -> bool:
+    # 1. 메모리 캐시 먼저 확인 (빠름)
+    with _sent_lock:
+        if today in _sent_cache and (code, alert_type) in _sent_cache[today]:
+            return True
+    # 2. DB 확인
     try:
         with get_conn() as conn:
             row = conn.execute(
@@ -190,6 +200,14 @@ def _already_sent(today: str, code: str, alert_type: str) -> bool:
 
 
 def _mark_sent(today: str, code: str, alert_type: str) -> None:
+    # 메모리 캐시 업데이트
+    with _sent_lock:
+        if today not in _sent_cache:
+            # 오래된 날짜 캐시 정리
+            _sent_cache.clear()
+            _sent_cache[today] = set()
+        _sent_cache[today].add((code, alert_type))
+    # DB 기록
     try:
         with get_conn() as conn:
             conn.execute(
@@ -202,6 +220,27 @@ def _mark_sent(today: str, code: str, alert_type: str) -> None:
             )
     except Exception:
         pass
+
+
+def _already_sent_any_type(today: str, code: str, cooldown_minutes: int = 30) -> bool:
+    """같은 종목에 대해 최근 cooldown_minutes 내 어떤 타입으로든 발송됐으면 True.
+    긴급모니터 + 실시간모니터 중복 알림 방지용.
+    """
+    try:
+        from datetime import timedelta
+        cutoff = (datetime.now(_KST) - timedelta(minutes=cooldown_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        with get_conn() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT 1 FROM price_alert_log
+                    WHERE date=:d AND code=:c AND sent_at >= :cutoff
+                    LIMIT 1
+                """),
+                {"d": today, "c": code, "cutoff": cutoff},
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
 
 
 # ── 기회 감지 ─────────────────────────────────────────────────────

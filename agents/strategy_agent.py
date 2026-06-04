@@ -126,6 +126,34 @@ def _fetch_kr_volume_surge(kis: KISClient) -> str:
         return f"거래량 조회 실패: {e}"
 
 
+_CEO_SUMMARY_SYSTEM = """아래 주간 종합 투자전략 리포트를 읽고,
+일일 브리핑 CEO가 오늘의 단기 판단에 앞서 반드시 알아야 할 핵심만 500자 이내로 압축하라.
+
+[포함 필수 항목]
+① 이번 주 매크로 방향 (RISK-ON/OFF + 핵심 근거 한 줄)
+② 이번 주 주도/유망 섹터 2~3개 + 반대로 피해야 할 섹터 1개
+③ 중기(1~3개월) 핵심 후보 종목 2~3개 (이름·코드·근거 한 줄)
+④ 이번 주 절대 하면 안 되는 것 1가지
+
+[출력 형식]
+📅 주간전략 요약 (YYYY-MM-DD 기준)
+🌐 매크로: [방향] — [근거 한 줄]
+📈 주도: [섹터] | ❌ 회피: [섹터]
+🎯 중기후보: 종목명(코드) — 근거 / 종목명(코드) — 근거
+🚫 이번 주 금지: [행동] — [이유]"""
+
+
+def _generate_ceo_summary(report: str, now: datetime) -> str:
+    """주간 전략 전문에서 CEO 일일 브리핑 주입용 500자 요약 생성."""
+    try:
+        summary = chat(_CEO_SUMMARY_SYSTEM, report[:3000], max_tokens=400)
+        return summary
+    except Exception as e:
+        logger.warning("[전략에이전트] CEO 요약 생성 실패: %s", e)
+        # 실패 시 전체 리포트 앞부분 잘라서 반환
+        return f"📅 주간전략 ({now.strftime('%Y-%m-%d')})\n{report[:400]}"
+
+
 def run_strategy():
     """주간 종합 투자전략 실행 및 텔레그램 발송."""
     now = datetime.now(_TZ)
@@ -351,6 +379,21 @@ def run_strategy():
         f"단기·중기·장기 통합 | 포트폴리오 리밸런싱 | 이슈종목 발굴\n\n"
     )
     send_message(header + report)
+
+    # ── CEO 일일 브리핑 주입용 압축 요약 생성 + DB 저장 ────────────────
+    try:
+        ceo_summary = _generate_ceo_summary(report, now)
+        from services.strategy_service import save_strategy_report
+        save_strategy_report(
+            date=now.strftime("%Y-%m-%d"),
+            report=report,
+            ceo_summary=ceo_summary,
+            report_type="weekly",
+        )
+        logger.info("[전략에이전트] DB 저장 완료")
+    except Exception as e:
+        logger.warning("[전략에이전트] DB 저장 실패: %s", e)
+
     logger.info("[전략에이전트] 완료")
 
 

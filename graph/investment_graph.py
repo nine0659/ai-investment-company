@@ -144,6 +144,30 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.warning("[데이터수집] 한국 지수 실시간 실패: %s", e)
         state["kr_index_realtime"] = {}
 
+    # ── 월간 투자 테제 로드 (CEO 최우선 컨텍스트 — 모든 판단의 헌법) ──────
+    try:
+        from services.thesis_service import get_thesis_ceo_summary
+        state["investment_thesis"] = get_thesis_ceo_summary()
+        if state["investment_thesis"]:
+            logger.info("[데이터수집] 투자 테제 로드 완료")
+        else:
+            logger.debug("[데이터수집] 투자 테제 없음 (아직 생성 전)")
+    except Exception as e:
+        logger.debug("[데이터수집] 투자 테제 로드 실패 (무시): %s", e)
+        state["investment_thesis"] = ""
+
+    # ── 최신 주간 전략 요약 로드 (CEO 컨텍스트 주입용) ──────────────────
+    try:
+        from services.strategy_service import get_latest_strategy_summary
+        state["weekly_strategy_summary"] = get_latest_strategy_summary(max_days=7)
+        if state["weekly_strategy_summary"]:
+            logger.info("[데이터수집] 주간 전략 요약 로드 완료")
+        else:
+            logger.debug("[데이터수집] 주간 전략 없음 (7일 내 실행 기록 없음)")
+    except Exception as e:
+        logger.debug("[데이터수집] 주간 전략 로드 실패 (무시): %s", e)
+        state["weekly_strategy_summary"] = ""
+
     # ── 애널리스트 컨센서스 목표주가 수집 ─────────────────────────────
     try:
         from clients.consensus_client import fetch_consensus_batch
@@ -246,6 +270,22 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
     return state
 
 
+def node_record_nav(state: InvestmentState) -> InvestmentState:
+    """장마감 브리핑 후 포트폴리오 NAV 기록 (자산 성장 추적)."""
+    if state.get("run_type") != RUN_TYPE_CLOSE:
+        return state
+    try:
+        from services.nav_service import record_nav
+        nav = record_nav()
+        if nav:
+            state["nav_recorded"] = nav
+            logger.info("[NAV기록] 완료: 총손익 %+.2f%% / Alpha %+.2f%%",
+                        nav.get("total_pnl_pct", 0), nav.get("alpha_ytd", 0))
+    except Exception as e:
+        logger.debug("[NAV기록] 실패 (무시): %s", e)
+    return state
+
+
 def node_send_telegram(state: InvestmentState) -> InvestmentState:
     report = state.get("ceo_report", "")
     if not report:
@@ -295,6 +335,7 @@ def build_graph() -> StateGraph:
         ("midterm_stock_agent",    node_midterm_stocks),     # 중장기(3~12개월) 종목 추천
         ("ceo_agent",              node_ceo),
         ("save_report",            node_save_report),
+        ("record_nav",             node_record_nav),
         ("send_telegram",          node_send_telegram),
     ]
     for name, fn in nodes:
@@ -312,6 +353,20 @@ def build_graph() -> StateGraph:
 
 def run_pipeline(run_type: str) -> InvestmentState:
     now = datetime.now(TZ)
+
+    # KRX 거래일 체크 — 공휴일·선거일 등 비거래일에는 파이프라인 실행 자체를 차단
+    try:
+        from utils.market_calendar import is_krx_trading_day, get_holiday_name
+        if not is_krx_trading_day(now.date()):
+            holiday = get_holiday_name(now.date())
+            label = f" ({holiday})" if holiday else ""
+            logger.info(
+                "[파이프라인] 오늘은 KRX 비거래일%s — %s 실행 차단 (텔레그램 발송 없음)",
+                label, run_type,
+            )
+            return {}
+    except Exception as e:
+        logger.debug("[파이프라인] 공휴일 체크 실패 (무시): %s", e)
 
     # 중복 실행 방지: 같은 날 같은 run_type이 이미 DB에 저장됐으면 스킵
     try:
@@ -340,6 +395,8 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "dart_disclosures": [],
         "kr_index_realtime": {},
         "consensus_data": {},
+        "weekly_strategy_summary": "",
+        "investment_thesis": "",
         "futures_report": "",
         "us_market_report": "",
         "us_impact_report": "",
@@ -367,6 +424,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "market_direction": "",
         "review_report": "",
         "errors": [],
+        "nav_recorded": {},
     }
 
     graph = build_graph()

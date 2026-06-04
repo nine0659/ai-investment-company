@@ -21,7 +21,18 @@ _TOKEN_BUFFER_MINUTES = 15
 
 def _rank_api_available() -> bool:
     now = datetime.now(_KST)
-    return now.weekday() < 5 and _RANK_START <= now.time() <= _RANK_END
+    if now.weekday() >= 5:
+        return False
+    if not (_RANK_START <= now.time() <= _RANK_END):
+        return False
+    try:
+        from utils.market_calendar import is_krx_trading_day
+        if not is_krx_trading_day(now.date()):
+            logger.debug("KIS 순위 API — 공휴일(%s) 스킵", now.strftime("%Y-%m-%d"))
+            return False
+    except ImportError:
+        pass
+    return True
 
 
 class KISClient:
@@ -34,7 +45,8 @@ class KISClient:
     def _get_token(self) -> str:
         # 만료 15분 전 버퍼를 두고 갱신 판단
         buffer = timedelta(minutes=_TOKEN_BUFFER_MINUTES)
-        if self._token and self._token_expires and datetime.now() < self._token_expires - buffer:
+        now_local = datetime.now(_KST)
+        if self._token and self._token_expires and now_local < self._token_expires - buffer:
             return self._token
 
         last_exc: Exception | None = None
@@ -64,7 +76,10 @@ class KISClient:
 
                 # KIS 응답의 실제 만료 시간 사용 (expires_in: 초 단위, 기본 86400=24시간)
                 expires_in = int(data.get("expires_in", 86400))
-                self._token_expires = datetime.now() + timedelta(seconds=expires_in)
+                if expires_in < 3600:  # 1시간 미만이면 기본값(24h) 사용
+                    logger.warning("KIS expires_in 비정상(%ds) — 기본값 86400s 사용", expires_in)
+                    expires_in = 86400
+                self._token_expires = datetime.now(_KST) + timedelta(seconds=expires_in)
                 logger.info(
                     "KIS 토큰 갱신 완료 (유효 %dh, 만료 %s)",
                     expires_in // 3600,

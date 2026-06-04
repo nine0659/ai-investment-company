@@ -111,13 +111,20 @@ async def root(request: Request, _: None = Depends(_check_auth)):
 @app.get("/api/status")
 async def status():
     now = datetime.now(_KST)
-    # 장 운영 시간: 평일 09:00~15:35
-    is_weekday = now.weekday() < 5
-    market_open = is_weekday and (9, 0) <= (now.hour, now.minute) <= (15, 35)
+    try:
+        from utils.market_calendar import is_krx_trading_day, get_holiday_name
+        is_trading_day = is_krx_trading_day(now.date())
+        holiday = get_holiday_name(now.date())
+    except Exception:
+        is_trading_day = now.weekday() < 5
+        holiday = ""
+    market_open = is_trading_day and (9, 0) <= (now.hour, now.minute) <= (15, 35)
     return {
         "ok": True,
         "time": now.strftime("%Y-%m-%d %H:%M:%S"),
         "market": "open" if market_open else "closed",
+        "trading_day": is_trading_day,
+        "holiday": holiday or None,
     }
 
 
@@ -212,6 +219,68 @@ async def get_price_api(code: str):
         return {**(data or {}), "code": code, "name": name}
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/api/thesis")
+async def get_thesis_api():
+    """현재 활성 투자 테제."""
+    try:
+        from services.thesis_service import get_active_thesis
+        thesis = get_active_thesis()
+        if not thesis:
+            return {"thesis": None, "message": "투자 테제 없음 — python main.py --type thesis 실행 필요"}
+        return {"thesis": thesis}
+    except Exception as e:
+        return {"thesis": None, "error": str(e)}
+
+
+@app.get("/api/nav")
+async def get_nav_api(days: int = 30):
+    """포트폴리오 NAV 이력 + 최신 현황."""
+    try:
+        from services.nav_service import get_nav_history, get_latest_nav
+        history = get_nav_history(days)
+        latest  = get_latest_nav()
+        return {"latest": latest, "history": history}
+    except Exception as e:
+        return {"latest": None, "history": [], "error": str(e)}
+
+
+@app.get("/api/attribution")
+async def get_attribution_api(limit: int = 8):
+    """주간 귀인 분석 이력."""
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT week_end, macro_score, sector_score, stock_score,
+                           timing_score, thesis_score, total_score, key_learnings
+                    FROM attribution_log ORDER BY week_end DESC LIMIT :lim
+                """),
+                {"lim": limit},
+            ).fetchall()
+        items = [
+            {
+                "week_end": r[0], "macro": r[1], "sector": r[2], "stock": r[3],
+                "timing": r[4], "thesis": r[5], "total": r[6], "key_learnings": r[7],
+            }
+            for r in rows
+        ]
+        return {"attributions": items}
+    except Exception as e:
+        return {"attributions": [], "error": str(e)}
+
+
+@app.get("/api/strategy")
+async def get_strategy_api():
+    """최신 주간 전략 리포트."""
+    try:
+        from services.strategy_service import get_latest_strategy_report, get_latest_strategy_summary
+        summary = get_latest_strategy_summary()
+        report  = get_latest_strategy_report()
+        return {"summary": summary, "report": report}
+    except Exception as e:
+        return {"summary": "", "report": "", "error": str(e)}
 
 
 @app.get("/api/balance")

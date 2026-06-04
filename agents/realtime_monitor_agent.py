@@ -22,9 +22,10 @@ _KST = ZoneInfo("Asia/Seoul")
 
 
 def _is_market_hours() -> bool:
-    now = datetime.now(_KST)
-    if now.weekday() >= 5:
+    from utils.market_calendar import is_krx_trading_day
+    if not is_krx_trading_day():
         return False
+    now = datetime.now(_KST)
     h, m = now.hour, now.minute
     return (9, 0) <= (h, m) <= (15, 30)
 
@@ -157,6 +158,14 @@ def run_watchlist_monitor(today: str, kis: KISClient) -> list[str]:
     for code, name, target_entry, timeframe, reason in rows:
         if _already_alerted(today, code, "entry"):
             continue
+        # 긴급모니터와 중복 방지 — 최근 30분 내 어떤 타입으로든 알림이 갔으면 스킵
+        try:
+            from services.alert_service import _already_sent_any_type
+            if _already_sent_any_type(today, code, cooldown_minutes=30):
+                logger.debug("[모니터] %s(%s) 최근 30분 내 알림 발송됨 — 중복 스킵", name, code)
+                continue
+        except Exception:
+            pass
         try:
             pd = kis.get_stock_price(code, market=None)
             price = pd.get("price", 0)

@@ -133,17 +133,17 @@ def _fetch_price_context(
             data = kis.get_stock_price(code, market=None)
             price = data.get("price", 0)
             if not price:
-                # KIS 실패 → yfinance analyst_price_targets.current 로 fallback
+                # KIS 실패 → yfinance 실제 종가 기반 fallback (analyst_price_targets.current 는 수일 전 데이터일 수 있어 사용 금지)
                 market_sfx = c.get("market", "KOSPI")
                 yfin_sym = f"{code}.{'KS' if market_sfx == 'KOSPI' else 'KQ'}"
                 try:
                     import yfinance as yf
-                    apt = yf.Ticker(yfin_sym).analyst_price_targets
-                    yf_cur = round(apt.get("current", 0)) if apt else 0
+                    hist = yf.Ticker(yfin_sym).history(period="5d", interval="1d")
+                    yf_cur = round(float(hist.iloc[-1]["Close"])) if not hist.empty else 0
                     if yf_cur:
                         price = yf_cur
                         logger.warning(
-                            "[가격] %s(%s) KIS 0 → yfinance fallback %s원", name, code, f"{price:,}"
+                            "[가격] %s(%s) KIS 0 → yfinance 종가 fallback %s원", name, code, f"{price:,}"
                         )
                 except Exception:
                     pass
@@ -511,6 +511,25 @@ _COMMON_HEADER = """
 방향 불분명 (신호 혼재):
   → 확신 '상' 종목 1개만, 2~3% 이하. 없으면 관망 + 재진입 조건 수치로 명시.
 
+━━ [Top-Down 의무 — 이 순서를 절대 바꾸지 않는다] ━━
+
+투자 판단은 반드시 위에서 아래로 흐른다:
+  거시경제(매크로) → 섹터 포지셔닝 → 개별 종목 선택 → 타이밍
+
+❶ 테제 정합 확인 (브리핑 시작 즉시)
+   오늘 시장이 현재 투자 테제를 [지지 / 도전 / 테제 재검토 신호] 중 어디인가?
+   테제와 오늘 판단이 충돌한다면 반드시 명시: "테제 방향과 충돌 — 이유: [X]"
+
+❷ 포트폴리오 포지셔닝 방향 (개별 종목 전에)
+   지금 포트폴리오 전체 방향: [공격 확대 / 유지 / 방어 축소 / 현금 확보]
+   섹터 배분 방향: [확대할 섹터] / [축소할 섹터]
+   이 방향 없이 개별 종목을 추천하는 것은 지도 없이 항해하는 것이다.
+
+❸ 개별 종목 추천 (반드시 테제 연결고리 명시)
+   모든 종목 추천에 아래 논리 사슬을 포함할 것:
+   "우리 테제의 [X 방향성]을 실행 → [Y 섹터] 비중 확대 → [Z 종목]이 최적 표현"
+   논리 사슬 없는 추천은 단순 노이즈다. 이 브리핑에 존재할 수 없다.
+
 ━━ [언어 규칙] ━━
 금지: "조심하세요" "신중히" "모니터링" "주목할 만하다" "좋아 보인다" "가능성이 있습니다"
 → 이 말들은 판단을 포기한 사람의 언어다. 세계 최고의 투자자는 명확하게 말한다.
@@ -520,6 +539,7 @@ _COMMON_HEADER = """
 의무: 현재가 데이터 없으면 원 단위 가격 절대 기재 금지
 의무: 관망 선언 시 재진입 조건을 구체적 수치로 명시
 의무: 역발상 점검 결과를 브리핑에 반드시 포함
+의무: 브리핑 첫 번째 섹션은 반드시 테제 정합 확인
 
 ━━ [출력 규칙] ━━
 텔레그램 한국어 텍스트만 출력. 이모지 구분선(━) 유지.
@@ -537,11 +557,13 @@ _COMMON_HEADER = """
   괄호 안 메타 설명 문구는 출력에 포함하지 않는다."""
 
 # ── 종목 추천 블록: 가격 데이터 있을 때 ────────────────────────────
+# 주의: 아래 양식에서 숫자 자리는 반드시 위 [실시간 가격 데이터]의 실제 값으로 채울 것
 _STOCK_BLOCK_WITH_PRICE = """종목명(코드)  확신 [상/중/하]  /  상승 XX%
   이유: [수급·재료 수치 포함 한 줄]
   손익비: +XX% 목표 / -XX% 손절 = Z:1  |  투자금 X%
-  즉시진입  X,XXX원  →  손절  X,XXX원  →  1차목표  X,XXX원
-  눌림진입  X,XXX원  →  손절  X,XXX원  →  목표     X,XXX원
+  즉시진입  ▶실제원단위숫자◀원  →  손절  ▶실제원단위숫자◀원  →  1차목표  ▶실제원단위숫자◀원
+  눌림진입  ▶실제원단위숫자◀원  →  손절  ▶실제원단위숫자◀원  →  목표     ▶실제원단위숫자◀원
+  (▶실제원단위숫자◀ 자리에 위 가격표의 수치를 그대로 기입 — X,XXX원 같은 플레이스홀더 절대 금지)
   기술: RSI XX [정상/과열/과매도]  |  MA20 [위/아래]
   시초가: 갭+2%↑포기 / 갭+1~2%절반 / 보합전량 / 갭하락양봉후"""
 
@@ -555,27 +577,47 @@ _STOCK_BLOCK_NO_PRICE = """종목명(코드)  확신 [상/중/하]
   목표: [전 고점 저항 도달 시 절반 익절]"""
 
 
+def _3line_summary(has_price: bool, header: str, action_hint: str) -> str:
+    """3줄 요약 블록 생성. has_price=True면 실제 숫자 기입 지시, False면 가격 기재 금지."""
+    if has_price:
+        price_line = (
+            "📌 종목명(코드) 진입 [가격표즉시진입가]원 손절 [가격표손절가]원\n"
+            "   ↑ 위 [실시간 가격 데이터]의 즉시진입가·손절가 원단위 숫자를 그대로 기입 (숫자 플레이스홀더 절대 금지)"
+        )
+    else:
+        price_line = "📌 신규진입없음  (현재가 미확인 — 원 단위 숫자 기재 절대 금지)"
+    return (
+        f"╔═══ {header} ═══\n"
+        f"▶ {action_hint}\n"
+        f"{price_line}\n"
+        f"❌ [오늘/지금 절대 하면 안 되는 것]\n"
+        f"╚═════════════════════════"
+    )
+
+
 def _build_prompt_pre(has_price: bool) -> str:
     stock_block = _STOCK_BLOCK_WITH_PRICE if has_price else _STOCK_BLOCK_NO_PRICE
     price_warn  = "" if has_price else "🚫 가격 미확인 — 종목 추천에 원 단위 숫자 금지\n"
+    three_line  = _3line_summary(has_price, "오늘 실행 3줄", "[매수공격/선별매수/관망] — [이유 15자 이내]")
     return f"""{_COMMON_HEADER}
 
 {price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 장전 브리핑
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚡ 오늘 한 줄
-→ [매수공격 / 선별매수 / 관망]  KOSPI 상승 XX% / 하락 YY%
-관망이면: 오늘 관망 — 재진입 조건: [조건]
+① 테제 정합 확인 (최우선)
+오늘 시장은 우리 투자 테제를: [✅지지 / ⚠️도전 / 🔴재검토 신호]
+근거: [오늘 데이터 중 테제와 관련된 가장 중요한 신호 한 줄]
+테제 방향: [테제의 현재 핵심 방향 요약] → 오늘 판단 정합 여부: [일치/부분충돌/충돌]
+(충돌이면 반드시 이유 명시 — 침묵은 허용되지 않는다)
 
-🔑 3관문 + 역발상
-손익비 3:1  [✅/❌]
-수급 확인   [✅/❌]  외국인·기관 실제 매수 여부
-시장 방향   [✅/❌]  KOSPI 흐름이 내 편인가
+② 포트폴리오 포지셔닝 방향
+전체 방향: [공격확대 / 유지 / 방어축소 / 현금확보]  투자금 한도: 최대 XX%
+확대 섹터: [섹터명] — 테제 연결고리: [왜 이 섹터인가]
+축소 섹터: [섹터명] — 이유: [한 줄]
 역발상 점검: 지금 모두가 [사고/팔고] 있는가? → [의심할 근거 / 없음]
-→ [전진 / 선별 / 관망]  투자금 한도 최대 XX%
 
-📊 오늘 시장
+③ 오늘 시장 환경
 야간선물: [수치] → 갭[업/하락] [+/-X%] 예상
 미국: S&P500 [수치]  반도체지수 [수치]  나스닥 [수치]
 달러: [강세/약세] → 외국인 자금 [들어올/나갈] 가능성 XX%
@@ -583,15 +625,22 @@ def _build_prompt_pre(has_price: bool) -> str:
 
 📈 어제 급등 — 오늘 어떻게?
 종목명(코드) 어제+X.X%  →  [✅눌림후진입 / ❌추격금지 / ⏳관망]
-  이유 한 줄  |  진입가 X,XXX원  손절 -X%  목표 +Y%  손익비 Z:1
+  이유 한 줄  |  {'진입가 [가격표 수치 또는 조건]원  손절 -X%  목표 +Y%  손익비 Z:1' if has_price else '진입조건: [시초가 확인 후] 손절 -X% 목표 +Y%  ← 원단위 숫자 금지'}
 (수급 없는 급등 = ❌추격금지 한 줄로만)
 
-📌 오늘 매수
+④ 어제 급등 — 오늘 어떻게?
+종목명(코드) 어제+X.X%  →  [✅눌림후진입 / ❌추격금지 / ⏳관망]
+  이유 한 줄  |  {'진입가 [가격표 수치 또는 조건]원  손절 -X%  목표 +Y%  손익비 Z:1' if has_price else '진입조건: [시초가 확인 후] 손절 -X% 목표 +Y%  ← 원단위 숫자 금지'}
+(수급 없는 급등 = ❌추격금지 한 줄로만)
+
+⑤ 오늘 매수 (테제→섹터→종목 논리 사슬 필수)
+테제 실행 논리: 우리 테제의 [X 방향성] → [Y 섹터] 확대 → 아래 종목이 최적 표현
 {stock_block}
 오늘 조건 충족 종목 없으면: 오늘은 관망 — 현금 보유
 
-📋 1~3주 관심 종목
+⑥ 1~3주 관심 종목
 종목명(코드)  기간 X주  |  손익비 Z:1
+  테제 연결: [어떤 테제 방향성을 실행하는가]
   이유: [팩트 한 줄]
   진입: [즉시/눌림/조건]  손절 -X%  목표 +Y%  이익 구간에서 손절선 올리기
 (최대 3종목)
@@ -609,30 +658,28 @@ def _build_prompt_pre(has_price: bool) -> str:
 [이벤트명] [날짜] → 포지션 XX%로 줄이기
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-╔═══ 오늘 실행 3줄 ═══
-▶ [매수공격/선별매수/관망] — [이유 15자 이내]
-📌 [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
-❌ [오늘 절대 하면 안 되는 것]
-╚═════════════════════════
+{three_line}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
 def _build_prompt_close(has_price: bool) -> str:
     stock_block = _STOCK_BLOCK_WITH_PRICE if has_price else _STOCK_BLOCK_NO_PRICE
     price_warn  = "" if has_price else "🚫 가격 미확인 — 종목 추천에 원 단위 숫자 금지\n"
+    three_line  = _3line_summary(has_price, "내일 실행 3줄", "[매수공격/선별매수/관망] — [이유 15자 이내]")
     return f"""{_COMMON_HEADER}
 
 {price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 장마감 복기
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚡ 오늘 총평
-→ [오늘 장 한 마디]  내일: [강세 / 약세 / 관망]
-→ 내일 핵심 근거: [가장 중요한 것 1개]
+① 테제 정합 확인 (오늘 장 종합)
+테제 상태: [✅지지 강화 / ⚠️도전 / 🔴재검토 신호]
+오늘 테제 관련 핵심 신호: [한 줄 — 무엇이 테제를 지지/도전했는가]
+내일 포지셔닝 방향: [공격확대 / 유지 / 방어축소 / 현금확보]  근거: [한 줄]
 
-📊 오늘 결산
+② 오늘 총평 + 복기
+→ [오늘 장 한 마디]  내일: [강세 / 약세 / 관망]
 주도 섹터: [섹터]  |  장전 예상과 [✅일치 / ❌불일치]
-미국과 다른 흐름: [있었다면 이유 한 줄 / 없으면 생략]
 수급: 외국인 [순매수/순매도] XXX억  기관 [순매수/순매도] XXX억
 오늘 작동한 재료: [DART / 수급 / 뉴스 / 기타]
 
@@ -657,20 +704,22 @@ B 약세 YY%  |  주의: [섹터]  |  투자금 한도 XX%
 
 📈 오늘 급등 — 내일 어떻게?
 종목명(코드) 오늘+X.X%  →  [✅눌림후진입 / ❌추격금지 / ⏳관망]
-  내일 지속 XX%  |  진입가 X,XXX원  손절 -X%  목표 +Y%  손익비 Z:1
+  내일 지속 XX%  |  {'진입가 [가격표 수치 또는 조건]원  손절 -X%  목표 +Y%  손익비 Z:1' if has_price else '진입조건: [갭하락 양봉 확인 후] 손절 -X% 목표 +Y%  ← 원단위 숫자 금지'}
 (수급 없는 급등 = ❌내일추격금지 한 줄로만)
 
 💼 보유 종목 내일 행동
 [종목명]: [홀드/추가매수/분할매도/전량매도] — [이유]
-수익 중인 종목 손절선: [X,XXX원으로 올리기]
+수익 중인 종목 손절선: [수익률 기준 올리기 — 원단위 숫자 없으면 % 기준으로만]
 
-📌 내일 매수
+③ 내일 매수 (테제→섹터→종목 논리 사슬 필수)
+테제 실행 논리: 우리 테제의 [X 방향성] → [Y 섹터] 확대 → 아래 종목이 최적 표현
 오늘 수급·거래대금이 실제 확인된 종목만. 단순 하락했다는 이유로 추천 금지.
 {stock_block}
 내일 조건 충족 종목 없으면: 내일은 관망
 
-📋 1~3주 관심 종목
+④ 1~3주 관심 종목
 종목명(코드)  기간 X주  |  손익비 Z:1
+  테제 연결: [어떤 테제 방향성을 실행하는가]
   이유: [팩트 한 줄]
   진입: [즉시/눌림/조건]  손절 -X%  목표 +Y%  이익 구간에서 손절선 올리기
 (최대 3종목)
@@ -686,56 +735,56 @@ B 약세 YY%  |  주의: [섹터]  |  투자금 한도 XX%
 → 내일 돈 되는 함의: [어떤 종목·섹터에 기회가 생기는가]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-╔═══ 내일 실행 3줄 ═══
-▶ [매수공격/선별매수/관망] — [이유 15자 이내]
-📌 [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
-❌ [내일 절대 하면 안 되는 것]
-╚═════════════════════════
+{three_line}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
-_PROMPT_INTRA1 = f"""{_COMMON_HEADER}
+def _build_prompt_intra1(has_price: bool) -> str:
+    three_line = _3line_summary(has_price, "지금 실행 3줄", "[매수공격/선별매수/관망] — [이유 15자 이내]")
+    price_warn = "" if has_price else "🚫 가격 미확인 — 이 브리핑에서 원 단위 숫자 기재 절대 금지\n"
+    return f"""{_COMMON_HEADER}
 
+{price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
+🕙 장중 1차 점검  (오전 10:00)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🕙 장중 점검  10:00
-━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚡ 지금 판단
-장전 전략: [✅유효 / ⚠️수정필요]  오후 상승 XX% / 하락 YY%
-KOSPI [수치] ([+/-X.X%])  KOSDAQ [수치] ([+/-X.X%])
-판정: [일치 이유 한 줄 / 불일치 원인 한 줄]
+⚡ 지금 결론  (한 줄)
+→ [장전 전략 유효 ✅ / 수정 필요 ⚠️]  |  오후 상승확률 XX% / 하락확률 YY%
 
-✅ 지금 해야 할 것
-→ [행동] — [이유 수치 포함]
+① 테제 정합 + 장전 전략 검증
+테제 상태: [✅지지 / ⚠️도전] — 오늘 핵심 신호: [한 줄]
+장전 예상: [섹터/방향]
+현재 실제: KOSPI [수치] ([+/-X.X%]), KOSDAQ [수치] ([+/-X.X%]) — [주도 섹터]
+판정: [일치 ✅ / 불일치 ❌]  원인: [한 줄]
 
-❌ 지금 하면 안 되는 것
-→ [금지 행동] — [이유 수치 포함]
+② 지금 당장 해야 할 것 / 하면 안 되는 것
+✅ [행동] — 조건: [수치 포함]
+❌ [금지 행동] — 이유: [수치 포함]
 
-📈 지금 급등 — 진입 여부
+③ 지금 급등 종목 — 진입 여부
 종목명(코드) +XX%  →  [✅진입가능 / ❌추격금지 / ⏳눌림대기]
   재료: [한 줄]  수급: [외국인+기관 / 외국인 / 없음]
-  진입가 X,XXX원  손절 -X%  목표 +Y%  손익비 Z:1
+  {'진입가 ▶가격표즉시진입가◀원  손절 -X%  목표 +Y%  손익비 Z:1' if has_price else '🚫 원 단위 숫자 금지 — 진입 조건만 기재'}
 (수급 없는 급등 = ❌추격금지 한 줄로만)
 
-📡 새 소식
-→ [장전 이후 새로 생긴 중요 사실만]  영향 종목: [종목명]
-
-🔭 오후 관전
-S&P선물 [수치] → 오후 한국 [영향]
-[시간]에 [지표]가 [수준] 되면 → [즉시 할 행동]
+④ 오후 핵심 관전 포인트
+미국 프리마켓: [S&P선물 수치] → 오후 한국 [영향]
+경계 임계값: KOSPI [수치] 이탈 시 → [즉시 할 행동]
+오후 주목 시간대: [시간] — [이유]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-╔═══ 지금 실행 3줄 ═══
-▶ [매수공격/선별매수/관망] — [이유 15자 이내]
-📌 [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
-❌ [지금 절대 하면 안 되는 것]
-╚═════════════════════════
+🔔 3줄 즉시 실행 요약
+{three_line}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
-_PROMPT_INTRA2 = f"""{_COMMON_HEADER}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-🕐 장중 점검  13:00
+def _build_prompt_intra2(has_price: bool) -> str:
+    three_line = _3line_summary(has_price, "지금 실행 3줄", "[홀드/익절XX%/손절/추가매수] — [이유 15자 이내]")
+    price_warn = "" if has_price else "🚫 가격 미확인 — 이 브리핑에서 원 단위 숫자 기재 절대 금지\n"
+    return f"""{_COMMON_HEADER}
+
+{price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
+🕐 장중 2차 점검  (오후 13:00)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⚡ 오후 방향
@@ -752,11 +801,8 @@ S&P선물 [수치]  외국인 오전 [순매수/순매도] XXX억
 [시간] [지표]가 [수준] 되면 → [즉시 할 행동]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-╔═══ 지금 실행 3줄 ═══
-▶ [홀드/익절XX%/손절/추가매수] — [이유 15자 이내]
-📌 [종목명(코드) 진입 X,XXX원 손절 X,XXX원] 또는 신규진입없음
-❌ [지금 절대 하면 안 되는 것]
-╚═════════════════════════
+🔔 3줄 즉시 실행 요약
+{three_line}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
@@ -805,6 +851,28 @@ def run(state: InvestmentState) -> InvestmentState:
             logger.debug("[CEO] 누적 데이터 컨텍스트 주입 실패: %s", _e)
 
         has_price = False  # 실시간 가격 데이터 주입 여부 추적
+
+        # ── 월간 투자 테제 주입 — 최최우선 컨텍스트 (모든 판단의 헌법) ──────
+        investment_thesis = state.get("investment_thesis", "")
+        if investment_thesis:
+            context_parts.insert(1,
+                "\n[월간 투자 테제 — 이 테제가 오늘 모든 판단의 최우선 기준. 테제에 반하는 추천은 명시적 이유 필수]\n"
+                + investment_thesis
+                + "\n→ 오늘 추천이 테제 방향과 정합하는지 브리핑 첫 줄에서 반드시 확인할 것"
+            )
+            logger.info("[CEO] 투자 테제 주입 완료")
+
+        # ── 주간 중장기 전략 프레임 주입 — 모든 브리핑 유형에 공통 ────────────
+        # 오늘의 단기 판단이 이번 주 중장기 방향과 일치하는지 CEO가 최우선으로 확인
+        weekly_strategy = state.get("weekly_strategy_summary", "")
+        if weekly_strategy:
+            idx = 2 if investment_thesis else 1
+            context_parts.insert(idx,
+                "\n[이번 주 전략 프레임 — 오늘의 단기 추천이 이 방향과 정합해야 함]\n"
+                + weekly_strategy
+                + "\n→ 오늘 단기 판단이 위 전략 방향과 충돌하면 그 이유를 명시하고 조정할 것"
+            )
+            logger.info("[CEO] 주간 전략 프레임 주입 완료")
 
         # ── 급등종목 수급 교차분석 — 모든 브리핑 유형에 공통 주입 ──────────
         try:
@@ -934,6 +1002,23 @@ def run(state: InvestmentState) -> InvestmentState:
             except Exception as e:
                 logger.debug("[CEO] 성과 통계 주입 실패: %s", e)
 
+            # 포트폴리오 자산 성장 현황 주입 (연초 대비 NAV + KOSPI 벤치마크 비교)
+            try:
+                from services.nav_service import get_latest_nav, generate_nav_report
+                nav = get_latest_nav()
+                if nav:
+                    nav_report = generate_nav_report(days=7)
+                    alpha_signal = "✅초과수익 중" if nav["alpha_ytd"] >= 0 else "⚠️시장 하회 중"
+                    context_parts.append(
+                        f"\n[포트폴리오 자산 성장 현황 — 전략이 실제 자산을 키우고 있는가]\n"
+                        f"  포트폴리오 연초대비: {nav['nav_pct_ytd']:+.2f}%  |  KOSPI 연초대비: 조회중\n"
+                        f"  Alpha(초과수익): {nav['alpha_ytd']:+.2f}%  {alpha_signal}\n"
+                        f"  오늘 총 손익: {nav['total_pnl_pct']:+.2f}%\n"
+                        f"→ 이 수치가 개선되지 않으면 전략을 재검토해야 한다."
+                    )
+            except Exception as _ne:
+                logger.debug("[CEO] NAV 주입 실패: %s", _ne)
+
             # 오늘 한국 시장 실제 움직임 — CEO가 '무엇이 실제로 움직였는가'를 파악하는 핵심 데이터
             if state.get("korea_spot_report"):
                 context_parts.append(
@@ -1050,6 +1135,28 @@ def run(state: InvestmentState) -> InvestmentState:
                         "\n[실시간 지수 — 현재 장중 수준]\n" + "\n".join(idx_lines)
                     )
 
+        # 장중 실시간 가격 주입 — 신규 진입 추천 시 X,XXX원 placeholder 방지
+        if run_type in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
+            try:
+                kis_intra = KISClient()
+                price_ctx = _fetch_price_context(state.get("candidates", []), kis_intra)
+                if price_ctx and "조회 불가" not in price_ctx:
+                    context_parts.append(
+                        "\n[실시간 가격 데이터 — 3줄 요약 📌줄의 진입가·손절가는 반드시 이 수치만 사용]\n"
+                        + price_ctx
+                    )
+                    has_price = True
+                    logger.info("[CEO] 장중 실시간 가격 데이터 주입 완료")
+                else:
+                    context_parts.append(
+                        "\n🚫 현재가 없음: 3줄 요약 📌줄에서 진입가·손절가 원 단위 숫자 금지. '신규진입없음' 사용."
+                    )
+            except Exception as _ie:
+                logger.warning("[CEO] 장중 가격 조회 실패: %s", _ie)
+                context_parts.append(
+                    "\n🚫 현재가 없음: 3줄 요약 📌줄에서 진입가·손절가 원 단위 숫자 금지. '신규진입없음' 사용."
+                )
+
         # 장중(intra) 브리핑에도 DART 공시 포함
         if run_type in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2) and state.get("dart_disclosures"):
             from agents.dart_alert_agent import format_disclosures_for_briefing
@@ -1089,15 +1196,15 @@ def run(state: InvestmentState) -> InvestmentState:
 
         context = "\n".join(context_parts)
 
-        # 실행 유형별 프롬프트 선택 — PRE/CLOSE는 가격 데이터 여부에 따라 동적 생성
+        # 실행 유형별 프롬프트 선택 — 모든 유형이 has_price에 따라 3줄 요약을 다르게 생성
         if run_type == RUN_TYPE_PRE:
             prompt = _build_prompt_pre(has_price)
         elif run_type == RUN_TYPE_CLOSE:
             prompt = _build_prompt_close(has_price)
         elif run_type == RUN_TYPE_INTRA1:
-            prompt = _PROMPT_INTRA1
+            prompt = _build_prompt_intra1(has_price)
         else:
-            prompt = _PROMPT_INTRA2
+            prompt = _build_prompt_intra2(has_price)
 
         result = chat_ceo(prompt, context, max_tokens=2000)
         state["ceo_report"] = result
