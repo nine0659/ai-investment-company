@@ -1289,6 +1289,208 @@
         </div>
       </div>
 
+      <!-- ── 📡 성과 추적 ──────────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='tracker'">
+        <div class="max-w-5xl mx-auto space-y-5">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <h2 class="text-lg font-bold">📡 AI 추천 성과 추적</h2>
+            <button @click="loadTracker()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+
+          <!-- 예측 정확도 카드 -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="bg-slate-800 rounded-xl p-4 text-center">
+              <div class="text-2xl font-bold text-blue-400" x-text="trackerSummary ? trackerSummary.total+'건' : '-'"></div>
+              <div class="text-xs text-slate-400 mt-1">추적 종목 (30일)</div>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-4 text-center">
+              <div class="text-2xl font-bold text-green-400" x-text="trackerSummary ? trackerSummary.win_rate.toFixed(1)+'%' : '-'"></div>
+              <div class="text-xs text-slate-400 mt-1">수익 달성률</div>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-4 text-center">
+              <div class="text-2xl font-bold"
+                :class="trackerSummary&&trackerSummary.avg_return>=0?'text-green-400':'text-red-400'"
+                x-text="trackerSummary ? (trackerSummary.avg_return>=0?'+':'')+trackerSummary.avg_return.toFixed(2)+'%' : '-'"></div>
+              <div class="text-xs text-slate-400 mt-1">평균 수익률</div>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-4 text-center">
+              <div class="text-2xl font-bold text-yellow-400" x-text="trackerSummary ? trackerSummary.target_rate.toFixed(1)+'%' : '-'"></div>
+              <div class="text-xs text-slate-400 mt-1">목표가 달성률</div>
+            </div>
+          </div>
+
+          <!-- 시장 방향 예측 정확도 -->
+          <div class="bg-slate-800 rounded-xl p-4" x-show="predStats">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold">📡 시장 방향 예측 정확도 (30일)</div>
+              <div class="text-xs text-slate-400" x-text="predStats ? '총 '+predStats.total+'건' : ''"></div>
+            </div>
+            <div class="grid grid-cols-3 gap-3 text-center text-xs" x-show="predStats">
+              <div>
+                <div class="text-xl font-bold text-blue-400" x-text="predStats ? predStats.accuracy.toFixed(1)+'%' : '-'"></div>
+                <div class="text-slate-400 mt-0.5">전체 정확도</div>
+              </div>
+              <div>
+                <div class="text-xl font-bold text-green-400" x-text="predStats ? predStats.up_accuracy.toFixed(1)+'%' : '-'"></div>
+                <div class="text-slate-400 mt-0.5">상승 예측</div>
+              </div>
+              <div>
+                <div class="text-xl font-bold text-red-400" x-text="predStats ? predStats.down_accuracy.toFixed(1)+'%' : '-'"></div>
+                <div class="text-slate-400 mt-0.5">하락 예측</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 로딩 -->
+          <template x-if="trackerLoading">
+            <div class="text-center py-8 text-slate-400 text-sm">추적 데이터 로딩 중...</div>
+          </template>
+
+          <!-- 추적 중인 종목 -->
+          <template x-if="!trackerLoading && trackerActive.length > 0">
+            <div class="bg-slate-800 rounded-xl overflow-hidden">
+              <div class="px-4 py-3 border-b border-slate-700 text-sm font-semibold text-blue-400">
+                📍 추적 중인 종목 (<span x-text="trackerActive.length"></span>건)
+              </div>
+              <table class="w-full text-sm">
+                <thead class="bg-slate-700/50 text-slate-400 text-xs">
+                  <tr>
+                    <th class="px-4 py-2 text-left">종목</th>
+                    <th class="px-4 py-2 text-right">현재수익률</th>
+                    <th class="px-4 py-2 text-right hidden md:table-cell">최고</th>
+                    <th class="px-4 py-2 text-right hidden md:table-cell">진입가</th>
+                    <th class="px-4 py-2 text-right">경과일</th>
+                    <th class="px-4 py-2 text-right hidden md:table-cell">목표가</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-700">
+                  <template x-for="(r,i) in trackerActive" :key="i">
+                    <tr class="hover:bg-slate-700/30">
+                      <td class="px-4 py-2.5">
+                        <div class="font-medium text-slate-200" x-text="r.name"></div>
+                        <div class="text-xs text-slate-500" x-text="r.code+' · '+r.rec_date"></div>
+                      </td>
+                      <td class="px-4 py-2.5 text-right font-semibold"
+                        :class="(r.return_pct||0)>=0?'text-green-400':'text-red-400'"
+                        x-text="r.return_pct!=null?(r.return_pct>=0?'+':'')+r.return_pct.toFixed(2)+'%':'-'"></td>
+                      <td class="px-4 py-2.5 text-right text-xs text-green-300 hidden md:table-cell"
+                        x-text="r.max_return!=null?(r.max_return>=0?'+':'')+r.max_return.toFixed(2)+'%':'-'"></td>
+                      <td class="px-4 py-2.5 text-right text-xs text-slate-400 hidden md:table-cell"
+                        x-text="r.entry_price?(r.entry_price).toLocaleString()+'원':'-'"></td>
+                      <td class="px-4 py-2.5 text-right text-xs text-slate-400"
+                        x-text="(r.days_held||0)+'일'"></td>
+                      <td class="px-4 py-2.5 text-right text-xs text-slate-400 hidden md:table-cell"
+                        x-text="r.target_price?(r.target_price).toLocaleString()+'원':'-'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+
+          <!-- 전체 이력 (최근 30일) -->
+          <template x-if="!trackerLoading && trackerSummary && trackerSummary.items.length > 0">
+            <div class="bg-slate-800 rounded-xl overflow-hidden">
+              <div class="px-4 py-3 border-b border-slate-700 text-sm font-semibold">
+                📋 추천 이력 (최근 30일)
+              </div>
+              <table class="w-full text-sm">
+                <thead class="bg-slate-700/50 text-slate-400 text-xs">
+                  <tr>
+                    <th class="px-4 py-2 text-left">종목</th>
+                    <th class="px-4 py-2 text-right">수익률</th>
+                    <th class="px-4 py-2 text-right hidden md:table-cell">최고/최저</th>
+                    <th class="px-4 py-2 text-right">상태</th>
+                    <th class="px-4 py-2 text-right hidden md:table-cell">추천일</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-700">
+                  <template x-for="(r,i) in trackerSummary.items.slice(0,30)" :key="i">
+                    <tr class="hover:bg-slate-700/30">
+                      <td class="px-4 py-2.5">
+                        <div class="font-medium text-slate-200" x-text="r.name"></div>
+                        <div class="text-xs text-slate-500" x-text="r.code"></div>
+                      </td>
+                      <td class="px-4 py-2.5 text-right font-semibold"
+                        :class="(r.return_pct||0)>=0?'text-green-400':'text-red-400'"
+                        x-text="r.return_pct!=null?(r.return_pct>=0?'+':'')+r.return_pct.toFixed(2)+'%':'-'"></td>
+                      <td class="px-4 py-2.5 text-right text-xs hidden md:table-cell">
+                        <span class="text-green-300" x-text="r.max_return!=null?'▲'+(r.max_return).toFixed(1)+'%':''"></span>
+                        <span class="text-slate-500 mx-0.5">/</span>
+                        <span class="text-red-300" x-text="r.min_return!=null?'▼'+(r.min_return).toFixed(1)+'%':''"></span>
+                      </td>
+                      <td class="px-4 py-2.5 text-right text-xs">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium"
+                          :class="{
+                            'bg-blue-900 text-blue-300':  r.status==='tracking',
+                            'bg-green-900 text-green-300': r.status==='target_hit',
+                            'bg-red-900 text-red-300':    r.status==='stop_hit',
+                            'bg-slate-700 text-slate-400': r.status==='expired'
+                          }"
+                          x-text="{'tracking':'추적중','target_hit':'목표달성','stop_hit':'손절','expired':'만료'}[r.status]||r.status">
+                        </span>
+                      </td>
+                      <td class="px-4 py-2.5 text-right text-xs text-slate-500 hidden md:table-cell"
+                        x-text="r.rec_date"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+
+          <!-- 데이터 없음 -->
+          <template x-if="!trackerLoading && (!trackerSummary || trackerSummary.total===0)">
+            <div class="bg-slate-800 rounded-xl p-8 text-center text-slate-400">
+              <div class="text-4xl mb-3">📡</div>
+              <div class="text-sm">추적 데이터가 없습니다.</div>
+              <div class="text-xs text-slate-500 mt-2">
+                매일 16:20 자동 실행됩니다.<br>
+                수동 실행: <code class="bg-slate-700 px-2 py-0.5 rounded">python main.py --tracker</code>
+              </div>
+            </div>
+          </template>
+
+          <!-- 시장 예측 이력 -->
+          <template x-if="!predLoading && predStats && predStats.items && predStats.items.length > 0">
+            <div class="bg-slate-800 rounded-xl overflow-hidden">
+              <div class="px-4 py-3 border-b border-slate-700 text-sm font-semibold">
+                📡 시장 방향 예측 이력
+              </div>
+              <table class="w-full text-sm">
+                <thead class="bg-slate-700/50 text-slate-400 text-xs">
+                  <tr>
+                    <th class="px-4 py-2 text-left">날짜</th>
+                    <th class="px-4 py-2 text-center">예측</th>
+                    <th class="px-4 py-2 text-center hidden md:table-cell">확률</th>
+                    <th class="px-4 py-2 text-right">실제KOSPI</th>
+                    <th class="px-4 py-2 text-center">결과</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-700">
+                  <template x-for="(p,i) in predStats.items.slice(0,20)" :key="i">
+                    <tr class="hover:bg-slate-700/30">
+                      <td class="px-4 py-2 text-xs text-slate-400" x-text="p.date"></td>
+                      <td class="px-4 py-2 text-center text-xs font-medium"
+                        :class="p.predicted_dir==='상승'?'text-green-400':p.predicted_dir==='하락'?'text-red-400':'text-slate-400'"
+                        x-text="p.predicted_dir||'-'"></td>
+                      <td class="px-4 py-2 text-center text-xs text-slate-400 hidden md:table-cell"
+                        x-text="p.predicted_prob!=null?p.predicted_prob.toFixed(0)+'%':'-'"></td>
+                      <td class="px-4 py-2 text-right text-xs font-medium"
+                        :class="(p.actual_kospi||0)>=0?'text-green-400':'text-red-400'"
+                        x-text="p.actual_kospi!=null?(p.actual_kospi>=0?'+':'')+p.actual_kospi.toFixed(2)+'%':'-'"></td>
+                      <td class="px-4 py-2 text-center text-sm"
+                        x-text="p.correct===1?'✅':p.correct===0?'❌':'⏳'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+
+        </div>
+      </div>
+
     </main>
 
     <!-- Mobile bottom nav -->
@@ -1324,6 +1526,7 @@ function app() {
       { id: 'attribution', icon: '🎯', label: '귀인분석' },
       { id: 'orders',      icon: '📒', label: '주문이력' },
       { id: 'backtest',    icon: '🔬', label: '백테스트' },
+      { id: 'tracker',     icon: '📡', label: '성과추적' },
     ],
 
     // Chat
@@ -1369,6 +1572,10 @@ function app() {
     btStats: null, btItems: [], btChartData: [],
     perfLoading: false, perfStats: null, perfTrades: [],
 
+    // Tracker (성과 추적)
+    trackerLoading: false, trackerSummary: null, trackerActive: [],
+    predLoading: false, predStats: null,
+
     // Chart instances
     _sectorChart: null, _tfChart: null, _btChart: null, _navChart: null,
 
@@ -1388,6 +1595,7 @@ function app() {
         if (t === 'nav'         && !this.navData && !this.navLoading)   this.loadNav();
         if (t === 'attribution' && !this.attributions.length && !this.attributionLoading) this.loadAttribution();
         if (t === 'orders'      && !this.orders.length && !this.ordersLoading) this.loadOrders();
+        if (t === 'tracker'     && !this.trackerSummary && !this.trackerLoading) this.loadTracker();
       });
 
       this.$watch('researchQuery', (q) => {
@@ -1871,6 +2079,26 @@ function app() {
         console.error(e);
       } finally {
         this.perfLoading = false;
+      }
+    },
+
+    // ── Tracker (성과 추적) ───────────────────────────────────
+    async loadTracker() {
+      this.trackerLoading = true; this.trackerSummary = null; this.trackerActive = [];
+      this.predLoading = true;   this.predStats = null;
+      try {
+        const [tr, pr] = await Promise.all([
+          fetch('/api/tracker?days=30').then(r => r.json()),
+          fetch('/api/predictions?days=30').then(r => r.json()),
+        ]);
+        this.trackerSummary = tr.summary || null;
+        this.trackerActive  = tr.active  || [];
+        this.predStats      = pr || null;
+      } catch (e) {
+        console.error(e);
+      } finally {
+        this.trackerLoading = false;
+        this.predLoading    = false;
       }
     },
 

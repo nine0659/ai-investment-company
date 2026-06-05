@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from langgraph.graph import StateGraph, END
 
 from graph.state import InvestmentState
-from config.settings import TZ, RUN_TYPE_CLOSE
+from config.settings import TZ, RUN_TYPE_PRE, RUN_TYPE_CLOSE
 
 import agents.futures_market_team    as futures_market_team
 import agents.us_market_team         as us_market_team
@@ -236,6 +236,26 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[리포트저장] 실패: %s", e)
         state["errors"].append(f"save_report: {e}")
+
+    # ── CEO 추천 종목 저장 (장전/장마감 브리핑에서 파싱) ──────────
+    ceo_report = state.get("ceo_report", "")
+    if ceo_report and state.get("run_type") in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
+        try:
+            from services.recommendation_service import parse_recommendations, save_recommendations
+            recs = parse_recommendations(ceo_report)
+            if recs:
+                save_recommendations(state["date"], recs)
+                logger.info("[추천저장] %d건 저장", len(recs))
+        except Exception as e:
+            logger.debug("[추천저장] 실패: %s", e)
+
+    # ── 시장 방향 예측 저장 ────────────────────────────────────
+    if ceo_report:
+        try:
+            from services.market_prediction_service import save_prediction
+            save_prediction(state["date"], state["run_type"], ceo_report)
+        except Exception as e:
+            logger.debug("[예측저장] 실패: %s", e)
 
     # ── 시장 스냅샷 아카이브 저장 ───────────────────────────────
     try:

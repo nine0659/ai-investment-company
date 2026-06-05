@@ -320,6 +320,40 @@ order_history = Table("order_history", metadata,
     Column("memo",       Text),
 )
 
+# ── AI 성과 추적 테이블 ────────────────────────────────────────────
+
+recommendation_tracking = Table("recommendation_tracking", metadata,
+    Column("id",           Integer, primary_key=True, autoincrement=True),
+    Column("rec_id",       Integer, nullable=False),   # stock_recommendations.id 참조
+    Column("date",         Text,    nullable=False),   # 추적 날짜 (YYYY-MM-DD)
+    Column("code",         Text,    nullable=False),
+    Column("name",         Text),
+    Column("rec_date",     Text,    nullable=False),   # 최초 추천 날짜
+    Column("entry_price",  Float),                     # 추천 당시 진입가
+    Column("stop_price",   Float),                     # 손절가
+    Column("target_price", Float),                     # 목표가
+    Column("current_price",Float),                     # 당일 종가
+    Column("return_pct",   Float),                     # 추천일 대비 수익률 (%)
+    Column("max_return",   Float),                     # 추적 기간 최고 수익률
+    Column("min_return",   Float),                     # 추적 기간 최저 수익률
+    Column("days_held",    Integer),                   # 추천일로부터 경과 영업일
+    Column("status",       Text,    default="tracking"),  # tracking / target_hit / stop_hit / expired
+    Column("created_at",   Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
+market_predictions = Table("market_predictions", metadata,
+    Column("id",              Integer, primary_key=True, autoincrement=True),
+    Column("date",            Text,    nullable=False),   # 예측 날짜 (YYYY-MM-DD)
+    Column("run_type",        Text,    nullable=False),   # pre_market / close_market
+    Column("predicted_dir",   Text),                      # 상승 / 하락 / 중립 (CEO 예측)
+    Column("predicted_prob",  Float),                     # 예측 확률 (%) — "상승 75%"에서 파싱
+    Column("actual_kospi",    Float),                     # 실제 KOSPI 등락률 (%)
+    Column("actual_dir",      Text),                      # 실제 방향 (상승/하락/중립)
+    Column("correct",         Integer),                   # 1=적중, 0=실패, NULL=미검증
+    Column("sector_pred",     Text),                      # 예측 주도 섹터
+    Column("created_at",      Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
 # ── 초기화 ─────────────────────────────────────────────────────────
 
 def init_db():

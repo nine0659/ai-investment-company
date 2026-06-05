@@ -267,6 +267,26 @@ def job_daily_nav():
         logger.warning("NAV 기록 실패 (무시): %s", e)
 
 
+def job_daily_tracker():
+    """평일 16:20 — AI 추천 종목 일별 성과 추적 + 시장 예측 검증."""
+    if not is_krx_trading_day():
+        return
+    try:
+        from services.recommendation_tracker_service import run_daily_tracker
+        from services.market_prediction_service import run_daily_verify
+        from clients.kis_client import KISClient
+        kis = KISClient()
+        stats = run_daily_tracker(kis)
+        verified = run_daily_verify()
+        logger.info(
+            "성과 추적 완료: 처리 %d건 (목표 %d/손절 %d/만료 %d) | 예측 검증 %d건",
+            stats.get("processed", 0), stats.get("target_hit", 0),
+            stats.get("stop_hit", 0), stats.get("expired", 0), verified,
+        )
+    except Exception as e:
+        logger.warning("성과 추적 실패 (무시): %s", e)
+
+
 def _parse_time(time_str: str) -> tuple[int, int]:
     h, m = time_str.split(":")
     return int(h), int(m)
@@ -378,6 +398,17 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 평일 16:10[/cyan] 포트폴리오 NAV 자동 기록")
+
+    # 성과 추적: 평일 16:20 (NAV 기록 후)
+    scheduler.add_job(
+        job_daily_tracker,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=20, timezone=TIMEZONE_STR),
+        id="daily_tracker",
+        name="[16:20] AI 추천 종목 성과 추적 + 시장 예측 검증",
+        misfire_grace_time=600,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 평일 16:20[/cyan] AI 추천 성과 추적 + 예측 검증")
 
 
 def shutdown(signum, frame):

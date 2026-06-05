@@ -51,6 +51,7 @@ main.py
 
   python main.py --check             # 환경변수 검증만
   python main.py --init-db           # DB 초기화
+  python main.py --tracker           # AI 추천 성과 추적 + 시장 예측 검증 (수동)
 """
 import argparse
 import logging
@@ -420,9 +421,38 @@ def main():
         "--order", nargs="+", metavar="CMD",
         help="주문 실행: buy CODE QTY [PRICE] [timeframe] [memo] | sell CODE QTY [PRICE] [memo] | pending | cancel ORDER_NO CODE SIDE QTY [PRICE] | history"
     )
+    parser.add_argument(
+        "--tracker", action="store_true",
+        help="AI 추천 종목 성과 추적 + 시장 예측 검증 (수동 실행)"
+    )
     args = parser.parse_args()
 
     setup_logging(args.log_level)
+
+    # ── 성과 추적 (수동 실행) ───────────────────────────────────
+    if args.tracker:
+        console.print("[bold cyan]📡 AI 추천 성과 추적 시작[/bold cyan]")
+        try:
+            from db.database import init_db
+            init_db()
+            from services.recommendation_tracker_service import run_daily_tracker
+            from services.market_prediction_service import run_daily_verify
+            from clients.kis_client import KISClient
+            try:
+                kis = KISClient()
+            except Exception:
+                kis = None
+            stats = run_daily_tracker(kis)
+            verified = run_daily_verify()
+            console.print(
+                f"[green]✅ 추적 완료: {stats.get('processed',0)}건 처리 "
+                f"(목표달성 {stats.get('target_hit',0)} / 손절 {stats.get('stop_hit',0)} / 만료 {stats.get('expired',0)})"
+                f" | 예측 검증 {verified}건[/green]"
+            )
+        except Exception as e:
+            console.print(f"[red]❌ 추적 실패: {e}[/red]")
+            sys.exit(1)
+        return
 
     # 포트폴리오/워치리스트/주문 명령 (환경변수 없어도 실행 가능)
     if args.portfolio:

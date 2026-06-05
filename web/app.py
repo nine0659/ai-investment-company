@@ -558,3 +558,28 @@ async def performance_api():
         return get_portfolio_performance()
     except Exception as e:
         return {"error": str(e), "trades": [], "stats": {}}
+
+
+@app.get("/api/tracker")
+async def tracker_api(days: int = 30):
+    """AI 추천 종목 일별 성과 추적 데이터."""
+    try:
+        from services.recommendation_tracker_service import (
+            get_tracking_summary, get_active_tracking_list,
+        )
+        summary = get_tracking_summary(days=days)
+        active  = get_active_tracking_list()
+        return {"summary": summary, "active": active}
+    except Exception as e:
+        return {"summary": {"items": [], "total": 0}, "active": [], "error": str(e)}
+
+
+@app.get("/api/predictions")
+async def predictions_api(days: int = 30):
+    """AI 시장 방향 예측 정확도 통계."""
+    try:
+        from services.market_prediction_service import get_prediction_stats
+        stats = get_prediction_stats(days=days)
+        return stats
+    except Exception as e:
+        return {"total": 0, "accuracy": 0.0, "items": [], "error": str(e)}
