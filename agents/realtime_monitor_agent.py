@@ -258,10 +258,72 @@ def run_portfolio_monitor(today: str, kis: KISClient) -> tuple[list[str], list[s
     return stop_alerts, target_alerts
 
 
+# ── AI 추천 종목 장중 손절/목표가 모니터 ─────────────────────────
+
+def run_ai_rec_monitor(today: str, kis: KISClient) -> tuple[list[str], list[str]]:
+    """AI 추천 추적 중인 종목의 장중 손절·목표가 알림 (rec_stop/rec_target 타입으로 중복 방지)."""
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(text("""
+                SELECT rt.rec_id, rt.code, rt.name,
+                       rt.entry_price, rt.stop_price, rt.target_price
+                FROM recommendation_tracking rt
+                INNER JOIN (
+                    SELECT rec_id, MAX(date) AS max_date
+                    FROM recommendation_tracking
+                    GROUP BY rec_id
+                ) latest ON rt.rec_id = latest.rec_id AND rt.date = latest.max_date
+                WHERE rt.status = 'tracking'
+            """)).fetchall()
+    except Exception as e:
+        logger.warning("[모니터] AI추천 조회 실패: %s", e)
+        return [], []
+
+    stop_alerts, target_alerts = [], []
+    for rec_id, code, name, entry_price, stop_price, target_price in rows:
+        try:
+            pd = kis.get_stock_price(code, market=None)
+            price = pd.get("price", 0)
+            if not price:
+                continue
+            ret_pct = (price - entry_price) / entry_price * 100 if entry_price else 0
+
+            if stop_price and price <= stop_price:
+                if not _already_alerted(today, code, "rec_stop"):
+                    msg = (
+                        f"🚨 *[AI추천] 손절선 도달* {name}({code})\n"
+                        f"  현재: {price:,}원  |  손절가: {stop_price:,.0f}원\n"
+                        f"  진입가: {entry_price:,.0f}원  |  수익률: {ret_pct:+.1f}%\n"
+                        f"  → 일중 손절 신호 (16:20 트래커에서 최종 확인)"
+                    )
+                    stop_alerts.append(msg)
+                    _mark_alerted(today, code, "rec_stop")
+                    _save_notification(today, "rec_stop", code, name, msg)
+                    logger.info("[모니터] AI추천 손절선: %s(%s) %+.1f%%", name, code, ret_pct)
+
+            if target_price and price >= target_price:
+                if not _already_alerted(today, code, "rec_target"):
+                    msg = (
+                        f"🎯 *[AI추천] 목표가 도달* {name}({code})\n"
+                        f"  현재: {price:,}원  |  목표가: {target_price:,.0f}원\n"
+                        f"  진입가: {entry_price:,.0f}원  |  수익률: {ret_pct:+.1f}%\n"
+                        f"  → 익절 검토 구간 진입"
+                    )
+                    target_alerts.append(msg)
+                    _mark_alerted(today, code, "rec_target")
+                    _save_notification(today, "rec_target", code, name, msg)
+                    logger.info("[모니터] AI추천 목표가: %s(%s) %+.1f%%", name, code, ret_pct)
+
+        except Exception as e:
+            logger.debug("[모니터] %s AI추천 조회 실패: %s", code, e)
+
+    return stop_alerts, target_alerts
+
+
 # ── 진입점 ────────────────────────────────────────────────────────
 
 def run() -> None:
-    """워치리스트 + 포트폴리오 통합 모니터링 (15분마다 호출)."""
+    """워치리스트 + 포트폴리오 + AI추천 통합 모니터링 (15분마다 호출)."""
     if not _is_market_hours():
         logger.debug("[실시간모니터] 장 외 시간 — 스킵")
         return
@@ -293,3 +355,13 @@ def run() -> None:
             send_message("💰 *목표가 도달 알림*\n\n" + "\n\n".join(target_alerts))
     except Exception as e:
         logger.error("[실시간모니터] 포트폴리오 모니터 실패: %s", e)
+
+    # AI 추천 종목 장중 손절/목표가
+    try:
+        ai_stops, ai_targets = run_ai_rec_monitor(today, kis)
+        if ai_stops:
+            send_message("⚠️ *AI추천 긴급 경고*\n\n" + "\n\n".join(ai_stops))
+        if ai_targets:
+            send_message("💰 *AI추천 목표가 도달*\n\n" + "\n\n".join(ai_targets))
+    except Exception as e:
+        logger.error("[실시간모니터] AI추천 모니터 실패: %s", e)

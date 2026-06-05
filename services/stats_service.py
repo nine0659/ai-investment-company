@@ -4,12 +4,14 @@
 """
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from services.recommendation_service import get_recent_recommendations
 from clients.openai_client import chat
 from clients.telegram_client import send_message
+from db.database import get_conn
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
@@ -92,6 +94,35 @@ def _guess_sector(code: str) -> str:
     return "기타"
 
 
+def _get_latest_tracking(days: int) -> list[dict]:
+    """각 rec_id의 최신 추적 스냅샷 반환 (최근 N일 추천 기준)."""
+    cutoff = (datetime.now(_KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(text("""
+                SELECT rt.rec_id, rt.code, rt.name, rt.rec_date,
+                       rt.entry_price, rt.current_price, rt.return_pct,
+                       rt.max_return, rt.min_return, rt.days_held, rt.status
+                FROM recommendation_tracking rt
+                INNER JOIN (
+                    SELECT rec_id, MAX(date) AS max_date
+                    FROM recommendation_tracking
+                    GROUP BY rec_id
+                ) latest ON rt.rec_id = latest.rec_id AND rt.date = latest.max_date
+                WHERE rt.rec_date >= :cutoff
+                ORDER BY rt.rec_date DESC
+            """), {"cutoff": cutoff}).fetchall()
+        return [
+            {"rec_id": r[0], "code": r[1], "name": r[2], "rec_date": r[3],
+             "entry_price": r[4], "current_price": r[5], "return_pct": r[6],
+             "max_return": r[7], "min_return": r[8], "days_held": r[9], "status": r[10]}
+            for r in rows
+        ]
+    except Exception as e:
+        logger.warning("[통계] tracking 데이터 조회 실패: %s", e)
+        return []
+
+
 def generate_weekly_report(days: int = 7) -> str:
     now  = datetime.now(_KST)
     recs = get_recent_recommendations(days)
@@ -127,6 +158,27 @@ def generate_weekly_report(days: int = 7) -> str:
         for r in recs
     )
 
+    # ── recommendation_tracking 데이터 병합 ──────────────────────────
+    tracking = _get_latest_tracking(days)
+    t_total   = len(tracking)
+    t_target  = sum(1 for t in tracking if t["status"] == "target_hit")
+    t_stop    = sum(1 for t in tracking if t["status"] == "stop_hit")
+    t_active  = sum(1 for t in tracking if t["status"] == "tracking")
+    t_expired = sum(1 for t in tracking if t["status"] == "expired")
+
+    # max_return 기준 최고/최저 구간 (tracking 데이터)
+    track_best  = max(tracking, key=lambda x: x.get("max_return") or -99) if tracking else None
+    track_worst = min(tracking, key=lambda x: x.get("min_return") or 99)  if tracking else None
+
+    tracking_section = ""
+    if t_total:
+        lines_t = [f"  목표달성: {t_target}건 | 손절: {t_stop}건 | 추적중: {t_active}건 | 만료: {t_expired}건"]
+        if track_best and (track_best.get("max_return") or 0) > 0:
+            lines_t.append(f"  최고구간: {track_best['name']} 최대 +{track_best['max_return']:.1f}%")
+        if track_worst and (track_worst.get("min_return") or 0) < 0:
+            lines_t.append(f"  최저구간: {track_worst['name']} 최저 {track_worst['min_return']:.1f}%")
+        tracking_section = "\n━━ AI 추적 현황 ━━\n총 추적: {t_total}건\n".format(t_total=t_total) + "\n".join(lines_t) + "\n\n"
+
     gpt_prompt = f"""지난 {days}일간 투자 추천 성과를 분석하고 개선점을 제시하세요.
 
 성과 데이터:
@@ -136,15 +188,19 @@ def generate_weekly_report(days: int = 7) -> str:
 평균 수익률: {avg_ret:+.2f}%  적중률: {win_rate:.0f}%
 샤프비율(연환산): {sharpe}  소르티노비율: {sortino}  MDD: -{mdd:.1f}%
 
+AI 추적 현황 (recommendation_tracking):
+총 {t_total}건 — 목표달성 {t_target} / 손절 {t_stop} / 추적중 {t_active} / 만료 {t_expired}
+
 샤프비율 해석 기준: >1.0 우수 / 0.5~1.0 보통 / <0.5 개선 필요
 MDD 해석: 낮을수록 손실 관리 우수
 
 1. 이번 주 잘 맞은 조건은?
 2. 틀린 조건은?
 3. 샤프비율·MDD 관점에서 리스크 관리 평가
-4. 다음 주 반영할 개선점 (구체적으로)
+4. 목표달성/손절 비율로 본 리스크리워드 평가
+5. 다음 주 반영할 개선점 (구체적으로)
 """
-    analysis = chat("당신은 투자 성과 분석 전문가입니다.", gpt_prompt, max_tokens=800)
+    analysis = chat("당신은 투자 성과 분석 전문가입니다.", gpt_prompt, max_tokens=900)
 
     report = (
         f"📊 *주간 적중률 리포트* ({now.strftime('%Y.%m.%d')} 기준)\n\n"
@@ -158,9 +214,10 @@ MDD 해석: 낮을수록 손실 관리 우수
         f"📉 최대 드로다운   : -{mdd:.1f}%\n\n"
         f"🏆 최고: {best['name']} {best.get('return_pct', 0):+.1f}%\n"
         f"💔 최저: {worst['name']} {worst.get('return_pct', 0):+.1f}%\n\n"
-        f"━━ 섹터별 적중률 ━━\n"
+        + tracking_section
+        + f"━━ 섹터별 적중률 ━━\n"
         + "\n".join(sector_lines) + "\n\n"
-        f"━━ AI 분석 & 개선점 ━━\n{analysis}"
+        + f"━━ AI 분석 & 개선점 ━━\n{analysis}"
     )
     return report
 

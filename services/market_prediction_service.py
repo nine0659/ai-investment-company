@@ -89,7 +89,7 @@ def save_prediction(date: str, run_type: str, report_text: str) -> bool:
     sector_pred        = _parse_sector(report_text)
 
     if not direction:
-        logger.debug("[Predict] 방향 예측 파싱 실패 (%s %s)", date, run_type)
+        logger.info("[Predict] 방향 예측 키워드 없음 (%s %s) — 저장 스킵", date, run_type)
         return False
 
     try:

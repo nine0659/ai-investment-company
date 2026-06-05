@@ -297,14 +297,15 @@ async def get_orders_api(limit: int = 50):
 @app.get("/api/balance")
 async def get_balance_api():
     """KIS 계좌 잔고."""
+    from config.settings import KIS_IS_REAL
+    mode = "real" if KIS_IS_REAL else "paper"
     try:
         from clients.kis_client import KISClient
-        from config.settings import KIS_IS_REAL
         kis  = KISClient()
         data = kis.get_account_balance()
-        return {**data, "mode": "real" if KIS_IS_REAL else "paper"}
+        return {**data, "mode": mode}
     except Exception as e:
-        return {"error": str(e)}
+        return {"cash": 0, "total_eval": 0, "purchase_amt": 0, "holdings": [], "mode": mode, "error": str(e)}
 
 
 # ── 스트리밍 API ─────────────────────────────────────────────────
