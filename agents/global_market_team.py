@@ -29,7 +29,7 @@ def run(state: InvestmentState) -> InvestmentState:
             f"{_LABELS[k]}: {d['close']} ({d['change_pct']:+.2f}%)"
             for k in _LABELS if (d := data.get(k))
         ]
-        result = chat(_SYSTEM, "글로벌 시장 데이터:\n" + ("\n".join(lines) or "데이터 없음"))
+        result = chat(_SYSTEM, "글로벌 시장 데이터:\n" + ("\n".join(lines) or "데이터 없음"), max_tokens=500)
         state["global_market_report"] = result
         logger.info("[글로벌팀] 완료")
     except Exception as e:

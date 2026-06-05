@@ -10,6 +10,8 @@
   /holdings                         — 보유 종목 현황
   /portfolio                        — 포트폴리오 손익 현황
   /watchlist                        — 관심종목 목록
+  /watchlist add CODE 회사명 [목표가] — 관심종목 추가
+  /watchlist remove CODE            — 관심종목 제거
   /buy CODE QTY [PRICE]             — 매수 주문
   /sell CODE QTY [PRICE]            — 매도 주문
   /orders                           — 미체결 주문 조회
@@ -44,7 +46,17 @@ _ALLOWED = {TELEGRAM_CHAT_ID} if TELEGRAM_CHAT_ID else set()
 def _send(chat_id: str, text: str) -> None:
     url = f"{_BASE}/sendMessage"
     max_len = 4096
-    chunks = [text[i:i + max_len] for i in range(0, len(text), max_len)]
+    # 개행 기준 분할 → 마크다운 포맷 보존
+    chunks: list[str] = []
+    while text:
+        if len(text) <= max_len:
+            chunks.append(text)
+            break
+        split_at = text.rfind('\n', 0, max_len)
+        if split_at <= 0:
+            split_at = max_len
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip('\n')
     for chunk in chunks:
         for attempt in range(3):
             try:
@@ -79,6 +91,20 @@ def _typing(chat_id: str) -> None:
 
 # ── 명령 핸들러 ────────────────────────────────────────────────
 
+def _cmd_start(chat_id: str, _args: str) -> None:
+    _send(
+        chat_id,
+        "👋 *AI 투자 어시스턴트에 오신 것을 환영합니다!*\n\n"
+        "저는 한국 주식 시장을 분석하고 투자 의사결정을 지원하는 AI 매니저입니다.\n\n"
+        "아래 명령어 또는 자유롭게 질문해보세요 😊\n\n"
+        "예시:\n"
+        "• `삼성전자 지금 살만해?`\n"
+        "• `오늘 시장 분위기 어때?`\n"
+        "• `/research 005930`\n\n"
+        "`/help` — 전체 명령어 보기",
+    )
+
+
 def _cmd_help(chat_id: str, _args: str) -> None:
     msg = (
         "🤖 *AI 투자 어시스턴트 명령어*\n\n"
@@ -102,8 +128,11 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/thesis` — 현재 월간 투자관\n"
         "`/strategy` — 현재 주간 전략\n"
         "`/nav` — 포트폴리오 NAV + Alpha 현황\n"
-        "`/report` — 이번 주 성과 요약\n"
-        "`/watchlist` — 관심종목 목록\n\n"
+        "`/report` — 이번 주 성과 요약\n\n"
+        "👀 *관심종목*\n"
+        "`/watchlist` — 관심종목 목록\n"
+        "`/watchlist add CODE 회사명 [목표가]` — 추가\n"
+        "`/watchlist remove CODE` — 제거\n\n"
         "💬 *AI 대화*\n"
         "명령어 없이 자유롭게 질문하세요!\n"
         "예: '삼성전자 지금 살만해?', '오늘 시장 어때?'"
@@ -244,20 +273,69 @@ def _cmd_holdings(chat_id: str, _args: str) -> None:
     _cmd_balance(chat_id, "")  # 잔고에 보유종목 포함
 
 
-def _cmd_watchlist(chat_id: str, _args: str) -> None:
+def _cmd_watchlist(chat_id: str, args: str) -> None:
+    parts = args.strip().split()
+    sub = parts[0].lower() if parts else ""
+
+    # ── /watchlist add CODE 회사명 [목표가] ─────────────────────
+    if sub == "add":
+        if len(parts) < 3:
+            _send(chat_id,
+                "❌ 사용법: `/watchlist add CODE 회사명 [목표가]`\n"
+                "예: `/watchlist add 005930 삼성전자 75000`")
+            return
+        code = parts[1].zfill(6)
+        name = parts[2]
+        price = None
+        if len(parts) > 3:
+            try:
+                price = float(parts[3].replace(",", ""))
+            except ValueError:
+                pass
+        try:
+            from services.watchlist_service import add_to_watchlist
+            add_to_watchlist(code, name, target_entry=price)
+            msg = f"✅ 관심종목 추가: *{name}* ({code})"
+            if price:
+                msg += f"\n목표진입가: {price:,.0f}원"
+            _send(chat_id, msg)
+        except Exception as e:
+            logger.error("[Bot] /watchlist add 오류: %s", e)
+            _send(chat_id, f"❌ 추가 실패: {e}")
+        return
+
+    # ── /watchlist remove CODE ───────────────────────────────────
+    if sub == "remove":
+        if len(parts) < 2:
+            _send(chat_id, "❌ 사용법: `/watchlist remove CODE`\n예: `/watchlist remove 005930`")
+            return
+        code = parts[1].zfill(6)
+        try:
+            from services.watchlist_service import remove_from_watchlist
+            ok = remove_from_watchlist(code)
+            _send(chat_id, f"{'✅ 관심종목 제거 완료' if ok else '❌ 해당 종목 없음'}: `{code}`")
+        except Exception as e:
+            logger.error("[Bot] /watchlist remove 오류: %s", e)
+            _send(chat_id, f"❌ 제거 실패: {e}")
+        return
+
+    # ── 기본: 목록 조회 ──────────────────────────────────────────
     try:
         from services.watchlist_service import get_watchlist
         items = get_watchlist()
         if not items:
-            _send(chat_id, "📋 관심종목이 없습니다.\n`python main.py --watchlist add CODE NAME`으로 추가하세요.")
+            _send(chat_id,
+                "📋 관심종목이 없습니다.\n"
+                "`/watchlist add CODE 회사명 [목표가]`으로 추가하세요.")
             return
         lines = ["📋 *관심종목*\n"]
         for w in items:
-            target_str = f" → 목표 {w['target_price']:,}원" if w.get("target_price") else ""
+            target_str = f" → 목표 {w['target_entry']:,.0f}원" if w.get("target_entry") else ""
             lines.append(
                 f"• {w['name']}({w['code']}){target_str}\n"
                 f"  _{w.get('reason', '')}_ ({w.get('timeframe', '')})"
             )
+        lines.append("\n`/watchlist add CODE 회사명` | `/watchlist remove CODE`")
         _send(chat_id, "\n".join(lines))
     except Exception as e:
         logger.error("[Bot] /watchlist 오류: %s", e)
@@ -606,6 +684,7 @@ def _cmd_ai_chat(chat_id: str, text: str) -> None:
 # ── 라우터 ──────────────────────────────────────────────────────
 
 _HANDLERS: dict = {
+    "/start":     _cmd_start,
     "/help":      _cmd_help,
     "/research":  _cmd_research,
     "/search":    _cmd_search,

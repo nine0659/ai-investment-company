@@ -182,13 +182,14 @@ def get_latest_nav() -> dict | None:
         with get_conn() as conn:
             row = conn.execute(
                 text("""
-                    SELECT date, total_value, total_pnl_pct, nav_pct_ytd, alpha_ytd
+                    SELECT date, total_value, total_pnl_pct, kospi_pct_ytd, nav_pct_ytd, alpha_ytd
                     FROM portfolio_nav ORDER BY date DESC LIMIT 1
                 """)
             ).fetchone()
         if row:
             return {"date": row[0], "total_value": row[1],
-                    "total_pnl_pct": row[2], "nav_pct_ytd": row[3], "alpha_ytd": row[4]}
+                    "total_pnl_pct": row[2], "kospi_pct_ytd": row[3],
+                    "nav_pct_ytd": row[4], "alpha_ytd": row[5]}
     except Exception:
         pass
     return None

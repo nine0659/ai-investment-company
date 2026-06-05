@@ -54,4 +54,15 @@ def send_error_alert(text: str) -> bool:
 def _split(text: str) -> list[str]:
     if len(text) <= _MAX_LEN:
         return [text]
-    return [text[i:i + _MAX_LEN] for i in range(0, len(text), _MAX_LEN)]
+    chunks = []
+    while text:
+        if len(text) <= _MAX_LEN:
+            chunks.append(text)
+            break
+        # 개행 기준으로 분할 → 마크다운 포맷 보존
+        split_at = text.rfind('\n', 0, _MAX_LEN)
+        if split_at <= 0:
+            split_at = _MAX_LEN
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip('\n')
+    return chunks

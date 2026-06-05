@@ -81,7 +81,7 @@ def run(state: InvestmentState) -> InvestmentState:
             header_lines.append(freshness_warning)
         header = ("\n".join(header_lines) + "\n\n") if header_lines else ""
 
-        result = chat(_SYSTEM, header + "현재 시장 데이터:\n" + "\n".join(lines))
+        result = chat(_SYSTEM, header + "현재 시장 데이터:\n" + "\n".join(lines), max_tokens=800)
         state["futures_report"] = result
         logger.info("[선물팀] 완료")
     except Exception as e:

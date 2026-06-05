@@ -881,7 +881,7 @@
               <div class="bg-slate-800 rounded-xl p-4">
                 <div class="text-xs text-slate-400 mb-1">KOSPI 연초대비</div>
                 <div class="font-bold text-sm text-slate-300"
-                  x-text="navData.total_pnl_pct != null ? ((navData.total_pnl_pct>=0?'+':'')+navData.total_pnl_pct.toFixed(2)+'%') : '-'"></div>
+                  x-text="navData.kospi_pct_ytd != null ? ((navData.kospi_pct_ytd>=0?'+':'')+navData.kospi_pct_ytd.toFixed(2)+'%') : '-'"></div>
               </div>
               <div class="bg-slate-800 rounded-xl p-4">
                 <div class="text-xs text-slate-400 mb-1">Alpha (초과수익)</div>
@@ -891,6 +891,16 @@
               </div>
             </div>
           </template>
+          <!-- NAV 수익률 차트 (포트폴리오 vs KOSPI) -->
+          <template x-if="navHistory.length >= 2">
+            <div class="bg-slate-800 rounded-xl p-4">
+              <div class="text-sm font-semibold mb-3">수익률 추이 (포트폴리오 vs KOSPI)</div>
+              <div class="relative" style="height:220px">
+                <canvas id="navChart"></canvas>
+              </div>
+            </div>
+          </template>
+
           <!-- NAV 이력 테이블 -->
           <template x-if="navHistory.length > 0">
             <div class="bg-slate-800 rounded-xl overflow-hidden">
@@ -1360,7 +1370,7 @@ function app() {
     perfLoading: false, perfStats: null, perfTrades: [],
 
     // Chart instances
-    _sectorChart: null, _tfChart: null, _btChart: null,
+    _sectorChart: null, _tfChart: null, _btChart: null, _navChart: null,
 
     init() {
       this.updateClock();
@@ -1723,7 +1733,69 @@ function app() {
         const d = await r.json();
         this.navData    = d.latest || null;
         this.navHistory = d.history || [];
+        if (this.navHistory.length >= 2) {
+          this.$nextTick(() => this._renderNavChart());
+        }
       } finally { this.navLoading = false; }
+    },
+
+    _renderNavChart() {
+      const ctx = document.getElementById('navChart');
+      if (!ctx) return;
+      if (this._navChart) { this._navChart.destroy(); this._navChart = null; }
+      const labels = this.navHistory.map(n => n.date.slice(5)); // MM-DD
+      const portData  = this.navHistory.map(n => n.nav_pct_ytd ?? 0);
+      const kospiData = this.navHistory.map(n => n.kospi_pct_ytd ?? 0);
+      this._navChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '포트폴리오 YTD%',
+              data: portData,
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,0.08)',
+              borderWidth: 2,
+              pointRadius: 2,
+              tension: 0.3,
+              fill: true,
+            },
+            {
+              label: 'KOSPI YTD%',
+              data: kospiData,
+              borderColor: '#94a3b8',
+              backgroundColor: 'transparent',
+              borderWidth: 1.5,
+              borderDash: [4, 3],
+              pointRadius: 0,
+              tension: 0.3,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y.toFixed(2)}%`
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#1e293b' } },
+            y: {
+              ticks: {
+                color: '#64748b', font: { size: 10 },
+                callback: v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%'
+              },
+              grid: { color: '#1e293b' },
+            },
+          },
+        },
+      });
     },
 
     // ── Attribution ───────────────────────────────────────────
