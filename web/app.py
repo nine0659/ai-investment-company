@@ -592,12 +592,19 @@ _run_lock = threading.Lock()
 _run_status: dict = {"running": False, "last": None, "result": None}
 
 
+_VALID_RUN_TYPES = ("pre", "close", "tracker", "thesis", "strategy", "attribution", "nav")
+
+
 @app.post("/api/admin/run")
 @app.get("/api/admin/run")
 async def admin_run(type: str = "pre", _: None = Depends(_check_auth)):
-    """브리핑 수동 실행 (type=pre|close|tracker).
-    이미 실행 중이면 409, 완료 시까지 기다리지 않고 202 즉시 반환.
+    """수동 실행 트리거.
+    type: pre|close|tracker|thesis|strategy|attribution|nav
+    이미 실행 중이면 409, 202 즉시 반환 후 백그라운드 실행.
     """
+    if type not in _VALID_RUN_TYPES:
+        return JSONResponse({"ok": False, "msg": f"지원하지 않는 type. 가능: {_VALID_RUN_TYPES}"}, status_code=400)
+
     if not _run_lock.acquire(blocking=False):
         return JSONResponse({"ok": False, "msg": "이미 실행 중입니다"}, status_code=409)
 
@@ -607,7 +614,6 @@ async def admin_run(type: str = "pre", _: None = Depends(_check_auth)):
     def _worker():
         try:
             from datetime import datetime as dt
-            from zoneinfo import ZoneInfo
             kst  = ZoneInfo("Asia/Seoul")
             now  = dt.now(kst)
             date = now.strftime("%Y-%m-%d")
@@ -626,14 +632,35 @@ async def admin_run(type: str = "pre", _: None = Depends(_check_auth)):
 
             elif type in ("pre", "close"):
                 from config.settings import RUN_TYPE_PRE, RUN_TYPE_CLOSE
+                from graph.investment_graph import run_pipeline
                 run_type = RUN_TYPE_PRE if type == "pre" else RUN_TYPE_CLOSE
-                from investment_graph import build_graph
-                graph = build_graph()
-                graph.invoke({"date": date, "run_type": run_type, "errors": []})
+                run_pipeline(run_type)
                 _run_status["result"] = f"{type} 브리핑 완료"
 
-            else:
-                _run_status["result"] = f"알 수 없는 type: {type}"
+            elif type == "thesis":
+                from agents.thesis_agent import run_thesis
+                run_thesis()
+                _run_status["result"] = "월간 투자관 수립 완료"
+
+            elif type == "strategy":
+                from agents.strategy_agent import run_strategy
+                run_strategy()
+                _run_status["result"] = "주간 투자전략 완료"
+
+            elif type == "attribution":
+                from agents.attribution_agent import run_attribution
+                run_attribution()
+                _run_status["result"] = "주간 귀인분석 완료"
+
+            elif type == "nav":
+                from services.nav_service import record_nav
+                try:
+                    from clients.kis_client import KISClient
+                    kis = KISClient()
+                except Exception:
+                    kis = None
+                nav = record_nav(kis)
+                _run_status["result"] = f"NAV 기록 완료: {nav}"
 
             _run_status["last"] = dt.now(kst).strftime("%Y-%m-%d %H:%M:%S")
         except Exception as e:
