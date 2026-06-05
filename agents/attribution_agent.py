@@ -10,7 +10,7 @@ agents/attribution_agent.py
   2. 섹터 선택 기여 — 어떤 섹터가 수익/손실을 만들었는가?
   3. 종목 선택 기여 — 같은 섹터 내에서 종목 선택이 옳았는가?
   4. 타이밍 기여 — 진입/청산 타이밍이 적절했는가?
-  5. 테제 정합도 — 이번 주 추천이 현재 투자 테제와 얼마나 일치했는가?
+  5. 투자관 부합도 — 이번 주 추천이 현재 투자관와 얼마나 일치했는가?
 """
 import logging
 from datetime import datetime, timedelta
@@ -52,16 +52,16 @@ _SYSTEM = """당신은 전문 포트폴리오 성과 분석가다.
   - 청산 타이밍이 좋았는가? (청산 후 추가 상승 놓쳤는가)
   - 손절 실행 여부 및 적절성
 
-⑤ 테제 정합도
-  - 이번 주 추천 종목들이 현재 투자 테제(섹터 방향성)와 얼마나 일치했는가?
-  - 테제에 반한 추천이 있었는가? 결과는?
+⑤ 투자관 부합도
+  - 이번 주 추천 종목들이 현재 투자관(섹터 방향성)와 얼마나 일치했는가?
+  - 투자관에 반한 추천이 있었는가? 결과는?
 
 ━━ [출력 형식] ━━
 한국어 텔레그램 텍스트. 수치 필수. 막연한 평가 금지.
 "좋았다/나빴다" 대신 구체적 수치와 원인을 제시하라.
 
 🏆 이번 주 성과 종합 점수: X/10
-  매크로X | 섹터X | 종목X | 타이밍X | 테제정합X
+  매크로X | 섹터X | 종목X | 타이밍X | 투자관부합X
 
 [각 항목 상세 분석]
 
@@ -131,7 +131,7 @@ def run_attribution():
     except Exception as e:
         logger.debug("[귀인분석] 포트폴리오 조회 실패: %s", e)
 
-    # 투자 테제 (현재 활성 테제의 방향과 이번 주 추천 비교용)
+    # 투자관 (현재 활성 투자관의 방향과 이번 주 추천 비교용)
     thesis_summary = ""
     try:
         from services.thesis_service import get_thesis_ceo_summary
@@ -166,8 +166,8 @@ KOSPI 주간 등락: {kospi_chg:+.2f}%
 [현재 보유 포지션]
 {portfolio_text}
 
-[현재 투자 테제 (정합도 평가 기준)]
-{thesis_summary or '테제 미수립 (평가 불가)'}
+[현재 투자관 (정합도 평가 기준)]
+{thesis_summary or '투자관 미수립 (평가 불가)'}
 
 위 데이터를 바탕으로 4가지 귀인 분석과 다음 주 개선 방향을 도출하라."""
 
@@ -194,7 +194,7 @@ KOSPI 주간 등락: {kospi_chg:+.2f}%
 
     header = (
         f"📊 *주간 성과 귀인 분석* ({now.strftime('%Y.%m.%d')} 기준)\n"
-        f"매크로 판단·섹터 선택·종목 Alpha·타이밍·테제 정합도\n\n"
+        f"매크로 판단·섹터 선택·종목 Alpha·타이밍·투자관 부합도\n\n"
     )
     full_msg = header + report
     if nav_section:
@@ -204,7 +204,7 @@ KOSPI 주간 등락: {kospi_chg:+.2f}%
 
 
 def _save_attribution(week_end: str, report: str) -> None:
-    """귀인 분석 결과를 DB에 저장 (테제 학습 루프용)."""
+    """귀인 분석 결과를 DB에 저장 (투자관 학습 루프용)."""
     import re
     from db.database import get_conn
     from sqlalchemy import text
@@ -245,7 +245,7 @@ def _save_attribution(week_end: str, report: str) -> None:
 
 
 def get_recent_learnings(weeks: int = 2) -> str:
-    """최근 N주 핵심 교훈 반환 (다음 테제 수립 시 참조용)."""
+    """최근 N주 핵심 교훈 반환 (다음 투자관 수립 시 참조용)."""
     try:
         from datetime import timedelta
         from db.database import get_conn

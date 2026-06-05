@@ -18,7 +18,7 @@ class InvestmentState(TypedDict):
     kr_index_realtime: dict[str, Any]  # 장중 KOSPI·KOSDAQ 실시간 현재 지수
     consensus_data: dict[str, Any]   # 종목별 컨센서스 목표주가 데이터
     weekly_strategy_summary: str     # 최신 주간 전략 요약 (CEO 컨텍스트 주입용)
-    investment_thesis: str           # 현재 월간 투자 테제 요약 (CEO 최우선 컨텍스트)
+    investment_thesis: str           # 현재 월간 투자관 요약 (CEO 최우선 컨텍스트)
 
     futures_report: str
     us_market_report: str

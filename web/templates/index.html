@@ -780,19 +780,19 @@
         </div>
       </div>
 
-      <!-- ── 📜 투자 테제 ─────────────────────────────────── -->
+      <!-- ── 📜 투자관 ─────────────────────────────────── -->
       <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='thesis'">
         <div class="max-w-4xl mx-auto space-y-5">
           <div class="flex items-center justify-between">
-            <h2 class="text-lg font-bold">📜 월간 투자 테제</h2>
+            <h2 class="text-lg font-bold">📜 월간 투자관</h2>
             <button @click="loadThesis()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
           </div>
           <template x-if="thesisLoading">
-            <div class="text-slate-400 text-sm text-center py-8">테제 로딩 중...</div>
+            <div class="text-slate-400 text-sm text-center py-8">투자관 로딩 중...</div>
           </template>
           <template x-if="!thesisLoading && !thesis">
             <div class="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-sm">
-              <p class="mb-2">투자 테제가 없습니다.</p>
+              <p class="mb-2">투자관이 없습니다.</p>
               <p class="text-xs">터미널에서 실행: <code class="bg-slate-700 px-2 py-0.5 rounded">python main.py --type thesis</code></p>
             </div>
           </template>
@@ -832,16 +832,16 @@
                   <p class="text-sm text-slate-300" x-text="thesis.outlook_6m"></p>
                 </div>
               </template>
-              <!-- 테제 무효 조건 -->
+              <!-- 투자관 무효 조건 -->
               <template x-if="thesis.invalidation">
                 <div class="bg-red-900/30 border border-red-700/40 rounded-xl p-5">
-                  <div class="text-sm font-semibold mb-2 text-red-300">⛔ 테제 무효 조건 (이 신호 발생 시 즉시 재검토)</div>
+                  <div class="text-sm font-semibold mb-2 text-red-300">⛔ 투자관 무효 조건 (이 신호 발생 시 즉시 재검토)</div>
                   <p class="text-sm text-red-200 whitespace-pre-wrap" x-text="thesis.invalidation"></p>
                 </div>
               </template>
               <!-- 전체 리포트 -->
               <details class="bg-slate-800 rounded-xl">
-                <summary class="p-4 cursor-pointer text-sm font-semibold text-slate-300 hover:text-white">전체 테제 리포트 보기</summary>
+                <summary class="p-4 cursor-pointer text-sm font-semibold text-slate-300 hover:text-white">투자관 전체 리포트 보기</summary>
                 <div class="px-5 pb-5 prose-chat text-sm whitespace-pre-wrap text-slate-300"
                   x-text="thesis.full_report || ''"></div>
               </details>
@@ -950,7 +950,7 @@
               </div>
               <!-- 5축 점수 바 -->
               <div class="grid grid-cols-5 gap-2 text-xs text-center">
-                <template x-for="[label, score] in [['매크로',a.macro],['섹터',a.sector],['종목',a.stock],['타이밍',a.timing],['테제',a.thesis]]" :key="label">
+                <template x-for="[label, score] in [['매크로',a.macro],['섹터',a.sector],['종목',a.stock],['타이밍',a.timing],['투자관',a.thesis]]" :key="label">
                   <div>
                     <div class="text-slate-400 mb-1" x-text="label"></div>
                     <div class="progress-bar">
@@ -1226,7 +1226,7 @@ function app() {
       { id: 'portfolio',   icon: '📊', label: '포트폴리오' },
       { id: 'watchlist',   icon: '📋', label: '워치리스트' },
       { id: 'briefing',    icon: '📰', label: '브리핑' },
-      { id: 'thesis',      icon: '📜', label: '투자테제' },
+      { id: 'thesis',      icon: '📜', label: '투자관' },
       { id: 'nav',         icon: '📈', label: '자산성장' },
       { id: 'attribution', icon: '🎯', label: '귀인분석' },
       { id: 'backtest',    icon: '🔬', label: '백테스트' },

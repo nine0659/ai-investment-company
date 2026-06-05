@@ -10,8 +10,8 @@ main.py
   python main.py --type midterm      # 중기 분석 (1~6개월)
   python main.py --type longterm     # 장기 분석 (1년+)
   python main.py --type strategy     # 주간 종합 투자전략 (단기/중기/장기 통합)
-  python main.py --type thesis       # 월간 투자 테제 수립 (경기사이클·6-12개월 전망·자산배분)
-  python main.py --type attribution  # 주간 성과 귀인 분석 (매크로·섹터·종목·타이밍·테제정합)
+  python main.py --type thesis       # 월간 투자관 수립 (경기사이클·6-12개월 전망·자산배분)
+  python main.py --type attribution  # 주간 성과 귀인 분석 (매크로·섹터·종목·타이밍·투자관부합)
   python main.py --type dart         # DART 공시 알림 (즉시)
   python main.py --type price-alert  # 가격 알림 (즉시)
   python main.py --type weekly       # 주간 적중률 리포트
@@ -491,15 +491,15 @@ def main():
     except Exception as e:
         logger.warning("DB 초기화 경고: %s", e)
 
-    # ── 투자 테제 / 귀인 분석 (독립 실행) ─────────────────────
+    # ── 투자관 / 귀인 분석 (독립 실행) ─────────────────────
     if args.type == "thesis":
-        console.print("[bold cyan]📜 월간 투자 테제 수립 시작[/bold cyan]")
+        console.print("[bold cyan]📜 월간 투자관 수립 시작[/bold cyan]")
         from agents.thesis_agent import run_thesis
         try:
             run_thesis()
-            console.print("[green]✅ 투자 테제 수립 완료[/green]")
+            console.print("[green]✅ 투자관 수립 완료[/green]")
         except Exception as e:
-            console.print(f"[red]❌ 투자 테제 실패: {e}[/red]")
+            console.print(f"[red]❌ 투자관 실패: {e}[/red]")
             sys.exit(1)
         return
 

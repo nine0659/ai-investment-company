@@ -15,7 +15,7 @@
   /orders                           — 미체결 주문 조회
   /cancel ORDER_NO CODE SIDE QTY    — 주문 취소
   /history                          — 최근 주문 이력
-  /thesis                           — 현재 월간 투자 테제
+  /thesis                           — 현재 월간 투자관
   /strategy                         — 현재 주간 전략
   /help                             — 명령어 안내
   [자유 텍스트]                     — AI 투자 어드바이저 대화
@@ -98,8 +98,8 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/orders` — 미체결 주문 목록\n"
         "`/cancel ORDER_NO CODE SIDE QTY` — 주문 취소\n"
         "`/history` — 최근 주문 이력\n\n"
-        "📜 *전략·테제*\n"
-        "`/thesis` — 현재 월간 투자 테제\n"
+        "📜 *전략·투자관*\n"
+        "`/thesis` — 현재 월간 투자관\n"
         "`/strategy` — 현재 주간 전략\n"
         "`/watchlist` — 관심종목 목록\n\n"
         "💬 *AI 대화*\n"
@@ -458,23 +458,23 @@ def _cmd_history(chat_id: str, _args: str) -> None:
 
 
 def _cmd_thesis(chat_id: str, _args: str) -> None:
-    """현재 월간 투자 테제 조회."""
+    """현재 월간 투자관 조회."""
     try:
         from services.thesis_service import get_active_thesis
         thesis = get_active_thesis()
         if not thesis:
             _send(chat_id,
-                  "📜 저장된 투자 테제가 없습니다.\n"
+                  "📜 저장된 투자관가 없습니다.\n"
                   "`python main.py --type thesis` 로 생성하세요.")
             return
         date = thesis.get("date", "?")
         cycle = thesis.get("cycle_stage", "")
         body = thesis.get("ceo_summary") or thesis.get("full_report", "")
-        header = f"📜 *월간 투자 테제* ({date})\n경기 사이클: {cycle}\n\n"
+        header = f"📜 *월간 투자관* ({date})\n경기 사이클: {cycle}\n\n"
         _send(chat_id, header + body[:3000])
     except Exception as e:
         logger.error("[Bot] /thesis 오류: %s", e)
-        _send(chat_id, f"❌ 투자 테제 조회 오류: {e}")
+        _send(chat_id, f"❌ 투자관 조회 오류: {e}")
 
 
 def _cmd_strategy(chat_id: str, _args: str) -> None:
@@ -497,13 +497,13 @@ def _cmd_ai_chat(chat_id: str, text: str) -> None:
     """자유형식 텍스트 → AI 투자 어드바이저 응답."""
     _typing(chat_id)
 
-    # 현재 테제·전략 컨텍스트 수집
+    # 현재 투자관·전략 컨텍스트 수집
     context_parts = []
     try:
         from services.thesis_service import get_thesis_ceo_summary
         thesis = get_thesis_ceo_summary()
         if thesis:
-            context_parts.append(f"[현재 투자 테제]\n{thesis}")
+            context_parts.append(f"[현재 투자관]\n{thesis}")
     except Exception:
         pass
 

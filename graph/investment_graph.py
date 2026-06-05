@@ -144,16 +144,16 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.warning("[데이터수집] 한국 지수 실시간 실패: %s", e)
         state["kr_index_realtime"] = {}
 
-    # ── 월간 투자 테제 로드 (CEO 최우선 컨텍스트 — 모든 판단의 헌법) ──────
+    # ── 월간 투자관 로드 (CEO 최우선 컨텍스트 — 모든 판단의 헌법) ──────
     try:
         from services.thesis_service import get_thesis_ceo_summary
         state["investment_thesis"] = get_thesis_ceo_summary()
         if state["investment_thesis"]:
-            logger.info("[데이터수집] 투자 테제 로드 완료")
+            logger.info("[데이터수집] 투자관 로드 완료")
         else:
-            logger.debug("[데이터수집] 투자 테제 없음 (아직 생성 전)")
+            logger.debug("[데이터수집] 투자관 없음 (아직 생성 전)")
     except Exception as e:
-        logger.debug("[데이터수집] 투자 테제 로드 실패 (무시): %s", e)
+        logger.debug("[데이터수집] 투자관 로드 실패 (무시): %s", e)
         state["investment_thesis"] = ""
 
     # ── 최신 주간 전략 요약 로드 (CEO 컨텍스트 주입용) ──────────────────

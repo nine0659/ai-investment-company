@@ -1,9 +1,9 @@
 """
 services/thesis_service.py
-월간 투자 테제(Investment Thesis) 저장 및 조회 서비스
+월간 투자관(Investment Thesis) 저장 및 조회 서비스
 
 저장:  save_thesis(date, fields...)
-조회:  get_active_thesis()         → 현재 활성 테제 전체 row
+조회:  get_active_thesis()         → 현재 활성 투자관 전체 row
 조회:  get_thesis_ceo_summary()    → CEO 일일 브리핑 주입용 압축 요약
 """
 import json
@@ -17,7 +17,7 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
-# 테제 유효 기간 — 최대 45일 전까지 허용 (월간 실행이 늦어져도 이전 테제 활용)
+# 투자관 유효 기간 — 최대 45일 전까지 허용 (월간 실행이 늦어져도 이전 투자관 활용)
 _THESIS_MAX_AGE_DAYS = 45
 
 
@@ -60,13 +60,13 @@ def save_thesis(
                     "inv": invalidation, "full": full_report, "ceo": ceo_summary,
                 },
             )
-        logger.info("[테제서비스] %s 저장 완료", date)
+        logger.info("[투자관서비스] %s 저장 완료", date)
     except Exception as e:
-        logger.warning("[테제서비스] 저장 실패: %s", e)
+        logger.warning("[투자관서비스] 저장 실패: %s", e)
 
 
 def get_active_thesis() -> dict | None:
-    """현재 활성 투자 테제 반환. 없으면 None."""
+    """현재 활성 투자관 반환. 없으면 None."""
     try:
         cutoff = (datetime.now(_KST) - timedelta(days=_THESIS_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
         with get_conn() as conn:
@@ -97,15 +97,15 @@ def get_active_thesis() -> dict | None:
                 result[field] = []
         return result
     except Exception as e:
-        logger.debug("[테제서비스] 조회 실패: %s", e)
+        logger.debug("[투자관서비스] 조회 실패: %s", e)
         return None
 
 
 def get_thesis_ceo_summary() -> str:
-    """CEO 일일 브리핑 주입용 투자 테제 압축 요약. 없으면 빈 문자열."""
+    """CEO 일일 브리핑 주입용 투자관 압축 요약. 없으면 빈 문자열."""
     thesis = get_active_thesis()
     if not thesis or not thesis.get("ceo_summary"):
         return ""
     date = thesis["date"]
     summary = thesis["ceo_summary"]
-    return f"[{date} 투자테제]\n{summary}"
+    return f"[{date} 투자관]\n{summary}"

@@ -223,12 +223,12 @@ async def get_price_api(code: str):
 
 @app.get("/api/thesis")
 async def get_thesis_api():
-    """현재 활성 투자 테제."""
+    """현재 활성 투자관."""
     try:
         from services.thesis_service import get_active_thesis
         thesis = get_active_thesis()
         if not thesis:
-            return {"thesis": None, "message": "투자 테제 없음 — python main.py --type thesis 실행 필요"}
+            return {"thesis": None, "message": "투자관 없음 — python main.py --type thesis 실행 필요"}
         return {"thesis": thesis}
     except Exception as e:
         return {"thesis": None, "error": str(e)}

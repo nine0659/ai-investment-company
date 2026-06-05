@@ -69,19 +69,19 @@ def run() -> None:
     except Exception as e:
         logger.debug("[긴급모니터] 포트폴리오 급락 체크 실패: %s", e)
 
-    # 5. 투자 테제 무효조건 감지 (1시간마다 1회 — 중복 발송 방지)
+    # 5. 투자관 무효조건 감지 (1시간마다 1회 — 중복 발송 방지)
     now_dt = datetime.now(_KST)
     if now_dt.minute < 5:  # 매 시간 :00~:04 에만 실행
         try:
             _check_thesis_invalidation(market_data, news_data)
         except Exception as e:
-            logger.debug("[긴급모니터] 테제 무효조건 체크 실패: %s", e)
+            logger.debug("[긴급모니터] 투자관 무효조건 체크 실패: %s", e)
 
     logger.debug("[긴급모니터] 완료 — %s", now_str)
 
 
 def _check_thesis_invalidation(market_data: dict, news_data: dict) -> None:
-    """현재 투자 테제의 무효조건이 발동됐는지 LLM으로 판단, 발동 시 즉시 알림."""
+    """현재 투자관의 무효조건이 발동됐는지 LLM으로 판단, 발동 시 즉시 알림."""
     from services.thesis_service import get_active_thesis
     from services.alert_service import send_alert, _already_sent, _mark_sent, TYPE_RISK
     from clients.openai_client import chat
@@ -105,10 +105,10 @@ def _check_thesis_invalidation(market_data: dict, news_data: dict) -> None:
         f" | 미국10Y금리: {_v('us10y')}%"
     )
 
-    prompt = f"""현재 시장 상황과 투자 테제의 무효조건을 비교하여,
+    prompt = f"""현재 시장 상황과 투자관의 무효조건을 비교하여,
 무효조건이 발동됐는지 판단하라.
 
-[투자 테제 무효조건]
+[투자관 무효조건]
 {thesis['invalidation']}
 
 [현재 시장 수준]
@@ -127,17 +127,17 @@ YES인 경우 어떤 조건이 어떻게 발동됐는지 2~3줄로 설명하라.
             detail = result[4:].strip() if len(result) > 4 else result
             send_alert(
                 TYPE_RISK,
-                "🔴 투자 테제 무효조건 감지",
-                f"현재 투자 테제의 무효조건이 발동되었습니다.\n\n"
+                "🔴 투자관 무효조건 감지",
+                f"현재 투자관의 무효조건이 발동되었습니다.\n\n"
                 f"{detail}\n\n"
-                f"📋 테제 재검토가 필요합니다.\n"
-                f"→ python main.py --type thesis 로 새 테제를 수립하세요.",
-                code="thesis", name="투자테제",
+                f"📋 투자관 재검토가 필요합니다.\n"
+                f"→ python main.py --type thesis 로 새 투자관을 수립하세요.",
+                code="thesis", name="투자관",
             )
             _mark_sent(today, "thesis", alert_key)
-            logger.warning("[긴급모니터] 투자 테제 무효조건 발동: %s", detail[:100])
+            logger.warning("[긴급모니터] 투자관 무효조건 발동: %s", detail[:100])
     except Exception as e:
-        logger.debug("[긴급모니터] 테제 무효조건 LLM 판단 실패: %s", e)
+        logger.debug("[긴급모니터] 투자관 무효조건 LLM 판단 실패: %s", e)
 
 
 def _fmt_news_headlines(news_data: dict) -> str:

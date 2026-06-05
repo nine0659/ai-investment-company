@@ -179,22 +179,22 @@ def job_emergency():
 
 
 def job_monthly_thesis():
-    """매월 첫째 주 월요일 19:00 — 월간 투자 테제 수립 (모든 일일 판단의 헌법).
+    """매월 첫째 주 월요일 19:00 — 월간 투자관 수립 (모든 일일 판단의 헌법).
     APScheduler는 첫째 월요일을 직접 표현하기 어려우므로 내부에서 날짜 확인.
     """
     today = datetime.now(_KST)
     if not (1 <= today.day <= 7 and today.weekday() == 0):
-        logger.debug("월간 테제 스킵 — 첫째 주 월요일 아님 (%s)", today.strftime("%Y-%m-%d"))
+        logger.debug("월간 투자관 스킵 — 첫째 주 월요일 아님 (%s)", today.strftime("%Y-%m-%d"))
         return
     from agents.thesis_agent import run_thesis
     try:
-        logger.info("월간 투자 테제 수립 시작")
+        logger.info("월간 투자관 수립 시작")
         run_thesis()
-        logger.info("월간 투자 테제 수립 완료")
+        logger.info("월간 투자관 수립 완료")
     except Exception as e:
-        logger.error("월간 투자 테제 실패: %s", e)
+        logger.error("월간 투자관 실패: %s", e)
         try:
-            send_error_alert(f"월간 투자 테제 실패: {str(e)[:200]}")
+            send_error_alert(f"월간 투자관 실패: {str(e)[:200]}")
         except Exception:
             pass
 
@@ -215,7 +215,7 @@ def job_weekly_strategy():
 
 
 def job_weekly_attribution():
-    """매주 일요일 19:00 — 주간 성과 귀인 분석 (매크로·섹터·종목·타이밍·테제정합)."""
+    """매주 일요일 19:00 — 주간 성과 귀인 분석 (매크로·섹터·종목·타이밍·투자관부합)."""
     from agents.attribution_agent import run_attribution
     try:
         logger.info("주간 귀인 분석 시작")
@@ -324,16 +324,16 @@ def setup_jobs():
     )
     console.print("  [cyan]⏰ 09:00-15:30 매 5분[/cyan] 긴급 알림 모니터")
 
-    # 월간 투자 테제: 매월 첫째 주 월요일 19:00 (job 내부에서 날짜 재확인)
+    # 월간 투자관: 매월 첫째 주 월요일 19:00 (job 내부에서 날짜 재확인)
     scheduler.add_job(
         job_monthly_thesis,
         CronTrigger(day_of_week="mon", hour=19, minute=0, timezone=TIMEZONE_STR),
         id="monthly_thesis",
-        name="[월1월 19:00] 월간 투자 테제 수립",
+        name="[월1월 19:00] 월간 투자관 수립",
         misfire_grace_time=3600,
         coalesce=True,
     )
-    console.print("  [cyan]⏰ 매월 첫째 월요일 19:00[/cyan] 월간 투자 테제 수립")
+    console.print("  [cyan]⏰ 매월 첫째 월요일 19:00[/cyan] 월간 투자관 수립")
 
     # 주간 종합 투자전략: 매주 수요일 20:00
     scheduler.add_job(
