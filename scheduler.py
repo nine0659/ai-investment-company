@@ -252,15 +252,29 @@ def job_monthly_longterm():
             pass
 
 
+_kis_client_cache: object | None = None
+
+
+def _get_kis() -> object | None:
+    """KISClient 캐시 반환 — 장마감 후 잡들이 토큰을 공유해 재발급 최소화."""
+    global _kis_client_cache
+    try:
+        from clients.kis_client import KISClient
+        if _kis_client_cache is None:
+            _kis_client_cache = KISClient()
+        return _kis_client_cache
+    except Exception as e:
+        logger.warning("KIS 클라이언트 생성 실패: %s", e)
+        return None
+
+
 def job_daily_nav():
     """평일 16:10 — 장마감 후 포트폴리오 NAV 자동 기록."""
     if not is_krx_trading_day():
         return
     try:
         from services.nav_service import record_nav
-        from clients.kis_client import KISClient
-        kis = KISClient()
-        nav = record_nav(kis)
+        nav = record_nav(_get_kis())
         if nav:
             logger.info("NAV 기록 완료: 총자산 %s원", f"{nav.get('total_value', 0):,}")
     except Exception as e:
@@ -274,9 +288,7 @@ def job_daily_tracker():
     try:
         from services.recommendation_tracker_service import run_daily_tracker
         from services.market_prediction_service import run_daily_verify
-        from clients.kis_client import KISClient
-        kis = KISClient()
-        stats = run_daily_tracker(kis)
+        stats    = run_daily_tracker(_get_kis())
         verified = run_daily_verify()
         logger.info(
             "성과 추적 완료: 처리 %d건 (목표 %d/손절 %d/만료 %d) | 예측 검증 %d건",

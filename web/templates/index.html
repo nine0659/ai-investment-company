@@ -850,6 +850,55 @@
         </div>
       </div>
 
+      <!-- ── 🗓 주간 전략 ──────────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='strategy'">
+        <div class="max-w-4xl mx-auto space-y-5">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">🗓 주간 종합 투자전략</h2>
+            <button @click="loadStrategy()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+
+          <template x-if="strategyLoading">
+            <div class="text-slate-400 text-sm text-center py-8">전략 리포트 로딩 중...</div>
+          </template>
+
+          <template x-if="!strategyLoading && strategyData && strategyData.report">
+            <div class="space-y-4">
+              <!-- 요약 카드 -->
+              <template x-if="strategyData.summary">
+                <div class="bg-blue-900/30 border border-blue-700/40 rounded-xl p-4">
+                  <div class="text-xs text-blue-400 font-semibold mb-2">📌 CEO 브리핑 주입 요약</div>
+                  <div class="text-sm text-slate-300 whitespace-pre-wrap" x-text="strategyData.summary"></div>
+                </div>
+              </template>
+
+              <!-- 전체 리포트 -->
+              <div class="bg-slate-800 rounded-xl overflow-hidden">
+                <details open>
+                  <summary class="px-5 py-4 cursor-pointer flex items-center gap-2 hover:bg-slate-700/40 select-none">
+                    <span class="text-sm font-semibold">📋 전체 주간 전략 리포트</span>
+                    <span class="ml-auto text-xs text-slate-500">클릭하여 접기/펼치기</span>
+                  </summary>
+                  <div class="px-5 pb-5 text-sm whitespace-pre-wrap text-slate-300 leading-relaxed"
+                    x-text="strategyData.report"></div>
+                </details>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="!strategyLoading && (!strategyData || !strategyData.report)">
+            <div class="bg-slate-800 rounded-xl p-8 text-center text-slate-400">
+              <div class="text-4xl mb-3">🗓</div>
+              <div class="text-sm">주간 전략 리포트가 없습니다.</div>
+              <div class="text-xs text-slate-500 mt-2">
+                매주 수요일 20:00 자동 실행됩니다.<br>
+                수동 실행: <code class="bg-slate-700 px-2 py-0.5 rounded">python main.py --type strategy</code>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <!-- ── 📈 자산 성장 (NAV) ─────────────────────────────── -->
       <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='nav'">
         <div class="max-w-4xl mx-auto space-y-5">
@@ -1522,6 +1571,7 @@ function app() {
       { id: 'watchlist',   icon: '📋', label: '워치리스트' },
       { id: 'briefing',    icon: '📰', label: '브리핑' },
       { id: 'thesis',      icon: '📜', label: '투자관' },
+      { id: 'strategy',    icon: '🗓', label: '주간전략' },
       { id: 'nav',         icon: '📈', label: '자산성장' },
       { id: 'attribution', icon: '🎯', label: '귀인분석' },
       { id: 'orders',      icon: '📒', label: '주문이력' },
@@ -1559,6 +1609,8 @@ function app() {
 
     // Thesis
     thesis: null, thesisLoading: false,
+    // Strategy
+    strategyData: null, strategyLoading: false,
     // NAV
     navData: null, navHistory: [], navLoading: false,
     // Attribution
@@ -1592,6 +1644,7 @@ function app() {
         if (t === 'briefing'  && this.briefings === null) this.loadBriefings();
         if (t === 'backtest'    && !this.btStats && !this.btLoading) this.loadBacktest();
         if (t === 'thesis'      && !this.thesis && !this.thesisLoading) this.loadThesis();
+        if (t === 'strategy'    && !this.strategyData && !this.strategyLoading) this.loadStrategy();
         if (t === 'nav'         && !this.navData && !this.navLoading)   this.loadNav();
         if (t === 'attribution' && !this.attributions.length && !this.attributionLoading) this.loadAttribution();
         if (t === 'orders'      && !this.orders.length && !this.ordersLoading) this.loadOrders();
@@ -1931,6 +1984,18 @@ function app() {
         const d = await r.json();
         this.thesis = d.thesis || null;
       } finally { this.thesisLoading = false; }
+    },
+
+    // ── Strategy ──────────────────────────────────────────────
+    async loadStrategy() {
+      this.strategyLoading = true;
+      try {
+        const r = await fetch('/api/strategy');
+        const d = await r.json();
+        this.strategyData = d || null;
+      } catch (e) {
+        console.error(e);
+      } finally { this.strategyLoading = false; }
     },
 
     // ── NAV ───────────────────────────────────────────────────
