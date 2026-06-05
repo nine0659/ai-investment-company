@@ -42,6 +42,13 @@ main.py
   python main.py --watchlist remove CODE                      # 관심종목 제거
   python main.py --watchlist check                            # 진입 조건 점검 (텔레그램 발송)
 
+  # 주문 실행 (KIS API 연동)
+  python main.py --order buy CODE QTY [PRICE] [timeframe] [memo...]  # 매수
+  python main.py --order sell CODE QTY [PRICE] [memo...]             # 매도 (QTY=0 전량)
+  python main.py --order pending                                     # 미체결 주문 조회
+  python main.py --order cancel ORDER_NO CODE SIDE QTY [PRICE]      # 주문 취소
+  python main.py --order history                                     # 최근 주문 이력
+
   python main.py --check             # 환경변수 검증만
   python main.py --init-db           # DB 초기화
 """
@@ -72,6 +79,156 @@ def setup_logging(level: str = "INFO"):
     # 민감정보 로그 차단
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def _run_order_cmd(args):
+    """주문 실행 명령 처리."""
+    from db.database import init_db
+    init_db()
+
+    sub = args.order[0] if args.order else "help"
+
+    if sub == "buy":
+        if len(args.order) < 3:
+            console.print("[red]사용법: --order buy CODE QTY [PRICE] [timeframe] [memo...][/red]")
+            return
+        code = args.order[1]
+        try:
+            qty = int(args.order[2])
+        except ValueError:
+            console.print("[red]수량은 정수여야 합니다.[/red]")
+            return
+
+        price = 0
+        idx = 3
+        if len(args.order) > 3:
+            try:
+                price = int(args.order[3].replace(",", ""))
+                idx = 4
+            except ValueError:
+                pass
+
+        tf_map = {"short": "short", "mid": "mid", "long": "long",
+                  "단기": "short", "중기": "mid", "장기": "long"}
+        timeframe = "short"
+        if len(args.order) > idx and args.order[idx] in tf_map:
+            timeframe = tf_map[args.order[idx]]
+            idx += 1
+
+        memo = " ".join(args.order[idx:]) if len(args.order) > idx else ""
+        price_label = f"{price:,}원 지정가" if price > 0 else "시장가"
+        console.print(f"[cyan]📤 매수 주문: {code} {qty:,}주 @{price_label} [{timeframe}][/cyan]")
+
+        try:
+            from services.trading_service import execute_buy, TradingError
+            result = execute_buy(code=code, qty=qty, price=price, memo=memo, timeframe=timeframe)
+            if result["success"]:
+                console.print(
+                    f"[green]✅ 매수 완료: {result['name']}({code}) {qty:,}주 "
+                    f"| 주문번호: {result['order_no'] or '없음'}[/green]"
+                )
+            else:
+                console.print(f"[red]❌ 매수 실패: {result['message']}[/red]")
+        except Exception as e:
+            console.print(f"[red]❌ 오류: {e}[/red]")
+
+    elif sub == "sell":
+        if len(args.order) < 3:
+            console.print("[red]사용법: --order sell CODE QTY [PRICE] [memo...] (QTY=0 전량)[/red]")
+            return
+        code = args.order[1]
+        try:
+            qty = int(args.order[2])
+        except ValueError:
+            console.print("[red]수량은 정수여야 합니다. 전량은 0[/red]")
+            return
+
+        price = 0
+        idx = 3
+        if len(args.order) > 3:
+            try:
+                price = int(args.order[3].replace(",", ""))
+                idx = 4
+            except ValueError:
+                pass
+
+        memo = " ".join(args.order[idx:]) if len(args.order) > idx else ""
+        qty_label = "전량" if qty == 0 else f"{qty:,}주"
+        price_label = f"{price:,}원 지정가" if price > 0 else "시장가"
+        console.print(f"[cyan]📤 매도 주문: {code} {qty_label} @{price_label}[/cyan]")
+
+        try:
+            from services.trading_service import execute_sell, TradingError
+            result = execute_sell(code=code, qty=qty, price=price, memo=memo)
+            if result["success"]:
+                console.print(
+                    f"[green]✅ 매도 완료: {result['name']}({code}) {qty_label} "
+                    f"| 주문번호: {result['order_no'] or '없음'}[/green]"
+                )
+            else:
+                console.print(f"[red]❌ 매도 실패: {result['message']}[/red]")
+        except Exception as e:
+            console.print(f"[red]❌ 오류: {e}[/red]")
+
+    elif sub == "pending":
+        try:
+            from services.trading_service import get_pending_orders
+            orders = get_pending_orders()
+            if not orders:
+                console.print("[yellow]미체결 주문 없음[/yellow]")
+                return
+            console.print(f"[cyan]📋 미체결 주문 {len(orders)}건:[/cyan]")
+            for o in orders:
+                side_label = "매수" if o["side"] == "buy" else "매도"
+                console.print(
+                    f"  [{side_label}] {o['name']}({o['code']}) "
+                    f"{o['qty']:,}주 @{o['price']:,}원 | 주문번호: {o['order_no']}"
+                )
+            console.print("\n[dim]취소: --order cancel ORDER_NO CODE SIDE QTY[/dim]")
+        except Exception as e:
+            console.print(f"[red]❌ 조회 실패: {e}[/red]")
+
+    elif sub == "cancel":
+        if len(args.order) < 5:
+            console.print("[red]사용법: --order cancel ORDER_NO CODE SIDE QTY [PRICE][/red]")
+            return
+        order_no = args.order[1]
+        code = args.order[2]
+        side = args.order[3].lower()
+        try:
+            qty = int(args.order[4])
+        except ValueError:
+            console.print("[red]수량은 정수여야 합니다.[/red]")
+            return
+        price = int(args.order[5].replace(",", "")) if len(args.order) > 5 else 0
+
+        try:
+            from services.trading_service import cancel_order
+            result = cancel_order(order_no, code, side, qty, price)
+            if result.get("success"):
+                console.print(f"[green]✅ 주문 취소 완료: {order_no}[/green]")
+            else:
+                console.print(f"[red]❌ 취소 실패: {result.get('message', '')}[/red]")
+        except Exception as e:
+            console.print(f"[red]❌ 오류: {e}[/red]")
+
+    elif sub == "history":
+        try:
+            from services.trading_service import format_order_history
+            text = format_order_history(limit=20)
+            console.print(text)
+        except Exception as e:
+            console.print(f"[red]❌ 이력 조회 실패: {e}[/red]")
+
+    else:
+        console.print(
+            "[yellow]사용법:[/yellow]\n"
+            "  --order buy CODE QTY [PRICE] [timeframe] [memo]\n"
+            "  --order sell CODE QTY [PRICE] [memo]\n"
+            "  --order pending\n"
+            "  --order cancel ORDER_NO CODE SIDE QTY [PRICE]\n"
+            "  --order history"
+        )
 
 
 def _run_portfolio_cmd(args):
@@ -259,16 +416,23 @@ def main():
         "--watchlist", nargs="+", metavar="CMD",
         help="워치리스트 관리: list | add CODE NAME [TARGET] [timeframe] [reason] | remove CODE | check"
     )
+    parser.add_argument(
+        "--order", nargs="+", metavar="CMD",
+        help="주문 실행: buy CODE QTY [PRICE] [timeframe] [memo] | sell CODE QTY [PRICE] [memo] | pending | cancel ORDER_NO CODE SIDE QTY [PRICE] | history"
+    )
     args = parser.parse_args()
 
     setup_logging(args.log_level)
 
-    # 포트폴리오/워치리스트 명령 (환경변수 없어도 실행 가능)
+    # 포트폴리오/워치리스트/주문 명령 (환경변수 없어도 실행 가능)
     if args.portfolio:
         _run_portfolio_cmd(args)
         return
     if args.watchlist:
         _run_watchlist_cmd(args)
+        return
+    if args.order:
+        _run_order_cmd(args)
         return
 
     # ── 기업 리서치 ─────────────────────────────────────────────

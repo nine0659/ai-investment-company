@@ -252,6 +252,21 @@ def job_monthly_longterm():
             pass
 
 
+def job_daily_nav():
+    """평일 16:10 — 장마감 후 포트폴리오 NAV 자동 기록."""
+    if not is_krx_trading_day():
+        return
+    try:
+        from services.nav_service import record_nav
+        from clients.kis_client import KISClient
+        kis = KISClient()
+        nav = record_nav(kis)
+        if nav:
+            logger.info("NAV 기록 완료: 총자산 %s원", f"{nav.get('total_value', 0):,}")
+    except Exception as e:
+        logger.warning("NAV 기록 실패 (무시): %s", e)
+
+
 def _parse_time(time_str: str) -> tuple[int, int]:
     h, m = time_str.split(":")
     return int(h), int(m)
@@ -352,6 +367,17 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 매월 첫째 일요일 20:30[/cyan] 월간 장기 가치투자 분석")
+
+    # NAV 기록: 평일 16:10 (장마감 후 10분)
+    scheduler.add_job(
+        job_daily_nav,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone=TIMEZONE_STR),
+        id="daily_nav",
+        name="[16:10] 포트폴리오 NAV 자동 기록",
+        misfire_grace_time=600,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 평일 16:10[/cyan] 포트폴리오 NAV 자동 기록")
 
 
 def shutdown(signum, frame):
