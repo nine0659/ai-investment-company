@@ -561,7 +561,7 @@ async def performance_api():
 
 
 @app.get("/api/tracker")
-async def tracker_api(days: int = 30):
+async def tracker_api(days: int = 30, _: None = Depends(_check_auth)):
     """AI 추천 종목 일별 성과 추적 데이터."""
     try:
         from services.recommendation_tracker_service import (
@@ -575,7 +575,7 @@ async def tracker_api(days: int = 30):
 
 
 @app.get("/api/predictions")
-async def predictions_api(days: int = 30):
+async def predictions_api(days: int = 30, _: None = Depends(_check_auth)):
     """AI 시장 방향 예측 정확도 통계."""
     try:
         from services.market_prediction_service import get_prediction_stats

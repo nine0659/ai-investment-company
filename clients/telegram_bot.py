@@ -19,6 +19,7 @@
   /history                          — 최근 주문 이력
   /thesis                           — 현재 월간 투자관
   /strategy                         — 현재 주간 전략
+  /tracker                          — AI 추천 성과 추적 + 예측 적중률
   /help                             — 명령어 안내
   [자유 텍스트]                     — AI 투자 어드바이저 대화
 """
@@ -128,7 +129,8 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/thesis` — 현재 월간 투자관\n"
         "`/strategy` — 현재 주간 전략\n"
         "`/nav` — 포트폴리오 NAV + Alpha 현황\n"
-        "`/report` — 이번 주 성과 요약\n\n"
+        "`/report` — 이번 주 성과 요약\n"
+        "`/tracker` — AI 추천 성과 추적 + 예측 적중률\n\n"
         "👀 *관심종목*\n"
         "`/watchlist` — 관심종목 목록\n"
         "`/watchlist add CODE 회사명 [목표가]` — 추가\n"
@@ -636,6 +638,21 @@ def _cmd_report(chat_id: str, _args: str) -> None:
         _send(chat_id, f"❌ 리포트 조회 오류: {e}")
 
 
+def _cmd_tracker(chat_id: str, _args: str) -> None:
+    """AI 추천 종목 성과 추적 + 시장 방향 예측 적중률 요약."""
+    _typing(chat_id)
+    try:
+        from services.recommendation_tracker_service import format_tracker_report
+        from services.market_prediction_service import format_prediction_report
+        tracker_msg = format_tracker_report()
+        pred_msg    = format_prediction_report(days=30)
+        _send(chat_id, tracker_msg)
+        _send(chat_id, pred_msg)
+    except Exception as e:
+        logger.error("[Bot] /tracker 오류: %s", e)
+        _send(chat_id, f"❌ 성과 추적 조회 오류: {e}")
+
+
 def _cmd_ai_chat(chat_id: str, text: str) -> None:
     """자유형식 텍스트 → AI 투자 어드바이저 응답."""
     _typing(chat_id)
@@ -702,6 +719,7 @@ _HANDLERS: dict = {
     "/strategy":  _cmd_strategy,
     "/nav":       _cmd_nav,
     "/report":    _cmd_report,
+    "/tracker":   _cmd_tracker,
 }
 
 

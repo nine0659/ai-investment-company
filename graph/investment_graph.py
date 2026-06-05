@@ -237,15 +237,16 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         logger.error("[리포트저장] 실패: %s", e)
         state["errors"].append(f"save_report: {e}")
 
-    # ── CEO 추천 종목 저장 (장전/장마감 브리핑에서 파싱) ──────────
+    # ── CEO 추천 종목 저장 (장마감 브리핑 전용) ──────────────────
+    # PRE 추천 저장은 ceo_agent.py에서 이미 처리 — 여기서 중복 실행 방지
     ceo_report = state.get("ceo_report", "")
-    if ceo_report and state.get("run_type") in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
+    if ceo_report and state.get("run_type") == RUN_TYPE_CLOSE:
         try:
             from services.recommendation_service import parse_recommendations, save_recommendations
             recs = parse_recommendations(ceo_report)
             if recs:
                 save_recommendations(state["date"], recs)
-                logger.info("[추천저장] %d건 저장", len(recs))
+                logger.info("[추천저장] 장마감 %d건 저장", len(recs))
         except Exception as e:
             logger.debug("[추천저장] 실패: %s", e)
 
