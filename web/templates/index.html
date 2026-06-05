@@ -974,6 +974,89 @@
         </div>
       </div>
 
+      <!-- ── 📒 주문 이력 ─────────────────────────────────────── -->
+      <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='orders'">
+        <div class="max-w-4xl mx-auto space-y-5">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold">📒 주문 이력</h2>
+            <button @click="loadOrders()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
+          </div>
+
+          <template x-if="ordersLoading">
+            <div class="text-slate-400 text-sm text-center py-8">주문 이력 로딩 중...</div>
+          </template>
+
+          <template x-if="!ordersLoading && !orders.length">
+            <div class="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-sm">
+              <p class="mb-2">주문 이력이 없습니다.</p>
+              <p class="text-xs">텔레그램 봇 <code class="bg-slate-700 px-2 py-0.5 rounded">/buy</code> 또는 <code class="bg-slate-700 px-2 py-0.5 rounded">/sell</code> 로 주문하세요.</p>
+            </div>
+          </template>
+
+          <template x-if="orders.length > 0">
+            <div class="bg-slate-800 rounded-xl overflow-hidden">
+              <!-- 요약 카드 -->
+              <div class="grid grid-cols-3 gap-px bg-slate-700 border-b border-slate-700">
+                <div class="bg-slate-800 p-4 text-center">
+                  <div class="text-xs text-slate-400 mb-1">총 주문</div>
+                  <div class="text-xl font-bold" x-text="orders.length + '건'"></div>
+                </div>
+                <div class="bg-slate-800 p-4 text-center">
+                  <div class="text-xs text-slate-400 mb-1">성공</div>
+                  <div class="text-xl font-bold text-green-400" x-text="orders.filter(o=>o.success).length + '건'"></div>
+                </div>
+                <div class="bg-slate-800 p-4 text-center">
+                  <div class="text-xs text-slate-400 mb-1">실패</div>
+                  <div class="text-xl font-bold text-red-400" x-text="orders.filter(o=>!o.success).length + '건'"></div>
+                </div>
+              </div>
+
+              <!-- 주문 목록 -->
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead class="text-xs text-slate-400 border-b border-slate-700">
+                    <tr>
+                      <th class="px-4 py-3 text-left">일시</th>
+                      <th class="px-4 py-3 text-left">종목</th>
+                      <th class="px-4 py-3 text-center">구분</th>
+                      <th class="px-4 py-3 text-right">수량</th>
+                      <th class="px-4 py-3 text-right">가격</th>
+                      <th class="px-4 py-3 text-right">금액</th>
+                      <th class="px-4 py-3 text-center">결과</th>
+                      <th class="px-4 py-3 text-left hidden md:table-cell">메모</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="o in orders" :key="o.created_at + o.code + o.side">
+                      <tr class="border-b border-slate-700/50 hover:bg-slate-700/30">
+                        <td class="px-4 py-3 text-slate-400 text-xs whitespace-nowrap" x-text="(o.created_at||'').slice(0,16)"></td>
+                        <td class="px-4 py-3">
+                          <div class="font-medium" x-text="o.name || o.code"></div>
+                          <div class="text-xs text-slate-500" x-text="o.code"></div>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                          <span :class="o.side==='buy' ? 'text-green-400 bg-green-400/10' : 'text-red-400 bg-red-400/10'"
+                                class="px-2 py-0.5 rounded text-xs font-bold"
+                                x-text="o.side==='buy' ? '매수' : '매도'"></span>
+                        </td>
+                        <td class="px-4 py-3 text-right" x-text="(o.qty||0).toLocaleString() + '주'"></td>
+                        <td class="px-4 py-3 text-right" x-text="(o.price||0).toLocaleString() + '원'"></td>
+                        <td class="px-4 py-3 text-right text-slate-300" x-text="o.amount ? (o.amount/10000).toFixed(0)+'만원' : '-'"></td>
+                        <td class="px-4 py-3 text-center">
+                          <span :class="o.success ? 'text-green-400' : 'text-red-400'" x-text="o.success ? '✅' : '❌'"></span>
+                          <div class="text-xs text-slate-500" x-text="o.mode || ''"></div>
+                        </td>
+                        <td class="px-4 py-3 text-xs text-slate-400 hidden md:table-cell max-w-xs truncate" x-text="o.memo || o.message || ''"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <!-- ── 🔬 백테스트 ─────────────────────────────────────── -->
       <div class="h-full overflow-y-auto scrollbar-thin p-4 md:p-6" x-show="tab==='backtest'">
         <div class="max-w-5xl mx-auto space-y-5">
@@ -1229,6 +1312,7 @@ function app() {
       { id: 'thesis',      icon: '📜', label: '투자관' },
       { id: 'nav',         icon: '📈', label: '자산성장' },
       { id: 'attribution', icon: '🎯', label: '귀인분석' },
+      { id: 'orders',      icon: '📒', label: '주문이력' },
       { id: 'backtest',    icon: '🔬', label: '백테스트' },
     ],
 
@@ -1267,6 +1351,9 @@ function app() {
     // Attribution
     attributions: [], attributionLoading: false,
 
+    // Orders
+    orders: [], ordersLoading: false,
+
     // Backtest
     btSubTab: 'ai', btDays: 20, btLoading: false,
     btStats: null, btItems: [], btChartData: [],
@@ -1290,6 +1377,7 @@ function app() {
         if (t === 'thesis'      && !this.thesis && !this.thesisLoading) this.loadThesis();
         if (t === 'nav'         && !this.navData && !this.navLoading)   this.loadNav();
         if (t === 'attribution' && !this.attributions.length && !this.attributionLoading) this.loadAttribution();
+        if (t === 'orders'      && !this.orders.length && !this.ordersLoading) this.loadOrders();
       });
 
       this.$watch('researchQuery', (q) => {
@@ -1646,6 +1734,15 @@ function app() {
         const d = await r.json();
         this.attributions = d.attributions || [];
       } finally { this.attributionLoading = false; }
+    },
+
+    async loadOrders() {
+      this.ordersLoading = true;
+      try {
+        const r = await fetch('/api/orders?limit=50');
+        const d = await r.json();
+        this.orders = d.orders || [];
+      } finally { this.ordersLoading = false; }
     },
 
     // ── Backtest ──────────────────────────────────────────────

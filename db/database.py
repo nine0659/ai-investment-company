@@ -304,6 +304,22 @@ portfolio_nav = Table("portfolio_nav", metadata,
     Column("created_at",    Text,     server_default="CURRENT_TIMESTAMP"),
 )
 
+order_history = Table("order_history", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("code",       Text,    nullable=False),
+    Column("name",       Text),
+    Column("side",       Text,    nullable=False),   # buy | sell
+    Column("qty",        Integer, nullable=False),
+    Column("price",      Integer, nullable=False),
+    Column("amount",     Integer),                   # qty * price
+    Column("order_no",   Text),                      # KIS 주문번호
+    Column("mode",       Text),                      # 실계좌 | 모의계좌
+    Column("success",    Integer, default=0),        # 1=성공, 0=실패
+    Column("message",    Text),
+    Column("memo",       Text),
+)
+
 # ── 초기화 ─────────────────────────────────────────────────────────
 
 def init_db():

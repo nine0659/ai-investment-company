@@ -25,34 +25,11 @@ class TradingError(Exception):
     """주문 실행 불가 오류."""
 
 
-def _init_order_table() -> None:
-    """order_history 테이블 생성 (없으면)."""
-    with get_conn() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS order_history (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at  TEXT DEFAULT (datetime('now','localtime')),
-                code        TEXT NOT NULL,
-                name        TEXT,
-                side        TEXT NOT NULL,
-                qty         INTEGER NOT NULL,
-                price       INTEGER NOT NULL,
-                order_no    TEXT,
-                mode        TEXT,
-                success     INTEGER DEFAULT 0,
-                message     TEXT,
-                amount      INTEGER,
-                memo        TEXT
-            )
-        """))
-
-
 def _save_order(
     code: str, name: str, side: str,
     qty: int, price: int, order_no: str,
     mode: str, success: bool, message: str, memo: str = ""
 ) -> None:
-    _init_order_table()
     with get_conn() as conn:
         conn.execute(text("""
             INSERT INTO order_history
@@ -109,7 +86,7 @@ def execute_buy(
     from clients.kis_client import KISClient
     from config.settings import KIS_IS_REAL
 
-    _init_order_table()
+
     code = code.strip().zfill(6)
 
     try:
@@ -216,7 +193,7 @@ def execute_sell(
     from clients.kis_client import KISClient
     from config.settings import KIS_IS_REAL
 
-    _init_order_table()
+
     code = code.strip().zfill(6)
 
     try:
@@ -330,7 +307,7 @@ def cancel_order(order_no: str, code: str, side: str, qty: int, price: int = 0) 
 
 def get_order_history(limit: int = 20) -> list[dict]:
     """최근 주문 이력 조회."""
-    _init_order_table()
+
     try:
         with get_conn() as conn:
             rows = conn.execute(text("""

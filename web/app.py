@@ -283,6 +283,17 @@ async def get_strategy_api():
         return {"summary": "", "report": "", "error": str(e)}
 
 
+@app.get("/api/orders")
+async def get_orders_api(limit: int = 50):
+    """주문 이력 조회."""
+    try:
+        from services.trading_service import get_order_history
+        orders = get_order_history(limit)
+        return {"orders": orders, "total": len(orders)}
+    except Exception as e:
+        return {"orders": [], "total": 0, "error": str(e)}
+
+
 @app.get("/api/balance")
 async def get_balance_api():
     """KIS 계좌 잔고."""

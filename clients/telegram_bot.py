@@ -101,6 +101,8 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "📜 *전략·투자관*\n"
         "`/thesis` — 현재 월간 투자관\n"
         "`/strategy` — 현재 주간 전략\n"
+        "`/nav` — 포트폴리오 NAV + Alpha 현황\n"
+        "`/report` — 이번 주 성과 요약\n"
         "`/watchlist` — 관심종목 목록\n\n"
         "💬 *AI 대화*\n"
         "명령어 없이 자유롭게 질문하세요!\n"
@@ -493,6 +495,69 @@ def _cmd_strategy(chat_id: str, _args: str) -> None:
         _send(chat_id, f"❌ 주간 전략 조회 오류: {e}")
 
 
+def _cmd_nav(chat_id: str, _args: str) -> None:
+    """포트폴리오 NAV + Alpha 현황 조회."""
+    _typing(chat_id)
+    try:
+        from services.nav_service import get_latest_nav, get_nav_history, generate_nav_report
+        latest = get_latest_nav()
+        if not latest:
+            _send(chat_id,
+                  "📈 NAV 기록이 없습니다.\n"
+                  "장마감 후 16:10에 자동 기록되거나,\n"
+                  "`python main.py --type close` 실행 후 확인하세요.")
+            return
+        report = generate_nav_report(days=7)
+        _send(chat_id, f"📈 *포트폴리오 NAV 현황*\n\n{report}")
+    except Exception as e:
+        logger.error("[Bot] /nav 오류: %s", e)
+        _send(chat_id, f"❌ NAV 조회 오류: {e}")
+
+
+def _cmd_report(chat_id: str, _args: str) -> None:
+    """이번 주 성과 요약 리포트."""
+    _typing(chat_id)
+    try:
+        from services.recommendation_service import get_performance_stats, get_recent_recommendations
+        from agents.attribution_agent import _get_kospi_weekly
+
+        perf = get_performance_stats(days=7)
+        kospi = _get_kospi_weekly()
+        recs = get_recent_recommendations(days=7)
+
+        lines = [
+            "📊 *이번 주 성과 요약*\n",
+            f"📅 기간: 최근 7일",
+            f"📉 KOSPI 주간: `{kospi:+.2f}%`\n",
+            f"🎯 *추천 성과*",
+            f"  총 {perf.get('total', 0)}건 | 성공 {perf.get('win', 0)} | 실패 {perf.get('loss', 0)}",
+            f"  승률: `{perf.get('win_rate', 0):.1f}%`",
+            f"  평균 수익률: `{perf.get('avg_return', 0):+.2f}%`",
+        ]
+
+        if recs:
+            lines.append(f"\n📋 *상세 추천 ({min(len(recs),5)}건)*")
+            for r in recs[:5]:
+                ret = r.get("return_pct")
+                ret_str = f"`{ret:+.1f}%`" if ret is not None else "집계중"
+                result_icon = "✅" if r.get("result") == "성공" else ("❌" if r.get("result") == "실패" else "⏳")
+                lines.append(f"  {result_icon} {r.get('name','?')}({r.get('code','?')}) {ret_str}")
+
+        # 귀인 분석 최신 교훈
+        try:
+            from agents.attribution_agent import get_recent_learnings
+            learnings = get_recent_learnings(weeks=1)
+            if learnings:
+                lines.append(f"\n💡 *지난주 교훈*\n{learnings[:300]}")
+        except Exception:
+            pass
+
+        _send(chat_id, "\n".join(lines))
+    except Exception as e:
+        logger.error("[Bot] /report 오류: %s", e)
+        _send(chat_id, f"❌ 리포트 조회 오류: {e}")
+
+
 def _cmd_ai_chat(chat_id: str, text: str) -> None:
     """자유형식 텍스트 → AI 투자 어드바이저 응답."""
     _typing(chat_id)
@@ -556,6 +621,8 @@ _HANDLERS: dict = {
     "/history":   _cmd_history,
     "/thesis":    _cmd_thesis,
     "/strategy":  _cmd_strategy,
+    "/nav":       _cmd_nav,
+    "/report":    _cmd_report,
 }
 
 
