@@ -36,19 +36,28 @@ def _get_price_yfinance(code: str) -> float | None:
 
 
 def _count_trading_days(start_date: str, end_date: str) -> int:
-    """두 날짜 사이의 영업일 수 계산 (주말 제외, 공휴일 미반영)."""
+    """두 날짜 사이의 영업일 수 계산 (주말 + 한국 공휴일 제외)."""
     try:
+        from utils.market_calendar import is_krx_trading_day
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end   = datetime.strptime(end_date,   "%Y-%m-%d")
         count = 0
         cur   = start
         while cur <= end:
-            if cur.weekday() < 5:  # 월~금
+            if is_krx_trading_day(cur.date()):
                 count += 1
             cur += timedelta(days=1)
         return max(0, count - 1)  # 당일 포함 → 경과일
     except Exception:
-        return 0
+        # 공휴일 라이브러리 없으면 주말만 제외 폴백
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end   = datetime.strptime(end_date,   "%Y-%m-%d")
+            count = sum(1 for i in range((end - start).days + 1)
+                        if (start + timedelta(days=i)).weekday() < 5)
+            return max(0, count - 1)
+        except Exception:
+            return 0
 
 
 def _get_active_recommendations() -> list[dict]:
@@ -119,6 +128,53 @@ def _determine_status(current_price: float, entry_price: float,
     if days_held >= _TRACKING_DAYS:
         return "expired"
     return "tracking"
+
+
+def _send_status_alert(
+    status: str, name: str, code: str,
+    entry_price: float, current_price: float, return_pct: float,
+    target_price: float | None, stop_price: float | None,
+    days_held: int, rec_date: str,
+) -> None:
+    """목표가/손절 도달 첫 발생 시 텔레그램 알림 발송 (하루 1회 중복 방지)."""
+    try:
+        # price_alert_log로 중복 발송 방지 (date + code + type 조합)
+        today = datetime.now(_KST).strftime("%Y-%m-%d")
+        alert_type = "track_target" if status == "target_hit" else "track_stop"
+        with get_conn() as conn:
+            exists = conn.execute(
+                text("SELECT 1 FROM price_alert_log WHERE date=:d AND code=:c AND type=:t"),
+                {"d": today, "c": code, "t": alert_type},
+            ).fetchone()
+            if exists:
+                return  # 오늘 이미 발송됨
+            conn.execute(
+                text("INSERT INTO price_alert_log(date,code,type) VALUES(:d,:c,:t)"),
+                {"d": today, "c": code, "t": alert_type},
+            )
+
+        if status == "target_hit":
+            emoji, label = "🎯", "목표가 달성"
+        else:
+            emoji, label = "🛑", "손절선 도달"
+
+        price_ref = target_price if status == "target_hit" else stop_price
+        price_str = f"{price_ref:,.0f}원" if price_ref else "-"
+
+        msg = (
+            f"{emoji} *[추천 추적] {label}*\n\n"
+            f"종목: {name} ({code})\n"
+            f"추천일: {rec_date} ({days_held}일 경과)\n"
+            f"진입가: {entry_price:,.0f}원\n"
+            f"현재가: {current_price:,.0f}원\n"
+            f"기준가: {price_str}\n"
+            f"수익률: `{return_pct:+.2f}%`"
+        )
+        from clients.telegram_client import send_message
+        send_message(msg)
+        logger.info("[Tracker] %s 알림 발송: %s(%s) %+.2f%%", label, name, code, return_pct)
+    except Exception as e:
+        logger.debug("[Tracker] 알림 발송 실패: %s", e)
 
 
 def run_daily_tracker(kis=None) -> dict:
@@ -210,6 +266,21 @@ def run_daily_tracker(kis=None) -> dict:
                 rec["name"], code, today,
                 entry_price, current_price, return_pct, days_held, status,
             )
+
+            # 목표가/손절 도달 첫 발생 시 텔레그램 알림
+            if status in ("target_hit", "stop_hit"):
+                _send_status_alert(
+                    status=status,
+                    name=rec["name"], code=code,
+                    entry_price=entry_price,
+                    current_price=current_price,
+                    return_pct=return_pct,
+                    target_price=rec.get("target_price"),
+                    stop_price=rec.get("stop_price"),
+                    days_held=days_held,
+                    rec_date=rec_date,
+                )
+
         except Exception as e:
             logger.warning("[Tracker] 스냅샷 저장 실패 (%s): %s", code, e)
             stats["errors"] += 1

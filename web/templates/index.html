@@ -169,6 +169,47 @@
             </div>
           </div>
 
+          <!-- 전략 요약 + 투자관 요약 (2열) -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- 주간 전략 요약 -->
+            <div class="bg-slate-800 rounded-xl p-4">
+              <div class="flex items-center justify-between mb-3">
+                <span class="text-sm font-semibold">🗓 주간 전략</span>
+                <button @click="tab='strategy'" class="text-xs text-blue-400">상세보기</button>
+              </div>
+              <template x-if="!dashLatestStrategy">
+                <div class="text-xs text-slate-500 py-3 text-center">저장된 전략 없음</div>
+              </template>
+              <template x-if="dashLatestStrategy">
+                <div class="text-xs text-slate-400 leading-relaxed"
+                  x-text="(dashLatestStrategy.summary||dashLatestStrategy.report||'').slice(0,250)+'...'"></div>
+              </template>
+            </div>
+
+            <!-- 투자관 요약 -->
+            <div class="bg-slate-800 rounded-xl p-4">
+              <div class="flex items-center justify-between mb-3">
+                <span class="text-sm font-semibold">📜 현재 투자관</span>
+                <button @click="tab='thesis'" class="text-xs text-blue-400">상세보기</button>
+              </div>
+              <template x-if="!dashLatestThesis">
+                <div class="text-xs text-slate-500 py-3 text-center">투자관 없음</div>
+              </template>
+              <template x-if="dashLatestThesis">
+                <div class="space-y-1.5">
+                  <div class="flex gap-2 text-xs">
+                    <span class="px-2 py-0.5 rounded bg-blue-900/60 text-blue-300"
+                      x-text="dashLatestThesis.macro_regime||''"></span>
+                    <span class="px-2 py-0.5 rounded bg-slate-700 text-slate-300"
+                      x-text="dashLatestThesis.cycle_stage||''"></span>
+                  </div>
+                  <div class="text-xs text-slate-400 leading-relaxed"
+                    x-text="(dashLatestThesis.ceo_summary||'').slice(0,200)+'...'"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- 워치리스트 현황 -->
           <div class="bg-slate-800 rounded-xl p-4">
             <div class="flex items-center justify-between mb-3">
@@ -1606,6 +1647,7 @@ function app() {
 
     // Dashboard
     dashAlerts: [], dashWatchlist: null, dashLatestBriefing: null,
+    dashLatestStrategy: null, dashLatestThesis: null,
 
     // Thesis
     thesis: null, thesisLoading: false,
@@ -1685,16 +1727,20 @@ function app() {
 
     // ── Dashboard ────────────────────────────────────────────
     async loadDashboard() {
-      const [alertsR, watchR, briefR, sumR] = await Promise.allSettled([
+      const [alertsR, watchR, briefR, sumR, stratR, thesisR] = await Promise.allSettled([
         fetch('/api/alerts?days=7').then(r => r.json()),
         fetch('/api/watchlist').then(r => r.json()),
         fetch('/api/briefings?limit=1').then(r => r.json()),
         fetch('/api/portfolio/summary').then(r => r.json()),
+        fetch('/api/strategy').then(r => r.json()),
+        fetch('/api/thesis').then(r => r.json()),
       ]);
-      this.dashAlerts   = alertsR.value?.alerts || [];
-      this.dashWatchlist = watchR.value?.items || [];
+      this.dashAlerts         = alertsR.value?.alerts || [];
+      this.dashWatchlist      = watchR.value?.items || [];
       this.dashLatestBriefing = (briefR.value?.briefings || [])[0] || null;
       this.portfolioSummary   = sumR.value || null;
+      this.dashLatestStrategy = (stratR.value?.summary || stratR.value?.report) ? stratR.value : null;
+      this.dashLatestThesis   = thesisR.value?.thesis || null;
     },
 
     // ── Chat ─────────────────────────────────────────────────
