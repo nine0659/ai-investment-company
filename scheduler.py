@@ -229,6 +229,21 @@ def job_weekly_attribution():
             pass
 
 
+def job_weekly_stats():
+    """매주 일요일 20:00 — 주간 적중률 통계 (샤프비율·MDD·섹터 성과)."""
+    from services.stats_service import send_weekly_report
+    try:
+        logger.info("주간 적중률 통계 시작")
+        send_weekly_report()
+        logger.info("주간 적중률 통계 완료")
+    except Exception as e:
+        logger.error("주간 통계 실패: %s", e)
+        try:
+            send_error_alert(f"주간 통계 실패: {str(e)[:200]}")
+        except Exception:
+            pass
+
+
 def job_monthly_longterm():
     """매월 첫째 주 일요일 20:30 — 장기 가치투자 분석 (1년+ 관점).
     APScheduler CronTrigger는 첫째 주 일요일을 직접 표현하기 어려워
@@ -388,6 +403,17 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 매주 일요일 19:00[/cyan] 주간 성과 귀인 분석")
+
+    # 주간 적중률 통계: 매주 일요일 20:00 (귀인분석 후)
+    scheduler.add_job(
+        job_weekly_stats,
+        CronTrigger(day_of_week="sun", hour=20, minute=0, timezone=TIMEZONE_STR),
+        id="weekly_stats",
+        name="[일 20:00] 주간 적중률 통계 — 샤프비율·MDD·섹터 성과",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 매주 일요일 20:00[/cyan] 주간 적중률 통계")
 
     # 월간 장기 분석: 매월 첫째 주 일요일 20:30 (job 내부에서 날짜 재확인)
     scheduler.add_job(
