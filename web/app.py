@@ -584,3 +584,70 @@ async def predictions_api(days: int = 30, _: None = Depends(_check_auth)):
         return stats
     except Exception as e:
         return {"total": 0, "accuracy": 0.0, "items": [], "error": str(e)}
+
+
+# ── 관리자 수동 실행 ──────────────────────────────────────────────
+
+_run_lock = threading.Lock()
+_run_status: dict = {"running": False, "last": None, "result": None}
+
+
+@app.post("/api/admin/run")
+@app.get("/api/admin/run")
+async def admin_run(type: str = "pre", _: None = Depends(_check_auth)):
+    """브리핑 수동 실행 (type=pre|close|tracker).
+    이미 실행 중이면 409, 완료 시까지 기다리지 않고 202 즉시 반환.
+    """
+    if not _run_lock.acquire(blocking=False):
+        return JSONResponse({"ok": False, "msg": "이미 실행 중입니다"}, status_code=409)
+
+    _run_status["running"] = True
+    _run_status["result"]  = None
+
+    def _worker():
+        try:
+            from datetime import datetime as dt
+            from zoneinfo import ZoneInfo
+            kst  = ZoneInfo("Asia/Seoul")
+            now  = dt.now(kst)
+            date = now.strftime("%Y-%m-%d")
+
+            if type == "tracker":
+                from services.recommendation_tracker_service import run_daily_tracker
+                from services.market_prediction_service import verify_predictions
+                try:
+                    from clients.kis_client import KISClient
+                    kis = KISClient()
+                except Exception:
+                    kis = None
+                result = run_daily_tracker(kis)
+                verify_predictions(date)
+                _run_status["result"] = f"tracker 완료: {result}"
+
+            elif type in ("pre", "close"):
+                from config.settings import RUN_TYPE_PRE, RUN_TYPE_CLOSE
+                run_type = RUN_TYPE_PRE if type == "pre" else RUN_TYPE_CLOSE
+                from investment_graph import build_graph
+                graph = build_graph()
+                graph.invoke({"date": date, "run_type": run_type, "errors": []})
+                _run_status["result"] = f"{type} 브리핑 완료"
+
+            else:
+                _run_status["result"] = f"알 수 없는 type: {type}"
+
+            _run_status["last"] = dt.now(kst).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as e:
+            logger.error("[admin/run] 실패: %s", e)
+            _run_status["result"] = f"오류: {e}"
+        finally:
+            _run_status["running"] = False
+            _run_lock.release()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return JSONResponse({"ok": True, "msg": f"{type} 실행 시작됨 — /api/admin/status 로 확인"}, status_code=202)
+
+
+@app.get("/api/admin/status")
+async def admin_status(_: None = Depends(_check_auth)):
+    """수동 실행 진행 상태 조회."""
+    return _run_status
