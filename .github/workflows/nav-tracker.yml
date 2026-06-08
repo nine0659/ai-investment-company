@@ -1,0 +1,99 @@
+name: NAV Record & Performance Tracker
+
+# 16:10 KST NAV 기록 = 07:10 UTC (Mon-Fri)
+# 16:20 KST 성과 추적 = 07:20 UTC (Mon-Fri)
+
+on:
+  schedule:
+    - cron: '10 7 * * 1-5'   # 16:10 KST — NAV 기록
+    - cron: '20 7 * * 1-5'   # 16:20 KST — 성과 추적 + 예측 검증
+  workflow_dispatch:
+    inputs:
+      job:
+        description: '실행할 잡'
+        required: true
+        default: 'nav'
+        type: choice
+        options:
+          - nav
+          - tracker
+          - both
+
+permissions:
+  contents: read
+
+jobs:
+  nav:
+    name: NAV 기록 (16:10 KST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '10 7 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'nav' || inputs.job == 'both'))
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Record NAV + drawdown defense check
+        env:
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          PYTHONUTF8:          "1"
+        run: python -c "
+from db.database import init_db; init_db()
+from clients.kis_client import KISClient
+from services.nav_service import record_daily_nav
+from services.nav_service import check_drawdown_defense
+from services.auto_execute_service import execute_drawdown_defense
+import logging
+logging.basicConfig(level=logging.INFO)
+
+kis = KISClient()
+record_daily_nav(kis)
+
+dd = check_drawdown_defense()
+if dd.get('action') in ('half', 'all'):
+    execute_drawdown_defense(dd['action'], kis)
+    print(f'드로다운 방어 실행: {dd[\"action\"]}')
+else:
+    print(f'드로다운 정상: {dd.get(\"drawdown_pct\", 0):.1f}%')
+"
+
+  tracker:
+    name: 성과 추적 (16:20 KST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '20 7 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'tracker' || inputs.job == 'both'))
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Run performance tracker + prediction verify
+        env:
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          PYTHONUTF8:          "1"
+        run: python main.py --tracker

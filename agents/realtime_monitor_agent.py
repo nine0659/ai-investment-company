@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from clients.kis_client import KISClient
 from clients.market_data_client import fetch_kr_stock_technicals
-from clients.telegram_client import send_message
+from clients.telegram_client import send_message, send_message_with_buttons
 from db.database import get_conn
 from sqlalchemy import text
 
@@ -82,6 +82,51 @@ def _get_tech(code: str) -> dict:
         except Exception:
             pass
     return {}
+
+
+# ── 자동 실행 안전 게이트 (P2-2) ──────────────────────────────────
+
+# 마지막 자동 실행 시각 추적 (1분 내 재실행 방지)
+_last_auto_execute: dict[str, datetime] = {}
+
+
+def _auto_execute_gate(code: str, action: str) -> tuple[bool, str]:
+    """자동 실행 안전 게이트.
+
+    Returns:
+        (통과 여부, 차단 사유 또는 빈 문자열)
+    """
+    # 게이트①: 장시간 확인 (09:00~15:20)
+    if not _is_market_hours():
+        return False, "장 외 시간"
+
+    now = datetime.now(_KST)
+    h, m = now.hour, now.minute
+    if (h, m) > (15, 20):
+        return False, "장 마감 임박 (15:20 이후 자동 실행 차단)"
+
+    # 게이트②: 1분 내 동일 종목 재실행 방지
+    gate_key = f"{code}:{action}"
+    last = _last_auto_execute.get(gate_key)
+    if last and (now - last).total_seconds() < 60:
+        return False, f"1분 내 재실행 방지 (마지막: {last.strftime('%H:%M:%S')})"
+
+    # 게이트③: 잔량 0주 체크 (매도 시)
+    if action in ("stop", "target"):
+        try:
+            with get_conn() as conn:
+                row = conn.execute(
+                    text("SELECT quantity FROM portfolio_positions WHERE code=:c AND status='holding' LIMIT 1"),
+                    {"c": code},
+                ).fetchone()
+            if row and row[0] <= 0:
+                return False, "보유 수량 0주"
+        except Exception as _e:
+            logger.debug("[게이트] 잔량 체크 실패: %s", _e)
+
+    # 통과 — 마지막 실행 시각 갱신
+    _last_auto_execute[gate_key] = now
+    return True, ""
 
 
 # ── 관심종목 진입 신호 ────────────────────────────────────────────
@@ -191,6 +236,17 @@ def run_watchlist_monitor(today: str, kis: KISClient) -> list[str]:
             fired.append(alert_text)
             _mark_alerted(today, code, "entry")
             _save_notification(today, "entry", code, name, alert_text)
+            # 인라인 버튼 발송 (P1-3)
+            try:
+                entry_price = int(target_entry) if target_entry else 0
+                buttons = [[
+                    {"text": "✅ 즉시 매수", "callback_data": f"buy:{code}:1:{entry_price}"},
+                    {"text": "👀 워치리스트만", "callback_data": f"ignore:{code}"},
+                    {"text": "❌ 무시", "callback_data": f"ignore:{code}"},
+                ]]
+                send_message_with_buttons(alert_text, buttons)
+            except Exception as _be:
+                logger.debug("[모니터] 버튼 발송 실패, 일반 메시지로 대체: %s", _be)
             logger.info("[모니터] 진입신호: %s(%s)", name, code)
         except Exception as e:
             logger.debug("[모니터] %s 진입신호 실패: %s", code, e)
@@ -224,6 +280,15 @@ def run_portfolio_monitor(today: str, kis: KISClient) -> tuple[list[str], list[s
                 continue
             pnl_pct = (price - avg_price) / avg_price * 100 if avg_price else 0
 
+            # ── 자동 실행 설정 로드 (DB 우선 — 프로세스 간 공유) ────────
+            try:
+                from config.settings import get_auto_setting
+                AUTO_EXECUTE_STOP        = get_auto_setting("AUTO_EXECUTE_STOP")
+                AUTO_EXECUTE_TARGET_HALF = get_auto_setting("AUTO_EXECUTE_TARGET_HALF")
+            except Exception:
+                AUTO_EXECUTE_STOP = False
+                AUTO_EXECUTE_TARGET_HALF = False
+
             # 손절가 도달
             if stop_price and price <= stop_price:
                 if not _already_alerted(today, code, "stop"):
@@ -236,6 +301,30 @@ def run_portfolio_monitor(today: str, kis: KISClient) -> tuple[list[str], list[s
                     stop_alerts.append(msg)
                     _mark_alerted(today, code, "stop")
                     _save_notification(today, "stop", code, name, msg)
+
+                    # P2-1: 자동 손절 실행
+                    if AUTO_EXECUTE_STOP:
+                        try:
+                            gate_ok, gate_reason = _auto_execute_gate(code, "stop") if _auto_execute_gate else (False, "게이트 함수 없음")
+                            if gate_ok:
+                                from services.trading_service import execute_sell
+                                execute_sell(code=code, qty=0, price=0, memo="자동손절")
+                                msg += "\n🤖 *자동 손절 실행됨*"
+                            else:
+                                msg += f"\n⏸️ 자동 손절 차단: {gate_reason}"
+                        except Exception as _ae:
+                            logger.warning("[모니터] 자동 손절 실패: %s", _ae)
+                            msg += f"\n❌ 자동 손절 오류: {_ae}"
+                    else:
+                        # 인라인 버튼 발송 (P1-3)
+                        try:
+                            buttons = [[
+                                {"text": "🔴 즉시 매도", "callback_data": f"sell:{code}:0:0"},
+                                {"text": "⏭️ 무시",      "callback_data": f"ignore:{code}"},
+                            ]]
+                            send_message_with_buttons(msg, buttons)
+                        except Exception as _be:
+                            logger.debug("[모니터] 손절 버튼 발송 실패: %s", _be)
                     logger.info("[모니터] 손절선 도달: %s(%s) %+.1f%%", name, code, pnl_pct)
 
             # 목표가 도달
@@ -250,6 +339,34 @@ def run_portfolio_monitor(today: str, kis: KISClient) -> tuple[list[str], list[s
                     target_alerts.append(msg)
                     _mark_alerted(today, code, "target")
                     _save_notification(today, "target", code, name, msg)
+
+                    # P2-1: 자동 절반 익절
+                    if AUTO_EXECUTE_TARGET_HALF:
+                        try:
+                            gate_ok, gate_reason = _auto_execute_gate(code, "target") if _auto_execute_gate else (False, "게이트 함수 없음")
+                            if gate_ok:
+                                half_qty = qty // 2
+                                if half_qty > 0:
+                                    from services.trading_service import execute_sell
+                                    execute_sell(code=code, qty=half_qty, price=0, memo="자동목표익절50%")
+                                    msg += "\n🤖 *자동 절반 익절 실행됨*"
+                            else:
+                                msg += f"\n⏸️ 자동 익절 차단: {gate_reason}"
+                        except Exception as _ae:
+                            logger.warning("[모니터] 자동 익절 실패: %s", _ae)
+                            msg += f"\n❌ 자동 익절 오류: {_ae}"
+                    else:
+                        # 인라인 버튼 발송 (P1-3)
+                        try:
+                            half_qty = qty // 2
+                            buttons = [[
+                                {"text": "💰 절반 익절", "callback_data": f"sell_half:{code}"},
+                                {"text": "🔴 전량 매도", "callback_data": f"sell:{code}:0:0"},
+                                {"text": "📌 홀드",      "callback_data": f"ignore:{code}"},
+                            ]]
+                            send_message_with_buttons(msg, buttons)
+                        except Exception as _be:
+                            logger.debug("[모니터] 목표가 버튼 발송 실패: %s", _be)
                     logger.info("[모니터] 목표가 도달: %s(%s) %+.1f%%", name, code, pnl_pct)
 
         except Exception as e:
@@ -337,22 +454,26 @@ def run() -> None:
         logger.error("[실시간모니터] KIS 연결 실패: %s", e)
         return
 
-    # 관심종목 진입 신호
+    # 관심종목 진입 신호 (버튼 발송은 run_watchlist_monitor 내부에서 처리됨)
     try:
         entry_alerts = run_watchlist_monitor(today, kis)
+        # entry_alerts 목록은 버튼 메시지 발송 후 반환되므로 별도 일반 메시지 발송 불필요
         if entry_alerts:
-            msg = "🔔 *워치리스트 진입 신호*\n\n" + "\n\n".join(entry_alerts)
-            send_message(msg)
+            logger.info("[실시간모니터] 진입신호 %d건 버튼 발송 완료", len(entry_alerts))
     except Exception as e:
         logger.error("[실시간모니터] 워치리스트 모니터 실패: %s", e)
 
-    # 포트폴리오 손절/목표가
+    # 포트폴리오 손절/목표가 (버튼 메시지는 run_portfolio_monitor 내부에서 발송, 여기서는 추가 발송 안 함)
     try:
         stop_alerts, target_alerts = run_portfolio_monitor(today, kis)
-        if stop_alerts:
-            send_message("⚠️ *포트폴리오 긴급 경고*\n\n" + "\n\n".join(stop_alerts))
-        if target_alerts:
-            send_message("💰 *목표가 도달 알림*\n\n" + "\n\n".join(target_alerts))
+        # 자동 실행 비활성화 상태에서만 일반 메시지 추가 발송
+        # (자동 실행 ON이면 run_portfolio_monitor 내부에서 이미 버튼 메시지 발송됨)
+        for alert_msg in stop_alerts:
+            if "자동 손절" not in alert_msg and "즉시 매도" not in alert_msg:
+                send_message(alert_msg)
+        for alert_msg in target_alerts:
+            if "자동 절반" not in alert_msg and "전량 매도" not in alert_msg:
+                send_message(alert_msg)
     except Exception as e:
         logger.error("[실시간모니터] 포트폴리오 모니터 실패: %s", e)
 

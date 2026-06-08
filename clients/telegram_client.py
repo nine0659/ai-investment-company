@@ -51,6 +51,74 @@ def send_error_alert(text: str) -> bool:
     return send_message(f"🚨 *오류 알림*\n{text}")
 
 
+def send_message_with_buttons(
+    text: str,
+    buttons: list[list[dict]],
+    chat_id: str | None = None,
+) -> bool:
+    """인라인 키보드 버튼과 함께 메시지를 발송한다.
+
+    Args:
+        text: 메시지 본문
+        buttons: [[{"text": "버튼명", "callback_data": "data"}, ...], ...] 형식의 2D 배열
+        chat_id: 대상 chat_id (None이면 기본값 사용)
+
+    Returns:
+        발송 성공 여부
+    """
+    cid = chat_id or TELEGRAM_CHAT_ID
+    url = f"{_BASE}/sendMessage"
+    keyboard = {"inline_keyboard": buttons}
+
+    for attempt in range(3):
+        try:
+            r = requests.post(
+                url,
+                json={
+                    "chat_id": cid,
+                    "text": text[:4096],
+                    "parse_mode": "Markdown",
+                    "reply_markup": keyboard,
+                },
+                timeout=10,
+            )
+            if r.ok:
+                return True
+            if r.status_code == 400:
+                # Markdown 파싱 오류 → plain text 재시도
+                r2 = requests.post(
+                    url,
+                    json={
+                        "chat_id": cid,
+                        "text": text[:4096],
+                        "reply_markup": keyboard,
+                    },
+                    timeout=10,
+                )
+                return r2.ok
+            if r.status_code == 429:
+                time.sleep(2 ** attempt)
+            else:
+                time.sleep(1)
+        except Exception as e:
+            logger.warning("Telegram 버튼 메시지 전송 오류 (시도 %d/3): %s", attempt + 1, e)
+            time.sleep(1)
+    logger.error("Telegram 버튼 메시지 전송 최종 실패")
+    return False
+
+
+def answer_callback_query(callback_query_id: str, text: str = "") -> None:
+    """인라인 버튼 클릭 응답 (로딩 스피너 제거용)."""
+    try:
+        requests.post(
+            f"{_BASE}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": text, "show_alert": False},
+            timeout=5,
+        )
+    except Exception as e:
+        logger.debug("answerCallbackQuery 실패: %s", e)
+
+
 def _split(text: str) -> list[str]:
     if len(text) <= _MAX_LEN:
         return [text]

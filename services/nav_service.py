@@ -176,6 +176,53 @@ def generate_nav_report(days: int = 7) -> str:
     return "\n".join(lines)
 
 
+def check_drawdown_defense() -> dict:
+    """NAV 고점 대비 현재 낙폭을 계산해 방어 행동 지시.
+
+    Returns:
+        {"action": "none"|"half"|"all", "message": str, "drawdown_pct": float}
+    """
+    try:
+        with get_conn() as conn:
+            # 최근 90일 NAV 이력 조회
+            cutoff = (datetime.now(_KST) - timedelta(days=90)).strftime("%Y-%m-%d")
+            rows = conn.execute(
+                text("""
+                    SELECT date, total_value FROM portfolio_nav
+                    WHERE date >= :cutoff ORDER BY date ASC
+                """),
+                {"cutoff": cutoff},
+            ).fetchall()
+
+        if not rows or len(rows) < 2:
+            return {"action": "none", "message": "NAV 데이터 부족", "drawdown_pct": 0.0}
+
+        peak = max(r[1] for r in rows)
+        latest_value = rows[-1][1]
+        if peak <= 0:
+            return {"action": "none", "message": "고점 NAV 이상", "drawdown_pct": 0.0}
+
+        drawdown_pct = (peak - latest_value) / peak * 100
+
+        if drawdown_pct >= 15.0:
+            return {
+                "action": "all",
+                "message": f"드로다운 -{drawdown_pct:.1f}% — 전량 청산 + 1주일 차단",
+                "drawdown_pct": drawdown_pct,
+            }
+        elif drawdown_pct >= 10.0:
+            return {
+                "action": "half",
+                "message": f"드로다운 -{drawdown_pct:.1f}% — 전 포지션 50% 강제 청산",
+                "drawdown_pct": drawdown_pct,
+            }
+        else:
+            return {"action": "none", "message": f"정상 (낙폭 {drawdown_pct:.1f}%)", "drawdown_pct": drawdown_pct}
+    except Exception as e:
+        logger.debug("[드로다운] 계산 실패: %s", e)
+        return {"action": "none", "message": f"계산 오류: {e}", "drawdown_pct": 0.0}
+
+
 def get_latest_nav() -> dict | None:
     """가장 최근 NAV 기록 반환."""
     try:

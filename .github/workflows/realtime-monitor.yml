@@ -1,0 +1,45 @@
+name: Realtime Monitor (15min)
+
+# 장중 15분마다 실행 — 손절/목표가/진입신호 감시
+# 09:00~15:30 KST = 00:00~06:30 UTC (Mon-Fri)
+
+on:
+  schedule:
+    - cron: '0,15,30,45 0,1,2,3,4,5 * * 1-5'   # 00:00~05:59 UTC 매 15분
+    - cron: '0,15,30 6 * * 1-5'                  # 06:00~06:30 UTC 매 15분
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    name: 실시간 모니터
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Run realtime monitor
+        env:
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIS_APP_KEY:         ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:      ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          PYTHONUTF8:          "1"
+        run: python -c "
+from db.database import init_db; init_db()
+from clients.kis_client import KISClient
+from agents.realtime_monitor_agent import run
+run()
+"

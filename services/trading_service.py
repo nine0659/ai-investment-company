@@ -28,18 +28,19 @@ class TradingError(Exception):
 def _save_order(
     code: str, name: str, side: str,
     qty: int, price: int, order_no: str,
-    mode: str, success: bool, message: str, memo: str = ""
+    mode: str, success: bool, message: str, memo: str = "",
+    rec_id: int | None = None,
 ) -> None:
     with get_conn() as conn:
         conn.execute(text("""
             INSERT INTO order_history
-            (code, name, side, qty, price, order_no, mode, success, message, amount, memo)
-            VALUES (:code, :name, :side, :qty, :price, :ono, :mode, :ok, :msg, :amt, :memo)
+            (code, name, side, qty, price, order_no, mode, success, message, amount, memo, rec_id)
+            VALUES (:code, :name, :side, :qty, :price, :ono, :mode, :ok, :msg, :amt, :memo, :rec_id)
         """), {
             "code": code, "name": name, "side": side,
             "qty": qty, "price": price, "ono": order_no,
             "mode": mode, "ok": int(success), "msg": message,
-            "amt": qty * price, "memo": memo,
+            "amt": qty * price, "memo": memo, "rec_id": rec_id,
         })
 
 
@@ -68,6 +69,7 @@ def execute_buy(
     memo: str = "",
     timeframe: str = "short",
     confirm: bool = True,
+    rec_id: int | None = None,
 ) -> dict:
     """
     매수 주문 실행.
@@ -134,7 +136,7 @@ def execute_buy(
     message = result.get("message", "")
 
     # DB 기록
-    _save_order(code, name, "buy", qty, exec_price, order_no, mode_label, success, message, memo)
+    _save_order(code, name, "buy", qty, exec_price, order_no, mode_label, success, message, memo, rec_id)
 
     # 성공 시 포트폴리오에 자동 등록
     if success:
@@ -169,6 +171,7 @@ def execute_buy(
         "name": name,
         "code": code,
         "amount": amount,
+        "rec_id": rec_id,
     }
 
 
@@ -177,6 +180,7 @@ def execute_sell(
     qty: int,
     price: int = 0,
     memo: str = "",
+    rec_id: int | None = None,
 ) -> dict:
     """
     매도 주문 실행.
@@ -234,7 +238,7 @@ def execute_sell(
     order_no = result.get("order_no", "")
     message = result.get("message", "")
 
-    _save_order(code, name, "sell", actual_qty, exec_price, order_no, mode_label, success, message, memo)
+    _save_order(code, name, "sell", actual_qty, exec_price, order_no, mode_label, success, message, memo, rec_id)
 
     # 성공 시 포트폴리오 청산 기록
     if success:

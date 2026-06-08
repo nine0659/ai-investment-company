@@ -284,7 +284,7 @@ def _get_kis() -> object | None:
 
 
 def job_daily_nav():
-    """평일 16:10 — 장마감 후 포트폴리오 NAV 자동 기록."""
+    """평일 16:10 — 장마감 후 포트폴리오 NAV 자동 기록 + 드로다운 방어 체크."""
     if not is_krx_trading_day():
         return
     try:
@@ -294,6 +294,20 @@ def job_daily_nav():
             logger.info("NAV 기록 완료: 총자산 %s원", f"{nav.get('total_value', 0):,}")
     except Exception as e:
         logger.warning("NAV 기록 실패 (무시): %s", e)
+
+    # P4-2: 드로다운 방어 체크
+    try:
+        from services.nav_service import check_drawdown_defense
+        from services.auto_execute_service import execute_drawdown_defense
+        dd = check_drawdown_defense()
+        action = dd.get("action", "none")
+        if action in ("half", "all"):
+            logger.warning("드로다운 방어 발동: %s — %s", action, dd.get("message", ""))
+            execute_drawdown_defense(action, _get_kis())
+        else:
+            logger.info("드로다운 정상: %s", dd.get("message", ""))
+    except Exception as e:
+        logger.warning("드로다운 방어 체크 실패 (무시): %s", e)
 
 
 def job_daily_tracker():
@@ -474,6 +488,15 @@ def main():
     console.print("\n등록된 스케줄 (평일 Mon-Fri):")
 
     setup_jobs()
+
+    # 텔레그램 봇을 백그라운드 스레드로 함께 시작
+    try:
+        from clients.telegram_bot import run_bot
+        bot_thread = threading.Thread(target=run_bot, name="telegram-bot", daemon=True)
+        bot_thread.start()
+        console.print("[green]✅ 텔레그램 봇 시작 (백그라운드)[/green]")
+    except Exception as e:
+        logger.warning("텔레그램 봇 시작 실패 (스케줄러는 계속 실행): %s", e)
 
     # Graceful shutdown
     signal.signal(signal.SIGTERM, shutdown)

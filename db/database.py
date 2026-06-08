@@ -318,6 +318,22 @@ order_history = Table("order_history", metadata,
     Column("success",    Integer, default=0),        # 1=성공, 0=실패
     Column("message",    Text),
     Column("memo",       Text),
+    Column("rec_id",     Integer),                   # stock_recommendations.id 참조 (자동실행 추적)
+)
+
+# ── 시스템 설정 (DB 기반, 프로세스 간 공유) ───────────────────────
+system_settings = Table("system_settings", metadata,
+    Column("key",        Text, primary_key=True),   # 설정 키
+    Column("value",      Text, nullable=False),     # 설정 값
+    Column("updated_at", Text, server_default="CURRENT_TIMESTAMP"),
+)
+
+# ── 자동 실행 일시 중단 플래그 ─────────────────────────────────────
+auto_execute_pause = Table("auto_execute_pause", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("reason",     Text),
+    Column("pause_until",Text),   # YYYY-MM-DD HH:MM:SS
+    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
 )
 
 # ── AI 성과 추적 테이블 ────────────────────────────────────────────
@@ -359,7 +375,25 @@ market_predictions = Table("market_predictions", metadata,
 def init_db():
     """모든 테이블 생성 (존재하면 스킵). 애플리케이션 시작 시 한 번 호출."""
     metadata.create_all(engine, checkfirst=True)
+    _migrate_order_history()
     logger.info("[DB] 테이블 초기화 완료")
+
+
+def _migrate_order_history():
+    """order_history 테이블에 rec_id 컬럼이 없으면 ALTER TABLE로 추가."""
+    try:
+        # inspector를 engine.begin() 밖에서 생성해야 SQLite에서 올바르게 작동
+        from sqlalchemy import inspect as sa_inspect
+        inspector = sa_inspect(engine)
+        cols = [c["name"] for c in inspector.get_columns("order_history")]
+        if "rec_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE order_history ADD COLUMN rec_id INTEGER"))
+            logger.info("[DB] order_history.rec_id 컬럼 추가 완료")
+        else:
+            logger.debug("[DB] order_history.rec_id 이미 존재 — 스킵")
+    except Exception as e:
+        logger.warning("[DB] order_history 마이그레이션 실패: %s", e)
 
 
 # ── 연결 컨텍스트 매니저 ───────────────────────────────────────────

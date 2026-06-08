@@ -20,6 +20,12 @@
   /thesis                           — 현재 월간 투자관
   /strategy                         — 현재 주간 전략
   /tracker                          — AI 추천 성과 추적 + 예측 적중률
+  /auto                             — 자동 실행 현재 상태 + 오늘 자동 실행 내역
+  /auto on/off                      — 자동 실행 전체 활성화/비활성화
+  /auto stop_on/stop_off            — 자동 손절만 제어
+  /auto buy_on/buy_off              — 자동 진입만 제어
+  /exposure                         — 오늘 포지션 노출도 + 드로다운 현황
+  /pause [일수]                     — 자동 실행 N일 일시 중단
   /help                             — 명령어 안내
   [자유 텍스트]                     — AI 투자 어드바이저 대화
 """
@@ -135,6 +141,13 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/watchlist` — 관심종목 목록\n"
         "`/watchlist add CODE 회사명 [목표가]` — 추가\n"
         "`/watchlist remove CODE` — 제거\n\n"
+        "🤖 *자동 실행 제어*\n"
+        "`/auto` — 자동 실행 상태 + 오늘 내역\n"
+        "`/auto on` / `/auto off` — 전체 활성화/비활성화\n"
+        "`/auto buy_on` / `/auto buy_off` — 자동 매수만\n"
+        "`/auto stop_on` / `/auto stop_off` — 자동 손절만\n"
+        "`/exposure` — 오늘 노출도 + 드로다운 현황\n"
+        "`/pause [일수]` — 자동 실행 N일 일시 중단\n\n"
         "💬 *AI 대화*\n"
         "명령어 없이 자유롭게 질문하세요!\n"
         "예: '삼성전자 지금 살만해?', '오늘 시장 어때?'"
@@ -653,6 +666,255 @@ def _cmd_tracker(chat_id: str, _args: str) -> None:
         _send(chat_id, f"❌ 성과 추적 조회 오류: {e}")
 
 
+# ── 자동 실행 명령어 (P6-1) ──────────────────────────────────────
+
+def _cmd_auto(chat_id: str, args: str) -> None:
+    """
+    /auto                   — 자동 실행 현재 상태 + 오늘 자동 실행 내역
+    /auto on                — 모두 활성화
+    /auto off               — 모두 비활성화
+    /auto stop_on/stop_off  — 자동 손절만 제어
+    /auto buy_on/buy_off    — 자동 진입만 제어
+    """
+    import os
+    sub = args.strip().lower()
+
+    # ── 상태 토글 (DB에 저장 → 모든 프로세스에서 즉시 반영) ──────
+    from config.settings import set_auto_setting
+
+    if sub in ("on", "off"):
+        active = (sub == "on")
+        set_auto_setting("AUTO_EXECUTE_BUY",         active)
+        set_auto_setting("AUTO_EXECUTE_STOP",        active)
+        set_auto_setting("AUTO_EXECUTE_TARGET_HALF", active)
+        icon = "✅" if active else "⏸️"
+        state = "ON" if active else "OFF"
+        _send(chat_id, f"{icon} 자동 실행 전체 {'활성화' if active else '비활성화'} 완료\n"
+              f"  매수: {state}  |  손절: {state}  |  목표익절: {state}\n"
+              f"  _(재시작 없이 스케줄러에 즉시 반영됩니다)_")
+        return
+
+    if sub == "stop_on":
+        set_auto_setting("AUTO_EXECUTE_STOP", True)
+        _send(chat_id, "✅ 자동 손절 활성화 (DB 저장 완료)")
+        return
+    if sub == "stop_off":
+        set_auto_setting("AUTO_EXECUTE_STOP", False)
+        _send(chat_id, "⏸️ 자동 손절 비활성화 (DB 저장 완료)")
+        return
+    if sub == "buy_on":
+        set_auto_setting("AUTO_EXECUTE_BUY", True)
+        _send(chat_id, "✅ 자동 매수 진입 활성화 (DB 저장 완료)")
+        return
+    if sub == "buy_off":
+        set_auto_setting("AUTO_EXECUTE_BUY", False)
+        _send(chat_id, "⏸️ 자동 매수 진입 비활성화 (DB 저장 완료)")
+        return
+
+    # ── 현재 상태 + 오늘 내역 (DB에서 실시간 조회) ──────────────
+    _typing(chat_id)
+    try:
+        from config.settings import get_auto_setting
+        import config.settings as _s
+        buy_on  = get_auto_setting("AUTO_EXECUTE_BUY")
+        stop_on = get_auto_setting("AUTO_EXECUTE_STOP")
+        half_on = get_auto_setting("AUTO_EXECUTE_TARGET_HALF")
+        max_exp = getattr(_s, "AUTO_MAX_DAILY_EXPOSURE", 0.10)
+    except Exception:
+        buy_on = stop_on = half_on = False
+        max_exp = 0.10
+
+    # 오늘 자동 실행 내역
+    today_lines = []
+    try:
+        from db.database import get_conn
+        from sqlalchemy import text
+        from datetime import datetime
+        today = datetime.now(_KST).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            rows = conn.execute(text("""
+                SELECT side, name, code, qty, price, success, memo
+                FROM order_history
+                WHERE rec_id IS NOT NULL AND created_at >= :today
+                ORDER BY id DESC LIMIT 10
+            """), {"today": today + " 00:00:00"}).fetchall()
+        for r in rows:
+            icon = "✅" if r[5] else "❌"
+            side_str = "매수" if r[0] == "buy" else "매도"
+            today_lines.append(f"  {icon} {side_str} {r[1]}({r[2]}) {r[3]:,}주 @{r[4]:,}원")
+    except Exception as _e:
+        logger.debug("[Bot] /auto 내역 조회 실패: %s", _e)
+
+    lines = [
+        "🤖 *자동 실행 현황*\n",
+        f"📥 자동 매수 진입: {'✅ ON' if buy_on else '⏸️ OFF'}",
+        f"🛑 자동 손절:      {'✅ ON' if stop_on else '⏸️ OFF'}",
+        f"💰 목표 절반 익절: {'✅ ON' if half_on else '⏸️ OFF'}",
+        f"📊 일일 최대 노출: {max_exp*100:.0f}%",
+    ]
+    if today_lines:
+        lines.append(f"\n📋 오늘 자동 실행 ({len(today_lines)}건):")
+        lines.extend(today_lines)
+    else:
+        lines.append("\n📋 오늘 자동 실행 내역 없음")
+
+    lines.append("\n`/auto on` | `/auto off` | `/auto buy_on` | `/auto stop_on`")
+    _send(chat_id, "\n".join(lines))
+
+
+def _cmd_exposure(chat_id: str, _args: str) -> None:
+    """오늘 포지션 노출도 + 드로다운 현황."""
+    _typing(chat_id)
+    try:
+        from services.auto_execute_service import get_daily_exposure, get_consecutive_loss_days
+        from services.nav_service import check_drawdown_defense, get_latest_nav
+
+        nav = get_latest_nav()
+        total_assets = int(nav.get("total_value", 0)) if nav else 0
+        daily_exp = get_daily_exposure()
+        consec_loss = get_consecutive_loss_days()
+        dd_info = check_drawdown_defense()
+
+        dd_action = dd_info.get("action", "none")
+        dd_msg = dd_info.get("message", "정상")
+        dd_icon = "✅" if dd_action == "none" else ("⚠️" if dd_action == "half" else "🚨")
+
+        lines = [
+            "📊 *노출도 & 드로다운 현황*\n",
+            f"💼 총 자산: {total_assets:,}원" if total_assets else "💼 총 자산: NAV 없음",
+            f"📥 오늘 신규 노출: {daily_exp*100:.1f}%",
+            f"📉 연속 손실일: {consec_loss}일",
+            f"\n{dd_icon} 드로다운 상태: {dd_msg}",
+        ]
+        if dd_action != "none":
+            lines.append(f"⚠️ 조치 필요: {dd_action.upper()}")
+        _send(chat_id, "\n".join(lines))
+    except Exception as e:
+        logger.error("[Bot] /exposure 오류: %s", e)
+        _send(chat_id, f"❌ 노출도 조회 오류: {e}")
+
+
+def _cmd_pause(chat_id: str, args: str) -> None:
+    """/pause [일수] — 자동 실행 N일 일시 중단."""
+    try:
+        days = int(args.strip()) if args.strip().isdigit() else 1
+    except ValueError:
+        days = 1
+    try:
+        from services.auto_execute_service import pause_auto_execute
+        pause_auto_execute(f"봇 명령 일시중단 ({days}일)", days=days)
+        _send(chat_id, f"⏸️ 자동 실행 {days}일 일시 중단 완료\n`/auto on` 으로 재개 가능")
+    except Exception as e:
+        logger.error("[Bot] /pause 오류: %s", e)
+        _send(chat_id, f"❌ 일시중단 오류: {e}")
+
+
+# ── 콜백 쿼리 핸들러 (인라인 버튼 클릭) ─────────────────────────
+
+def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> None:
+    """인라인 버튼 callback_data 처리.
+
+    data 형식:
+      "buy:CODE:QTY:PRICE"       — 즉시 매수
+      "sell:CODE:QTY:PRICE"      — 즉시 매도
+      "sell_half:CODE"           — 절반 매도 (보유량 // 2)
+      "ignore:CODE"              — 무시 (알림만 닫기)
+      "auto_on"                  — 자동 실행 ON
+      "auto_off"                 — 자동 실행 OFF
+    """
+    from clients.telegram_client import answer_callback_query
+    if callback_query_id:
+        answer_callback_query(callback_query_id, "처리 중...")
+
+    try:
+        parts = data.split(":")
+        action = parts[0].lower()
+
+        if action == "ignore":
+            code = parts[1] if len(parts) > 1 else ""
+            _send(chat_id, f"⏭️ {code} 알림 무시됨")
+            return
+
+        if action in ("auto_on", "auto_off"):
+            _cmd_auto(chat_id, "on" if action == "auto_on" else "off")
+            return
+
+        if action == "buy":
+            if len(parts) < 3:
+                _send(chat_id, "❌ buy 콜백 데이터 오류")
+                return
+            code  = parts[1].zfill(6)
+            qty   = int(parts[2]) if parts[2].isdigit() else 0
+            price = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+            if qty <= 0:
+                _send(chat_id, "❌ 수량 오류 (0주 이하)")
+                return
+            _send(chat_id, f"📤 매수 처리 중... {code} {qty:,}주")
+            try:
+                from services.trading_service import execute_buy
+                result = execute_buy(code=code, qty=qty, price=price, memo="인라인버튼 즉시매수")
+                if result["success"]:
+                    _send(chat_id, f"✅ 매수 완료: {result['name']}({code}) {qty:,}주")
+                else:
+                    _send(chat_id, f"❌ 매수 실패: {result['message']}")
+            except Exception as e:
+                _send(chat_id, f"❌ 매수 오류: {e}")
+            return
+
+        if action == "sell":
+            if len(parts) < 3:
+                _send(chat_id, "❌ sell 콜백 데이터 오류")
+                return
+            code  = parts[1].zfill(6)
+            qty   = int(parts[2]) if parts[2].isdigit() else 0
+            price = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+            _send(chat_id, f"📤 매도 처리 중... {code} {qty or '전량'}")
+            try:
+                from services.trading_service import execute_sell
+                result = execute_sell(code=code, qty=qty, price=price, memo="인라인버튼 즉시매도")
+                if result["success"]:
+                    _send(chat_id, f"✅ 매도 완료: {result['name']}({code})")
+                else:
+                    _send(chat_id, f"❌ 매도 실패: {result['message']}")
+            except Exception as e:
+                _send(chat_id, f"❌ 매도 오류: {e}")
+            return
+
+        if action == "sell_half":
+            if len(parts) < 2:
+                _send(chat_id, "❌ sell_half 콜백 데이터 오류")
+                return
+            code = parts[1].zfill(6)
+            _send(chat_id, f"📤 절반 매도 처리 중... {code}")
+            try:
+                from clients.kis_client import KISClient
+                from services.trading_service import execute_sell
+                _kis = KISClient()
+                holdings = _kis.get_holdings()
+                holding  = next((h for h in holdings if h.get("code") == code), None)
+                if not holding:
+                    _send(chat_id, f"❌ {code} 보유 내역 없음")
+                    return
+                owned = holding.get("qty", 0)
+                half_qty = owned // 2
+                if half_qty <= 0:
+                    _send(chat_id, f"❌ {code} 절반 매도 불가 (보유 {owned}주)")
+                    return
+                result = execute_sell(code=code, qty=half_qty, price=0, memo="인라인버튼 절반익절")
+                if result["success"]:
+                    _send(chat_id, f"✅ 절반 매도 완료: {result['name']}({code}) {half_qty:,}주")
+                else:
+                    _send(chat_id, f"❌ 절반 매도 실패: {result['message']}")
+            except Exception as e:
+                _send(chat_id, f"❌ 절반 매도 오류: {e}")
+            return
+
+        _send(chat_id, f"❓ 알 수 없는 콜백: {data}")
+    except Exception as e:
+        logger.error("[Bot] 콜백 처리 오류 (%s): %s", data, e)
+        _send(chat_id, f"❌ 버튼 처리 오류: {e}")
+
+
 def _cmd_ai_chat(chat_id: str, text: str) -> None:
     """자유형식 텍스트 → AI 투자 어드바이저 응답."""
     _typing(chat_id)
@@ -720,6 +982,9 @@ _HANDLERS: dict = {
     "/nav":       _cmd_nav,
     "/report":    _cmd_report,
     "/tracker":   _cmd_tracker,
+    "/auto":      _cmd_auto,
+    "/exposure":  _cmd_exposure,
+    "/pause":     _cmd_pause,
 }
 
 
@@ -772,7 +1037,10 @@ def run_bot(allowed_chats: set[str] | None = None) -> None:
         try:
             r = requests.get(
                 f"{_BASE}/getUpdates",
-                params={"offset": offset, "timeout": 30, "allowed_updates": ["message"]},
+                params={
+                    "offset": offset, "timeout": 30,
+                    "allowed_updates": ["message", "callback_query"],
+                },
                 timeout=35,
             )
             if not r.ok:
@@ -783,31 +1051,45 @@ def run_bot(allowed_chats: set[str] | None = None) -> None:
             updates = r.json().get("result", [])
             for upd in updates:
                 offset = upd["update_id"] + 1
-                msg    = upd.get("message", {})
-                if not msg:
+
+                # ── 일반 메시지 처리 ─────────────────────────────────
+                msg = upd.get("message", {})
+                if msg:
+                    chat_id = str(msg.get("chat", {}).get("id", ""))
+                    text    = msg.get("text", "")
+                    if chat_id and text:
+                        if allowed and chat_id not in allowed:
+                            logger.debug("[Bot] 차단된 채팅 무시: %s", chat_id)
+                        else:
+                            now_str = datetime.now(_KST).strftime("%H:%M")
+                            logger.info("[Bot] [%s] %s → %s", now_str, chat_id, text[:60])
+                            t = threading.Thread(
+                                target=_dispatch,
+                                args=(chat_id, text),
+                                daemon=True,
+                            )
+                            t.start()
                     continue
 
-                chat_id = str(msg.get("chat", {}).get("id", ""))
-                text    = msg.get("text", "")
-
-                if not chat_id or not text:
-                    continue
-
-                # 허용된 채팅만 처리
-                if allowed and chat_id not in allowed:
-                    logger.debug("[Bot] 차단된 채팅 무시: %s", chat_id)
-                    continue
-
-                now_str = datetime.now(_KST).strftime("%H:%M")
-                logger.info("[Bot] [%s] %s → %s", now_str, chat_id, text[:60])
-
-                # 별도 스레드로 처리 (긴 리서치도 봇 응답 차단 없음)
-                t = threading.Thread(
-                    target=_dispatch,
-                    args=(chat_id, text),
-                    daemon=True,
-                )
-                t.start()
+                # ── 인라인 버튼 콜백 처리 ────────────────────────────
+                cbq = upd.get("callback_query", {})
+                if cbq:
+                    cbq_id  = cbq.get("id", "")
+                    cdata   = cbq.get("data", "")
+                    from_ch = cbq.get("message", {}).get("chat", {})
+                    chat_id = str(from_ch.get("id", "") or cbq.get("from", {}).get("id", ""))
+                    if chat_id and cdata:
+                        if allowed and chat_id not in allowed:
+                            logger.debug("[Bot] 차단된 콜백 무시: %s", chat_id)
+                        else:
+                            now_str = datetime.now(_KST).strftime("%H:%M")
+                            logger.info("[Bot] [콜백] [%s] %s → %s", now_str, chat_id, cdata[:60])
+                            t = threading.Thread(
+                                target=_handle_callback,
+                                args=(chat_id, cdata, cbq_id),
+                                daemon=True,
+                            )
+                            t.start()
 
         except requests.exceptions.Timeout:
             pass  # long-polling timeout — 정상

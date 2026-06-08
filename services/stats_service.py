@@ -179,6 +179,37 @@ def generate_weekly_report(days: int = 7) -> str:
             lines_t.append(f"  최저구간: {track_worst['name']} 최저 {track_worst['min_return']:.1f}%")
         tracking_section = "\n━━ AI 추적 현황 ━━\n총 추적: {t_total}건\n".format(t_total=t_total) + "\n".join(lines_t) + "\n\n"
 
+    # ── AI 추천 실행률 집계 ──────────────────────────────────────────
+    execution_section = ""
+    try:
+        cutoff_exec = (datetime.now(_KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            row_exec = conn.execute(text("""
+                SELECT
+                    COUNT(*) AS total_orders,
+                    SUM(CASE WHEN rec_id IS NOT NULL THEN 1 ELSE 0 END) AS ai_orders,
+                    SUM(CASE WHEN rec_id IS NOT NULL AND success=1 THEN 1 ELSE 0 END) AS ai_success
+                FROM order_history
+                WHERE created_at >= :cutoff
+            """), {"cutoff": cutoff_exec}).fetchone()
+        if row_exec:
+            total_orders = row_exec[0] or 0
+            ai_orders    = row_exec[1] or 0
+            ai_success   = row_exec[2] or 0
+            # AI 추천 대비 실행률 = 실제 실행된 AI 추천 / 총 AI 추천
+            rec_count = total if total else 1
+            exec_rate = ai_orders / rec_count * 100
+            exec_section_lines = [
+                f"\n━━ AI 추천 실행률 ━━",
+                f"이번 주 AI 추천: {total}건  |  실제 실행: {ai_orders}건",
+                f"🤖 AI 추천 대비 실행률: {exec_rate:.0f}%",
+            ]
+            if ai_success and ai_orders:
+                exec_section_lines.append(f"  실행 성공률: {ai_success/ai_orders*100:.0f}% ({ai_success}/{ai_orders}건)")
+            execution_section = "\n".join(exec_section_lines) + "\n"
+    except Exception as _ee:
+        logger.debug("[통계] 실행률 집계 실패: %s", _ee)
+
     gpt_prompt = f"""지난 {days}일간 투자 추천 성과를 분석하고 개선점을 제시하세요.
 
 성과 데이터:
@@ -215,6 +246,7 @@ MDD 해석: 낮을수록 손실 관리 우수
         f"🏆 최고: {best['name']} {best.get('return_pct', 0):+.1f}%\n"
         f"💔 최저: {worst['name']} {worst.get('return_pct', 0):+.1f}%\n\n"
         + tracking_section
+        + execution_section
         + f"━━ 섹터별 적중률 ━━\n"
         + "\n".join(sector_lines) + "\n\n"
         + f"━━ AI 분석 & 개선점 ━━\n{analysis}"
