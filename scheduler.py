@@ -26,8 +26,8 @@ from rich.logging import RichHandler
 
 from config.settings import (
     TIMEZONE_STR,
-    SCHEDULE_PRE_MARKET, SCHEDULE_INTRA_1, SCHEDULE_INTRA_2, SCHEDULE_CLOSE,
-    RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE,
+    SCHEDULE_GLOBAL, SCHEDULE_PRE_MARKET, SCHEDULE_INTRA_1, SCHEDULE_INTRA_2, SCHEDULE_CLOSE,
+    RUN_TYPE_GLOBAL, RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE,
     validate_env,
 )
 from clients.telegram_client import send_error_alert
@@ -43,10 +43,11 @@ _MONITOR_LOCK = threading.Lock()
 # 각 run_type별 허용 실행 시간 윈도우 (KST 기준, 시작~종료 분)
 # 스케줄 시간 ±30분 이내에만 실제 브리핑 발송
 _TIME_WINDOWS: dict[str, tuple[int, int]] = {
+    RUN_TYPE_GLOBAL: (5 * 60 + 30,  8 * 60),         # 05:30 ~ 08:00  (미국 장 마감 후)
     RUN_TYPE_PRE:    (7 * 60 + 50,  9 * 60 + 30),   # 07:50 ~ 09:30
     RUN_TYPE_INTRA1: (9 * 60 + 30, 11 * 60),         # 09:30 ~ 11:00
     RUN_TYPE_INTRA2: (12 * 60 + 30, 14 * 60),        # 12:30 ~ 14:00
-    RUN_TYPE_CLOSE:  (15 * 60 + 20, 17 * 60 + 30),  # 15:20 ~ 17:30
+    RUN_TYPE_CLOSE:  (16 * 60,      18 * 60),        # 16:00 ~ 18:00  (수급 집계 완료 후)
 }
 
 _LOG_DIR = os.path.join(os.path.dirname(__file__), "data", "logs")
@@ -134,6 +135,9 @@ def _run_safe(run_type: str):
     finally:
         _PIPELINE_LOCK.release()
 
+
+def job_global_briefing():
+    _run_safe(RUN_TYPE_GLOBAL)
 
 def job_pre_market():
     _run_safe(RUN_TYPE_PRE)
@@ -336,10 +340,11 @@ def _parse_time(time_str: str) -> tuple[int, int]:
 def setup_jobs():
     """평일(월~금) 스케줄 등록"""
     for run_type, func, time_str in [
-        (RUN_TYPE_PRE,    job_pre_market, SCHEDULE_PRE_MARKET),
-        (RUN_TYPE_INTRA1, job_intra1,     SCHEDULE_INTRA_1),
-        (RUN_TYPE_INTRA2, job_intra2,     SCHEDULE_INTRA_2),
-        (RUN_TYPE_CLOSE,  job_close,      SCHEDULE_CLOSE),
+        (RUN_TYPE_GLOBAL, job_global_briefing, SCHEDULE_GLOBAL),
+        (RUN_TYPE_PRE,    job_pre_market,      SCHEDULE_PRE_MARKET),
+        (RUN_TYPE_INTRA1, job_intra1,          SCHEDULE_INTRA_1),
+        (RUN_TYPE_INTRA2, job_intra2,          SCHEDULE_INTRA_2),
+        (RUN_TYPE_CLOSE,  job_close,           SCHEDULE_CLOSE),
     ]:
         h, m = _parse_time(time_str)
         scheduler.add_job(
@@ -362,11 +367,11 @@ def setup_jobs():
             timezone=TIMEZONE_STR,
         ),
         id="realtime_monitor",
-        name="[15분] 실시간 진입신호·손절·목표가 모니터",
+        name="[15분] 시장 급변 경보 모니터 (수급·지수·섹터 이상 감지)",
         misfire_grace_time=120,
         coalesce=True,
     )
-    console.print("  [cyan]⏰ 09:00-15:30 매 15분[/cyan] 실시간 모니터")
+    console.print("  [cyan]⏰ 09:00-15:30 매 15분[/cyan] 시장 급변 경보 모니터")
 
     # 긴급 모니터: 장중 9:00-15:30, 5분마다
     # KOSPI 급락 / VIX 급등 / 원달러 급등 / 지정학 뉴스 / 보유 종목 급락 체크

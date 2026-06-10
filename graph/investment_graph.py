@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from langgraph.graph import StateGraph, END
 
 from graph.state import InvestmentState
-from config.settings import TZ, RUN_TYPE_PRE, RUN_TYPE_CLOSE
+from config.settings import TZ, RUN_TYPE_GLOBAL, RUN_TYPE_PRE, RUN_TYPE_CLOSE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2
 
 import agents.futures_market_team    as futures_market_team
 import agents.us_market_team         as us_market_team
@@ -211,7 +211,11 @@ def node_intelligence(state):  return market_intelligence_team.run(state)
 def node_risk(state):          return risk_management_team.run(state)
 def node_committee(state):          return investment_committee.run(state)
 def node_portfolio_manager(state):  return portfolio_manager_agent.run(state)
-def node_midterm_stocks(state):     return midterm_stock_agent.run(state)
+def node_midterm_stocks(state):
+    # 장중 브리핑(INTRA1·INTRA2)에서는 중장기 분석 스킵 — PRE·CLOSE·GLOBAL에서만 실행
+    if state.get("run_type") in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
+        return state
+    return midterm_stock_agent.run(state)
 def node_ceo(state):                return ceo_agent.run(state)
 
 def node_review(state):
@@ -317,15 +321,95 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         logger.info("[텔레그램] 발송 완료")
         errors = state.get("errors", [])
         if errors:
-            # DB 연결 오류(Supabase/psycopg2)는 텔레그램 발송 제외 — 로그에만 기록
             _SKIP_PATTERNS = ("psycopg2", "OperationalError", "supabase", "connection to server")
             filtered = [e for e in errors if not any(p in e for p in _SKIP_PATTERNS)]
             if filtered:
-                send_message("⚠️ 일부 데이터 수집 실패:\n" + "\n".join(f"- {e}" for e in filtered[:5]))
-            if len(errors) != len(filtered):
-                logger.warning("[텔레그램] DB 연결 오류 %d건 — 텔레그램 발송 생략 (로그 확인)", len(errors) - len(filtered))
+                logger.warning("[텔레그램] 데이터 수집 오류 %d건 (로그 확인): %s", len(filtered), filtered[:3])
+            db_errs = len(errors) - len(filtered)
+            if db_errs:
+                logger.warning("[텔레그램] DB 연결 오류 %d건 — 로그 확인 요망", db_errs)
     except Exception as e:
         logger.error("[텔레그램] 발송 실패: %s", e)
+    return state
+
+
+# ── 글로벌 시황 전용 데이터 수집 (KIS·DART 제외 — 06:30 한국 시장 미개장) ──
+
+def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
+    """미국 장 마감 후 글로벌 브리핑용 경량 데이터 수집.
+    KIS(한국 수급·종목), DART 공시, 컨센서스는 수집하지 않는다.
+    """
+    logger.info("[글로벌수집] 시작 (KIS 제외)")
+
+    for key, fn, label, default in [
+        ("raw_market_data", fetch_global_market_data,          "글로벌 시장",      {}),
+        ("us_sector_data",  fetch_us_sectors,                  "미국 섹터 ETF",    {}),
+        ("us_52w_highs",    fetch_us_52w_highs,                "미국 52주 신고가", []),
+    ]:
+        try:
+            state[key] = fn()
+            logger.info("[글로벌수집] %s 완료", label)
+        except Exception as e:
+            logger.error("[글로벌수집] %s 실패: %s", label, e)
+            state[key] = default
+            state["errors"].append(f"global_{key}: {e}")
+
+    # 데이터 신선도
+    try:
+        freshness = check_data_freshness(state["raw_market_data"])
+        state["data_freshness"] = freshness
+        if freshness.get("warning"):
+            logger.warning("[글로벌수집] %s", freshness["warning"])
+    except Exception:
+        state["data_freshness"] = {}
+
+    # 미국 주요 종목 (공급망 연결 포함)
+    try:
+        state["us_hot_stocks"] = fetch_us_top_movers(n=10)
+        logger.info("[글로벌수집] 미국 상위 종목 %d개", len(state["us_hot_stocks"]))
+    except Exception as e:
+        logger.error("[글로벌수집] 미국 상위 종목 실패: %s", e)
+        state["us_hot_stocks"] = []
+        state["errors"].append(f"global_us_hot: {e}")
+
+    # 빅피겨 발언 (Fed·연준 위원 등 야간 발언)
+    try:
+        state["bigfigure_news"] = fetch_bigfigure_news(max_per_figure=3)
+        logger.info("[글로벌수집] 빅피겨 뉴스 %d명", len(state["bigfigure_news"]))
+    except Exception as e:
+        logger.error("[글로벌수집] 빅피겨 뉴스 실패: %s", e)
+        state["bigfigure_news"] = []
+
+    # 뉴스 (야간 글로벌 이슈 중심)
+    try:
+        state["raw_news_data"] = fetch_all_news(
+            max_per_category=6,
+            market_data=state.get("raw_market_data", {}),
+        )
+        logger.info("[글로벌수집] 뉴스 완료")
+    except Exception as e:
+        logger.error("[글로벌수집] 뉴스 실패: %s", e)
+        state["raw_news_data"] = {}
+
+    # KIS 없음 — 한국 시장 미개장
+    state["raw_kis_data"]      = {}
+    state["dart_disclosures"]  = []
+    state["consensus_data"]    = {}
+    state["kr_index_realtime"] = {}
+
+    # 투자관·주간 전략 로드 (맥락 유지)
+    try:
+        from services.thesis_service import get_thesis_ceo_summary
+        state["investment_thesis"] = get_thesis_ceo_summary()
+    except Exception:
+        state["investment_thesis"] = ""
+
+    try:
+        from services.strategy_service import get_latest_strategy_summary
+        state["weekly_strategy_summary"] = get_latest_strategy_summary(max_days=7)
+    except Exception:
+        state["weekly_strategy_summary"] = ""
+
     return state
 
 
@@ -370,9 +454,43 @@ def build_graph() -> StateGraph:
     return g.compile()
 
 
+def build_global_graph() -> StateGraph:
+    """글로벌 시황 브리핑 전용 경량 그래프 (KIS 제외, 미국·글로벌 데이터만)."""
+    g = StateGraph(InvestmentState)
+
+    nodes = [
+        ("collect_raw_data_global", collect_raw_data_global),
+        ("futures_market_team",     node_futures),     # 선물·EWY·VIX
+        ("us_market_team",          node_us),          # 미국 시장 분석
+        ("us_impact_agent",         node_us_impact),   # 미국 → 한국 공급망 영향
+        ("global_market_team",      node_global),      # 글로벌 매크로
+        ("news_analysis_team",      node_news),        # 야간 뉴스
+        ("bigfigure_agent",         node_bigfigure),   # Fed·전문가 발언
+        ("macro_team",              node_macro),       # 매크로 레짐
+        ("market_intelligence_team", node_intelligence), # 글로벌 서사
+        ("midterm_stock_agent",     node_midterm_stocks), # 중장기 수혜주 업데이트
+        ("ceo_agent",               node_ceo),
+        ("save_report",             node_save_report),
+        ("send_telegram",           node_send_telegram),
+    ]
+    for name, fn in nodes:
+        g.add_node(name, fn)
+
+    g.set_entry_point("collect_raw_data_global")
+    for i in range(len(nodes) - 1):
+        g.add_edge(nodes[i][0], nodes[i + 1][0])
+    g.add_edge("send_telegram", END)
+
+    return g.compile()
+
+
 # ── 실행 진입점 ────────────────────────────────────────────────
 
 def run_pipeline(run_type: str) -> InvestmentState:
+    # 글로벌 시황은 별도 경량 파이프라인으로 분기
+    if run_type == RUN_TYPE_GLOBAL:
+        return _run_global(run_type)
+
     now = datetime.now(TZ)
 
     # KRX 거래일 체크 — 공휴일·선거일 등 비거래일에는 파이프라인 실행 자체를 차단
@@ -457,4 +575,53 @@ def run_pipeline(run_type: str) -> InvestmentState:
     except Exception as e:
         logger.error("파이프라인 실패: %s", e)
         send_error_alert(f"파이프라인 실패 ({run_type}): {e}")
+        raise
+
+
+def _run_global(run_type: str) -> InvestmentState:
+    """글로벌 시황 브리핑 전용 경량 파이프라인 (06:30 KST).
+    KRX 비거래일에도 미국 시장은 움직이므로 거래일 체크를 생략한다.
+    """
+    now = datetime.now(TZ)
+
+    try:
+        from services.report_service import already_ran_today
+        if already_ran_today(now.strftime("%Y-%m-%d"), run_type):
+            logger.info("[글로벌] 오늘 이미 발송 — 스킵")
+            return {}
+    except Exception as e:
+        logger.debug("[글로벌] 중복 체크 실패 (무시): %s", e)
+
+    initial: InvestmentState = {
+        "run_type": run_type,
+        "timestamp": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "raw_market_data": {}, "data_freshness": {},
+        "raw_kis_data": {}, "raw_news_data": {},
+        "us_hot_stocks": [], "us_sector_data": {}, "us_52w_highs": [],
+        "bigfigure_news": [], "dart_disclosures": [],
+        "kr_index_realtime": {}, "consensus_data": {},
+        "weekly_strategy_summary": "", "investment_thesis": "",
+        "futures_report": "", "us_market_report": "", "us_impact_report": "",
+        "korea_spot_report": "", "global_market_report": "", "news_report": "",
+        "bigfigure_report": "", "dart_report": "", "macro_report": "",
+        "event_risk_report": "", "event_risk_level": "중간",
+        "market_intelligence_report": "", "sector_report": "",
+        "issue_stocks_report": "", "midterm_stock_report": "",
+        "money_flow_report": "", "risk_report": "", "committee_report": "",
+        "portfolio_report": "", "ceo_report": "",
+        "candidates": [], "sector_scores": [], "risks": [],
+        "risk_level": "중간", "market_direction": "",
+        "review_report": "", "errors": [], "nav_recorded": {},
+    }
+
+    graph = build_global_graph()
+    logger.info("[글로벌] 파이프라인 시작 (%s)", now.strftime("%Y-%m-%d %H:%M"))
+    try:
+        final = graph.invoke(initial)
+        logger.info("[글로벌] 파이프라인 완료")
+        return final
+    except Exception as e:
+        logger.error("[글로벌] 파이프라인 실패: %s", e)
+        send_error_alert(f"글로벌 시황 파이프라인 실패: {e}")
         raise

@@ -174,6 +174,42 @@ def get_intelligence_context(days: int = 5) -> str:
     return "\n".join(lines)
 
 
+def get_sector_rotation_history(days: int = 3) -> str:
+    """최근 N일 섹터 순환매 이력 — sector_theme_team 컨텍스트 주입용."""
+    cutoff = (datetime.now(_KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+    try:
+        import json as _json
+        with get_conn() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT date, run_type, sector_scores
+                    FROM reports
+                    WHERE date >= :cutoff AND sector_scores IS NOT NULL
+                      AND run_type IN ('pre_market', 'close_market')
+                    ORDER BY date DESC, run_type DESC
+                    LIMIT :n
+                """),
+                {"cutoff": cutoff, "n": days * 2},
+            ).fetchall()
+    except Exception as e:
+        logger.warning("[아카이브] 섹터 이력 조회 실패: %s", e)
+        return ""
+
+    if not rows:
+        return ""
+
+    lines = [f"[최근 {days}일 섹터 순환매 이력 — 오늘 방향 비교용]"]
+    for date, run_type, scores_json in rows:
+        try:
+            scores = _json.loads(scores_json) if isinstance(scores_json, str) else (scores_json or [])
+            top3 = [f"{s['sector']}({s['score']})" for s in scores[:3] if s.get("sector")]
+            label = "장전" if "pre" in run_type else "장마감"
+            lines.append(f"  {date} {label}: {' > '.join(top3) or '데이터없음'}")
+        except Exception:
+            continue
+    return "\n".join(lines)
+
+
 def get_recommendation_performance_context() -> str:
     """최근 추천 종목 성과 요약 — CEO 프롬프트 자기학습용."""
     try:

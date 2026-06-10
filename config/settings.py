@@ -7,15 +7,17 @@ load_dotenv()
 TIMEZONE_STR = "Asia/Seoul"
 TZ = ZoneInfo(TIMEZONE_STR)
 
+RUN_TYPE_GLOBAL = "global_market"   # 미국 장 마감 후 글로벌 시황 (06:30)
 RUN_TYPE_PRE    = "pre_market"
 RUN_TYPE_INTRA1 = "intra_market_1"
 RUN_TYPE_INTRA2 = "intra_market_2"
 RUN_TYPE_CLOSE  = "close_market"
 
+SCHEDULE_GLOBAL     = "06:30"   # 미국 장 마감 후 글로벌 시황 브리핑
 SCHEDULE_PRE_MARKET = "08:20"
 SCHEDULE_INTRA_1    = "10:00"
 SCHEDULE_INTRA_2    = "13:00"
-SCHEDULE_CLOSE      = "15:50"
+SCHEDULE_CLOSE      = "16:30"   # 수급 데이터 완전 집계 후 (기존 15:50 → 16:30)
 
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL     = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")

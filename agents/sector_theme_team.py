@@ -4,24 +4,24 @@ from clients.openai_client import chat
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM = """당신은 섹터 순환매 및 테마 분석 전문가입니다.
+_SYSTEM = """당신은 한국 증시 섹터 순환매 분석 전문가입니다.
 
-핵심 원칙: 미국 섹터 ETF의 전일 등락은 오늘 한국 섹터 순환매의 방향을 선행합니다.
-미국 섹터 강도 → 한국 섹터 강도 연동을 분석의 출발점으로 삼으세요.
+핵심 임무: KIS 실거래 데이터(거래대금·수급) 기반으로 오늘 한국 시장의 실제 자금 흐름을 분석합니다.
+US→Korea 섹터 매핑은 us_impact_agent가 이미 처리했습니다. 당신은 국내 실거래 데이터로 그것을 검증하세요.
 
 분석 항목:
-1. [미국 섹터 → 한국 섹터 연동] 전일 미국 강세 섹터 → 오늘 한국 동일 섹터 기대 강도 매핑
-   (예: SMH +3% → 반도체 강세 / XLE +2% → 에너지·정유 강세)
-2. [거래대금 기반 실제 주도 섹터] — KIS 데이터 집계 점수 반영
-3. 미국 연동과 국내 수급이 겹치는 섹터 = 오늘 가장 강한 섹터 (★ 표시)
-4. 뉴스·빅피겨 발언 기반 테마 모멘텀
-5. 순환매 방향: 어제 강세 섹터에서 어디로 이동 중인가
+1. [거래대금·수급 기반 실제 주도 섹터] — KIS 집계 점수: 높을수록 실제 자금이 몰린 섹터
+2. [US 연동 분석 검증] 미국발 섹터 연동 예측(us_impact_report)과 실제 국내 수급이 일치하는가
+   → 일치: 방향성 강화 ★ / 불일치: 국내 독자 요인 존재 → 원인 분석
+3. [섹터 순환매 방향] 거래대금 점수 변화로 자금이 어디서 어디로 이동하는가
+4. [뉴스·빅피겨 기반 테마 모멘텀] 현재 섹터 흐름에 영향 주는 재료
 
 출력:
-- [오늘 최강 섹터 TOP3] ★ 미국연동+국내수급 겹치는 섹터 우선 (점수·근거 포함)
-- [약세·회피 섹터]
-- [핵심 투자 테마 3개]
-- [순환매 신호] 자금이 지금 어디서 어디로 이동 중인지"""
+- [실제 주도 섹터 TOP3] 거래대금 점수 + 수급 근거 포함
+- [약세·회피 섹터] — 거래대금 낮거나 외국인·기관 이탈
+- [핵심 투자 테마 2~3개] — 오늘 시장에서 확인된 구조적 테마
+- [순환매 신호] 자금이 지금 어디서 어디로 이동 중인지 (섹터 간 로테이션)
+- [US 연동 vs 국내 수급 불일치 시] 원인과 판단 명시"""
 
 # 종목명 → 섹터 매핑 (KIS 순위 데이터에서 섹터 자동 분류용)
 _STOCK_SECTOR: dict[str, str] = {
@@ -132,10 +132,18 @@ def run(state: InvestmentState) -> InvestmentState:
         else:
             sector_summary = "[거래대금·거래량 기반 섹터 집계] 데이터 없음 (장 마감 또는 API 오류)"
 
+        # 섹터 순환매 이력 로드 (최근 3일 — 오늘 방향 비교용)
+        rotation_history = ""
+        try:
+            from services.market_archive_service import get_sector_rotation_history
+            rotation_history = get_sector_rotation_history(days=3)
+        except Exception as _e:
+            logger.debug("[섹터팀] 순환매 이력 조회 실패: %s", _e)
+
         context = (
             f"{sector_summary}\n\n"
-            f"[미국시장]\n{state.get('us_market_report', '')}\n\n"
-            f"[미국영향]\n{state.get('us_impact_report', '')}\n\n"
+            f"[미국발 공급망 연동 분석 (us_impact_agent)]\n{state.get('us_impact_report', '')}\n\n"
+            f"[섹터 순환매 이력]\n{rotation_history or '이력 없음'}\n\n"
             f"[빅피겨발언]\n{state.get('bigfigure_report', '')}\n\n"
             f"[한국현물]\n{state.get('korea_spot_report', '')}\n\n"
             f"[뉴스]\n{state.get('news_report', '')}"

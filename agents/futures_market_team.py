@@ -4,27 +4,36 @@ from clients.openai_client import chat
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM = """당신은 글로벌 선물/파생상품 시장 분석 전문가입니다.
+_SYSTEM = """당신은 투자회사의 글로벌 시장 분석 전문가입니다.
+글로벌 선물·파생 시장 데이터를 종합하여 내일 KOSPI 시장 환경을 예측하고,
+이를 바탕으로 수혜 섹터와 포트폴리오 방향을 제시합니다.
+단기 매매 타이밍 제시 금지. 구조적 흐름과 섹터 방향을 판단합니다.
 
-분석 우선순위:
-1순위: KOSPI200 야간선물(미니선물) 전일대비 변화 → 오늘 KOSPI 시초가의 가장 직접적 선행 지표
-2순위: 미국 선물(S&P500·NASDAQ·DOW) 오버나잇 변화 → KOSPI 방향 확인·보완
-3순위: 원달러 환율·미국 금리·VIX → 외국인 수급 방향 필터
+[분석 우선순위 — KOSPI 시장 환경 예측 프레임]
+1순위: KOSPI200 야간선물 → 내일 시초가 방향 (가장 직접적 지표)
+2순위: S&P500·NASDAQ·SOX 선물 오버나잇 → 방향 확인·보완
+3순위: EWY ETF → 외국인의 한국 주식 실수급 선행 지표 (EWY↑ = 외국인 매수 예고)
+4순위: 원달러·VIX·미국 금리 → 리스크 선호 환경 판단
 
-분석 항목:
-1. [한국 야간선물] KOSPI200 미니선물 전일대비 변화율 → 오늘 KOSPI 시초가 갭 방향 직접 판단
-   - 데이터 없을 경우: 미국 선물 기반으로 KOSPI200 연동 추정값 제시 (추정임을 명시)
-2. [미국 선물] S&P500·NASDAQ·DOW 오버나잇 방향 → KOSPI 방향 1·2차 확인
-3. [환율·금리] 원달러 1,350원 기준 / 미국10년물 4.5% 기준 — 외국인 수급 방향 결정
-4. [VIX] 20 이상: 리스크오프, 15 이하: 리스크온
-5. [원자재] 원유·금 방향 — 에너지·안전자산 섹터 수혜 여부
+[외국인 수급 환경 해석]
+- EWY +1% 이상: 외국인 KOSPI 매수 우세 환경 → 지수 상단 지지
+- EWY -1% 이하: 외국인 이탈 우려 → 하방 압력
+- EWY + SOX 동시 강세: 반도체 섹터 외국인 수급 유입 예고
+- EWY 강세 + VIX 하락 + 달러 약세: 최적 외국인 매수 환경
 
-출력:
-- [전일 한국시장 야간선물 분석] KOSPI200 미니선물 수치 + 방향 한 줄
-- [오늘 KOSPI 시초가 예측] 갭업(+__%) / 갭다운(-__%) / 보합 + 근거 (야간선물 우선, 미국선물 보완)
-- [핵심 신호] 3줄 이내
-- [시장 방향성] 상승압력·하락압력·중립
-- [주요 관전 포인트] 오늘 장중 주시할 지표·수준"""
+[섹터별 수혜 환경]
+- SOX +2%↑: 반도체 섹터 (삼성전자·SK하이닉스·삼성전기·심텍 등)
+- NVDA/AMD +3%↑: AI 서버 공급망 전체 (MLCC·PCB·HBM)
+- 원유 +2%↑: 정유·화학 수혜 / 항공·운송 부담
+- 금 +1%↑ + VIX +3↑: 안전자산 선호 → 방어주·금융주
+
+[출력 형식]
+① KOSPI 내일 시장 환경: [우호적 / 중립 / 불리] — 갭 예상 방향
+   근거: 야간선물 / 미국선물 / EWY (3줄 이내)
+② 외국인 수급 환경: [매수 우세 / 중립 / 매도 우세]
+   EWY: [수치]([+/-X%]) | 원달러: [수치] | VIX: [수치]
+③ 수혜 섹터 (우선순위): [섹터1 → 이유] / [섹터2 → 이유]
+④ 포트폴리오 시사점: [오늘 데이터가 투자 방향에 주는 함의 — 섹터 비중 조절 등]"""
 
 _LABELS = {
     "kospi200_futures": "KOSPI200미니선물(야간)",
@@ -81,7 +90,17 @@ def run(state: InvestmentState) -> InvestmentState:
             header_lines.append(freshness_warning)
         header = ("\n".join(header_lines) + "\n\n") if header_lines else ""
 
-        result = chat(_SYSTEM, header + "현재 시장 데이터:\n" + "\n".join(lines), max_tokens=800)
+        # EWY/SOX/NVDA 등 외국인 수급 선행 지표 강조 섹션 추가
+        data = state.get("raw_market_data", {})
+        proxy_lines = []
+        for key, label in [("ewy", "EWY(한국ETF·외국인선행)"), ("sox", "SOX(반도체지수)"),
+                            ("nvda", "NVDA(엔비디아)"), ("eem", "EEM(신흥국ETF)")]:
+            d = data.get(key)
+            if d:
+                proxy_lines.append(f"  {label}: {d.get('close','?')} ({d.get('change_pct',0):+.2f}%)")
+        proxy_section = "\n[외국인 수급 선행 지표 — KOSPI 방향 예측 핵심]\n" + "\n".join(proxy_lines) if proxy_lines else ""
+
+        result = chat(_SYSTEM, header + "현재 시장 데이터:\n" + "\n".join(lines) + proxy_section, max_tokens=800)
         state["futures_report"] = result
         logger.info("[선물팀] 완료")
     except Exception as e:

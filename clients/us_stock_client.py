@@ -42,10 +42,15 @@ US_TO_KR_MAP: dict[str, list[dict]] = {
         {"code": "000660", "name": "SK하이닉스",  "reason": "HBM 최대 공급사"},
         {"code": "005930", "name": "삼성전자",    "reason": "HBM·파운드리 경쟁·수혜"},
         {"code": "042700", "name": "한미반도체",  "reason": "HBM 패키징 장비 공급"},
+        {"code": "009150", "name": "삼성전기",    "reason": "AI GPU 서버용 MLCC·전원부품 공급 — 서버 수요 직결"},
+        {"code": "222800", "name": "심텍",        "reason": "AI 서버 고다층 PCB 기판 수요 연동"},
+        {"code": "067310", "name": "하나마이크론", "reason": "HBM 패키징 소재·후공정"},
     ],
     "AMD": [
-        {"code": "005930", "name": "삼성전자",  "reason": "파운드리·DRAM 공급사"},
-        {"code": "000660", "name": "SK하이닉스", "reason": "DDR5·HBM 공급사"},
+        {"code": "005930", "name": "삼성전자",    "reason": "파운드리·DRAM 공급사"},
+        {"code": "000660", "name": "SK하이닉스",  "reason": "DDR5·HBM 공급사"},
+        {"code": "009150", "name": "삼성전기",    "reason": "AI GPU·서버용 MLCC 공급 — AMD 서버 수요 연동"},
+        {"code": "222800", "name": "심텍",        "reason": "AI 서버 PCB 기판 수요 동행"},
     ],
     "INTC": [
         {"code": "005930", "name": "삼성전자", "reason": "파운드리 경쟁·DRAM 공급"},
@@ -67,12 +72,15 @@ US_TO_KR_MAP: dict[str, list[dict]] = {
         {"code": "240810", "name": "원익IPS",    "reason": "계측·검사 장비 동종업"},
     ],
     "MU": [
-        {"code": "005930", "name": "삼성전자",   "reason": "DRAM 경쟁사 실적 지표"},
-        {"code": "000660", "name": "SK하이닉스", "reason": "DRAM 업황 동행"},
+        {"code": "005930", "name": "삼성전자",   "reason": "DRAM 경쟁사 실적 지표 — MU 회복=업황 반등"},
+        {"code": "000660", "name": "SK하이닉스", "reason": "DRAM 업황 동행 — 직접 경쟁사"},
+        {"code": "009150", "name": "삼성전기",   "reason": "MLCC 수요 연동 — DRAM 생산↑→서버 MLCC 수요↑"},
+        {"code": "222800", "name": "심텍",       "reason": "DDR5/HBM 기판(PCB) 수요 동행"},
     ],
     "AVGO": [
         {"code": "000660", "name": "SK하이닉스", "reason": "AI 가속기 메모리 수요"},
         {"code": "005930", "name": "삼성전자",   "reason": "AI 반도체 공급망"},
+        {"code": "009150", "name": "삼성전기",   "reason": "AI 네트워크·스위치용 MLCC 공급사"},
     ],
     "ARM": [
         {"code": "005930", "name": "삼성전자",   "reason": "ARM 아키텍처 라이선스 연동"},
