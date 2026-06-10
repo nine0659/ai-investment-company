@@ -1,10 +1,11 @@
 services:
-  - type: web
+  - type: worker
     name: ai-investment-company
     runtime: docker
     dockerfilePath: ./Dockerfile
     startCommand: bash start.sh
-    # 무료 플랜: 15분 비활성 시 슬립 → UptimeRobot으로 /api/status 5분마다 핑하여 해결
+    # Worker 타입: HTTP 요청 없어도 슬립 없이 24시간 실행 (스케줄러 전용)
+    # 웹 대시보드 복원이 필요하면 type: web으로 변경 + start.sh에 uvicorn 추가
     plan: free
     envVars:
       - key: OPENAI_API_KEY
