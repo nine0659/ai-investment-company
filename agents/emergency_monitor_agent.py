@@ -202,7 +202,7 @@ def _check_portfolio_crash() -> None:
                         f"종목: {name}({code})\n"
                         f"현재가: {price:,}원  |  당일 등락: {chg_pct:+.1f}%\n"
                         f"평균단가: {avg_price:,.0f}원  |  총 수익률: {pnl:+.1f}%\n\n"
-                        f"즉시 손절 여부 검토 필요합니다.",
+                        f"포지션 재검토가 필요합니다.",
                         code=code, name=name,
                     )
                     _mark_sent(today, code, "portfolio_crash")

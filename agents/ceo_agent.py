@@ -11,7 +11,7 @@ from services.recommendation_service import (
     parse_recommendations, save_recommendations,
     update_close_prices, format_returns_for_report, get_performance_stats,
 )
-from config.settings import RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE, TZ
+from config.settings import RUN_TYPE_GLOBAL, RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE, TZ
 
 _MARKET_OPEN  = _time(9, 0)
 _MARKET_CLOSE = _time(15, 35)
@@ -59,7 +59,7 @@ def _format_surge_context(raw_kis_data: dict, top_n: int = 10) -> str:
         if item.get("stck_shrn_iscd")
     }
 
-    lines = ["[급등종목 수급 교차분석 — CEO 즉시 판단 기초 데이터]"]
+    lines = ["[급등종목 수급 교차분석 — 오늘 주도 섹터·수급 흐름 분석]"]
     for code, name, chg, market in sorted(surge_items, key=lambda x: -x[2]):
         f_buy = code in foreign_codes
         i_buy = code in institution_codes
@@ -82,8 +82,7 @@ def _format_surge_context(raw_kis_data: dict, top_n: int = 10) -> str:
     return "\n".join(lines)
 
 
-# AI가 자주 추천하는 시총 대형주 — 후보 목록 여부와 무관하게 항상 현재가를 price_ctx에 포함
-# 이 목록이 없으면 해당 종목이 candidates에 없을 때 AI가 훈련 데이터 기반 허구 가격을 생성함
+# _BLUECHIP_ALWAYS_FETCH — _fetch_price_context() 전용, 현재 미사용 (아래 함수와 함께 dead code)
 _BLUECHIP_ALWAYS_FETCH: list[dict] = [
     {"code": "005930", "name": "삼성전자",         "market": "KOSPI"},
     {"code": "000660", "name": "SK하이닉스",       "market": "KOSPI"},
@@ -431,252 +430,198 @@ def _validate_rr_in_report(report: str) -> tuple[str, list[str]]:
     return result, notices
 
 
-_COMMON_HEADER = """[절대 원칙]
-제1원칙: 살아남는다. / 제2원칙: 돈을 잃지 않는다. / 제3원칙: 확신 없으면 현금.
+_COMMON_HEADER = """[투자회사 역할 원칙 — 이 시스템의 존재 이유]
+우리는 투기·단타매매 도구가 아닙니다.
+시장을 분석하고, 구조적 변화를 포착하고, 중장기 수혜주·수혜섹터를 발굴하는 투자회사입니다.
 
-[3관문 — 모든 추천이 순서대로 통과해야]
-관문① 손익비 3:1 이상 — 손절 -3%이면 목표 +9% 이상. 미달 추천은 존재 불가.
-관문② 수급 — 외국인·기관 실수급 확인. 수급 없는 상승은 언제든 무너진다.
-관문③ 시장 방향 — KOSPI가 내 편인가. 아니면 반 사이즈 이하만 진입.
-→ 2관문 통과: 레이더 언급만. 1관문 이하: 언급 자체 금지.
+핵심 임무 (3가지):
+① 시장 환경 분석: 매크로·섹터·자금 흐름이 어디를 향하는가
+② 구조적 기회 발굴: 업황 사이클·공급망 변화에서 아직 가격에 반영 안 된 수혜 종목·섹터
+③ 포트폴리오 방향 제시: 비중 조절·신규 편입 검토·리스크 관리
 
-[포지션 사이즈]
-확신 상(3관문+사이클+역발상): 4~5% | 중(3관문): 2~3% | 하(2관문): 1%
-안전 선호 장세·주의 이벤트: 위 기준 × 50% 강제 적용
+[투기 조장 — 절대 금지]
+× 단기 진입가·손절가·목표가 수치 제시 (타이밍 맞추기는 투기)
+× "오늘 살 종목" "즉시 매수" "지금 진입" 식의 단기 매매 신호
+× 이미 급등한 종목 추격 추천
+× 확인되지 않은 가격 예측 수치
 
-[리스크 한도]
-단일 포지션 최대 5%. 레버리지·미수·신용 절대 금지.
-드로다운 -10%: 전 포지션 50% 강제 청산. -15%: 전량 청산·1주일 냉각.
-3거래일 연속 손실: 당일 신규 포지션 금지.
+[분석 순서 — Top-Down 절대 원칙]
+매크로 레짐 → 섹터 로테이션 → 수혜주 발굴 → 포트폴리오 방향
+브리핑 첫 섹션: 투자관 [✅지지 / ⚠️도전 / 🔴재검토] 반드시 명시
 
-[Top-Down 순서 — 절대 변경 불가]
-매크로 → 섹터 → 종목 → 타이밍
-브리핑 첫 섹션: 투자관 [✅지지 / ⚠️도전 / 🔴재검토] 명시
-종목 추천: "투자관[X방향] → [Y섹터] → [Z종목]" 논리 사슬 필수.
+[포트폴리오 원칙]
+분산투자 원칙: 단일 종목 최대 5% | 레버리지·미수·신용 절대 금지
+드로다운 -10% 시: 포지션 축소 + 전략 재검토 | 확신 없으면 현금이 최선
 
-[언어 규칙]
-금지: "조심" "신중히" "모니터링" "주목할 만하다" "좋아 보인다"
-의무: 방향 판단마다 확률 명시 — "상승 75% — 근거: SOX +2.1%, 외국인 3일 순매수"
-의무: 추천마다 손익비 명시. 현재가 없으면 원 단위 절대 금지.
-의무: 관망 선언 시 재진입 조건 수치 명시. 역발상 점검 포함.
+[언어 원칙]
+× 금지: "유망하다" "주목할 만하다" "좋아 보인다" "조심" 등 추상 표현
+✅ 의무: 방향 판단마다 근거 명시 (수치 포함)
+✅ 의무: 불확실한 것은 불확실하다고 명시 — 추측 금지
 
-[출력 규칙]
-텔레그램 한국어 텍스트. 이모지 구분선(━) 유지. 지침 텍스트 절대 출력 금지.
-데이터 없는 섹션 생략 ("데이터 없음" 금지). 추측 금지.
+[출력 원칙]
+텔레그램 한국어. 이모지 구분선(━) 유지. 지침 텍스트 절대 출력 금지.
+총 40줄 이하. 데이터 없는 섹션 생략. 각 섹션 4줄 이하.
 
-[쉬운 말]
+[용어]
 매크로 레짐→시장 환경 | RISK-ON→위험 선호 장세 | RISK-OFF→안전 선호 장세
-이벤트 리스크→주의 이벤트 | 컨센서스 목표주가→전문가 평균 목표주가 | Trailing Stop→손절선 올리기"""
+섹터 로테이션→업종 자금 이동 | 컨센서스 목표주가→전문가 평균 목표주가"""
 
-# ── 종목 추천 블록: 가격 데이터 있을 때 ────────────────────────────
-# 주의: 아래 양식에서 숫자 자리는 반드시 위 [실시간 가격 데이터]의 실제 값으로 채울 것
-_STOCK_BLOCK_WITH_PRICE = """종목명(코드)  확신 [상/중/하]  /  상승 XX%
-  이유: [수급·재료 수치 포함 한 줄]
-  손익비: +XX% 목표 / -XX% 손절 = Z:1  |  투자금 X%
-  즉시진입  ▶실제원단위숫자◀원  →  손절  ▶실제원단위숫자◀원  →  1차목표  ▶실제원단위숫자◀원
-  눌림진입  ▶실제원단위숫자◀원  →  손절  ▶실제원단위숫자◀원  →  목표     ▶실제원단위숫자◀원
-  (▶실제원단위숫자◀ 자리에 위 가격표의 수치를 그대로 기입 — X,XXX원 같은 플레이스홀더 절대 금지)
-  기술: RSI XX [정상/과열/과매도]  |  MA20 [위/아래]
-  시초가: 갭+2%↑포기 / 갭+1~2%절반 / 보합전량 / 갭하락양봉후"""
+def _build_prompt_global() -> str:
+    return f"""{_COMMON_HEADER}
 
-# ── 종목 추천 블록: 가격 데이터 없을 때 ────────────────────────────
-_STOCK_BLOCK_NO_PRICE = """종목명(코드)  확신 [상/중/하]
-  이유: [수급·재료 수치 포함 한 줄]
-  예상 손익비: +XX% 목표 / -XX% 손절 = Z:1  |  투자금 X%
-  🚫 가격 미확인 — 조건으로만 기재 (원 단위 숫자 금지)
-  진입: [시초가 양봉 확인 후 / 외국인 순매수 전환 시 등]
-  손절: [전일 저점 이탈 즉시 전량]
-  목표: [전 고점 저항 도달 시 절반 익절]"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 글로벌 시황 브리핑  (미국 장 마감 후)
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+① 미국 시장 마감 요약
+S&P500 / NASDAQ / SOX 등락 + 주도 섹터
+핵심 동인: 오늘 미국 시장을 움직인 핵심 원인 한 줄 (실적/금리/지정학/수급)
+특이사항: 52주 신고가·신저가 섹터 / 거래량 급증 종목 시사점
 
-def _3line_summary(has_price: bool, header: str, action_hint: str) -> str:
-    """3줄 요약 블록 생성. has_price=True면 실제 숫자 기입 지시, False면 가격 기재 금지."""
-    if has_price:
-        price_line = (
-            "📌 종목명(코드) 진입 [가격표즉시진입가]원 손절 [가격표손절가]원\n"
-            "   ↑ 위 [실시간 가격 데이터]의 즉시진입가·손절가 원단위 숫자를 그대로 기입 (숫자 플레이스홀더 절대 금지)"
-        )
-    else:
-        price_line = "📌 신규진입없음  (현재가 미확인 — 원 단위 숫자 기재 절대 금지)"
-    return (
-        f"╔═══ {header} ═══\n"
-        f"▶ {action_hint}\n"
-        f"{price_line}\n"
-        f"❌ [오늘/지금 절대 하면 안 되는 것]\n"
-        f"╚═════════════════════════"
-    )
+② 글로벌 매크로 신호
+금리: 미국 10년물 [수치] → [상승/하락] — 주식시장 함의
+환율: 달러인덱스 [수치] / 원달러 [수치] → 외국인 수급 환경
+VIX [수치] → [위험선호 / 위험회피] 환경
+원자재: WTI [수치] / 금 [수치] → 관련 섹터 영향
+
+③ EWY·SOX — 오늘 KOSPI 예상 환경
+EWY: [수치]([+/-X%]) — 외국인의 한국 주식 수급 선행 지표
+SOX: [수치]([+/-X%]) — 반도체 섹터 방향 선행
+→ 예상 KOSPI 환경: [우호적 / 중립 / 불리] — 근거 한 줄
+→ 예상 수혜 섹터: [섹터1] / [섹터2]
+
+④ 오늘 주목할 공급망 연결
+미국 급등 종목 → 한국 수혜 섹터·종목 (아직 가격 미반영 가능성)
+예: [US종목] +X% → [한국 공급망 종목(코드)] 수혜 예상 — 근거
+
+⑤ 투자관 정합성 체크
+월간 투자관 방향 vs 오늘 글로벌 신호: [✅정합 / ⚠️부분충돌 / 🔴역행]
+오늘 글로벌 데이터가 투자관을 강화하는가 도전하는가
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ 오늘 하루 핵심 3줄
+▶ [오늘 KOSPI 예상 환경 + 주목 섹터]
+📡 [미국 흐름에서 발굴된 한국 공급망 기회]
+⚠️ [오늘 주의해야 할 리스크 신호]
+━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
 def _build_prompt_pre(has_price: bool) -> str:
-    stock_block = _STOCK_BLOCK_WITH_PRICE if has_price else _STOCK_BLOCK_NO_PRICE
-    price_warn  = "" if has_price else "🚫 가격 미확인 — 종목 추천에 원 단위 숫자 금지\n"
-    three_line  = _3line_summary(has_price, "오늘 실행 3줄", "[매수공격/선별매수/관망] — [이유 15자 이내]")
     return f"""{_COMMON_HEADER}
 
-{price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 장전 브리핑
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-① 투자관 + 포지션 방향
-투자관: [✅지지 / ⚠️도전 / 🔴재검토]  |  근거: [오늘 데이터 핵심 신호 한 줄]
-방향: [공격확대 / 유지 / 방어축소 / 현금확보]  한도: 최대 XX%
-확대: [섹터]  |  축소: [섹터]
-역발상: 지금 모두가 [사고/팔고] 있는가? → [의심 근거 또는 없음]
+① 투자관 + 오늘 시장 해석
+투자관: [✅지지 / ⚠️도전 / 🔴재검토]  근거: [핵심 시장 신호 한 줄]
+글로벌: 야간선물[방향] | S&P[방향] | SOX[방향] | EWY[방향 — 외국인 수급 선행]
+오늘 KOSPI 예상 흐름: [갭업/보합/갭다운] — 근거: [선물·수급 신호]
+수혜섹터: [섹터1 → 이유] / [섹터2 → 이유]
 
-② 오늘 장 환경 + 급등 판정
-야간선물: [수치] → 갭 [+/-X%] 예상
-미국: S&P500 [수치]  SOX [수치]  달러: [강/약] → 외국인 유입 XX%
-핵심 재료: [사실 한 줄]  →  수혜 섹터: [섹터]  반영도: XX%
-📈 급등 판정:
-  종목명(코드) +X.X%  →  [✅눌림 / ❌추격금지 / ⏳관망]
-  재료: [한 줄]  |  수급: [외국인+기관 / 없음]
-  {'진입 [가격표 수치]원  손절 [가격표 수치]원  손익비 Z:1' if has_price else '진입조건만 — 원단위 금지'}
-(수급 없는 급등 = ❌추격금지 한 줄로만)
+② 오늘 핵심 이슈 분석 (시장 구조 읽기)
+이슈: [오늘 가장 중요한 이슈 — 실적/정책/공급망/지정학 등]
+시장 의미: [단발 / 트렌드 시작 / 구조적 변화] — 판단 근거
+아직 반영 안 된 것: [이 이슈로 수혜 받을 수 있으나 가격에 미반영된 섹터·종목]
 
-③ 오늘 매수 + 1~3주 관심  (투자관→섹터→종목 논리 사슬 필수)
-투자관 실행: 우리 투자관의 [X방향] → [Y섹터] 확대 → 아래 종목이 최적 표현
-[오늘 즉시]
-{stock_block}
-조건 충족 종목 없으면: 오늘은 관망 — 현금 보유
-[1~3주 관심] (최대 3종목)
-종목명(코드)  기간 X주  |  손익비 Z:1  |  투자관 연결: [이유 한 줄]
-  진입: [즉시/눌림/조건]  손절 -X%  목표 +Y%
+③ 중장기 수혜주·수혜섹터 발굴 ([중장기 유망주] 기반)
+발굴 종목: 종목명(코드) — [업황 연결 근거] / [아직 미반영인 이유] / [주목 시점 기준]
+관찰 대기: 종목명(코드) — [편입 검토 트리거 조건]
 
-④ 보유 행동 + 금지 + 이벤트
-💼 [종목명]: [홀드/추가매수/분할매도/전량매도] — [이유 한 줄]
-🚫 [금지 행동] — [이유]
-⚠️ [이벤트] [날짜] → 포지션 XX%로 줄이기
+④ 포트폴리오 방향
+💼 보유: [종목] → [행동 방향 — 근거]  |  🚫 [오늘 하지 말 것]  |  ⚠️ [주요 이벤트]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-{three_line}
+⚡ 오늘 핵심 3줄 (투자회사 관점)
+▶ [오늘 시장 방향 + 수혜 섹터 판단 — 근거 포함]
+📡 [아직 가격에 반영 안 된 구조적 기회]
+❌ [투기·추격·단기 매매로 오해할 수 있는 행동 — 하지 말 것]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
 def _build_prompt_close(has_price: bool) -> str:
-    stock_block = _STOCK_BLOCK_WITH_PRICE if has_price else _STOCK_BLOCK_NO_PRICE
-    price_warn  = "" if has_price else "🚫 가격 미확인 — 종목 추천에 원 단위 숫자 금지\n"
-    three_line  = _3line_summary(has_price, "내일 실행 3줄", "[매수공격/선별매수/관망] — [이유 15자 이내]")
     return f"""{_COMMON_HEADER}
 
-{price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 장마감 복기
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 장마감 브리핑
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-① 오늘 복기 + 투자관 업데이트
-투자관: [✅지지 강화 / ⚠️도전 / 🔴재검토]  |  핵심 신호: [한 줄]
-오늘 장: [한 마디]  |  내일 방향: [강세 / 약세 / 관망]
-수급: 외국인 [순매수/순매도] XXX억  기관 [순매수/순매도] XXX억
-💰 성과: [종목(코드)] [+/-X%] → [✅ / ❌]  |  이유 한 줄
-💡 복기: 맞은 것 [한 줄]  /  틀린 것 [한 줄 — 없으면 더 깊이 찾아라]
-역발상: 오늘 모두가 [사고/팔고] 있었는가? 그 방향이 맞았는가?
+① 오늘 시장 복기 + 투자관 업데이트
+투자관: [✅지지강화 / ⚠️도전 / 🔴재검토] — 오늘 데이터가 투자관을 어떻게 바꿨는가
+수급: 외국인[순매수/도]XXX억 | 기관[순매수/도]XXX억 | 주도 섹터: [섹터]
+오늘 핵심: [오늘 시장에서 가장 중요한 구조적 사실 한 줄]
 
-② 내일 시나리오 + 오늘 급등 판정
-🌙 오늘 밤: 야간선물 + [미국 주요 발표 / 없으면 생략]
-🔮 시나리오:
-  A 강세 XX%  |  조건: [무엇이 확인될 때]  |  한도 XX%
-  B 약세 YY%  |  조건: [무엇이 확인될 때]  |  한도 XX%
-📈 급등 판정:
-  종목명(코드) 오늘+X.X%  →  [✅내일눌림 / ❌추격금지 / ⏳관망]
-  지속 XX%  |  {'진입 [가격표 수치]원  손절 -X%  목표 +Y%  손익비 Z:1' if has_price else '진입조건만 — 원단위 금지'}
-(수급 없는 급등 = ❌내일추격금지 한 줄로만)
+② 오늘 이슈 분석 + 내일 시장 전망
+오늘 이슈: [가장 중요한 이슈] → [단발 / 트렌드 시작 / 구조적 변화] — 판단 근거
+공급망 시사: [오늘 움직임이 암시하는 아직 반영 안 된 섹터·종목]
+내일 시나리오: A [강세 조건]  /  B [약세 조건]  |  주목: [야간선물·미국 발표]
 
-③ 내일 매수 + 1~3주 관심  (투자관→섹터→종목 논리 사슬 필수)
-투자관 실행: 우리 투자관의 [X방향] → [Y섹터] 확대 → 아래 종목이 최적 표현
-오늘 수급·거래대금 확인 종목만. 단순 하락 추천 금지.
-[내일 즉시]
-{stock_block}
-조건 충족 종목 없으면: 내일은 관망
-[1~3주 관심] (최대 3종목)
-종목명(코드)  기간 X주  |  손익비 Z:1  |  투자관 연결: [이유 한 줄]
-  진입: [즉시/눌림/조건]  손절 -X%  목표 +Y%
+③ 중장기 수혜주·수혜섹터 업데이트
+오늘 근거: 종목명(코드) — [업황 연결 + 아직 미반영 이유 + 편입 검토 조건]
+관찰 대기: 종목명(코드) — [트리거 조건]
 
-④ 보유 행동 + 금지 + 이벤트
-💼 [종목명]: [홀드/추가매수/분할매도/전량매도] — [이유]
-   수익 중인 종목 손절선: [수익률 기준으로만 — 원단위 없으면 % 기준]
-🚫 [금지 행동] — [이유]
-⚠️ [이벤트] [날짜] → 포지션 XX%
-🌐 전문가: [글로벌 전문가 주목 한 줄] → 함의: [종목·섹터 기회]
+④ 포트폴리오 방향
+💼 보유: [종목] → [행동 방향]  |  🚫 [하지 말 것]  |  🌐 [시장 전문가 시각 한 줄]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-{three_line}
+⚡ 내일 핵심 3줄 (투자회사 관점)
+▶ [내일 시장 방향 + 수혜 섹터 판단]
+📡 [오늘 이슈에서 발굴한 구조적 기회]
+❌ [투기·추격·단기 매매로 오해할 수 있는 행동 — 하지 말 것]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
 def _build_prompt_intra1(has_price: bool) -> str:
-    three_line = _3line_summary(has_price, "지금 실행 3줄", "[매수공격/선별매수/관망] — [이유 15자 이내]")
-    price_warn = "" if has_price else "🚫 가격 미확인 — 이 브리핑에서 원 단위 숫자 기재 절대 금지\n"
     return f"""{_COMMON_HEADER}
 
-{price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
-🕙 장중 1차 점검  (오전 10:00)
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+🕙 장중 브리핑 (오전)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚡ 지금 결론  (한 줄)
-→ [장전 전략 유효 ✅ / 수정 필요 ⚠️]  |  오후 상승 XX% / 하락 YY%
+⚡ 결론 → [장전 투자관 ✅유효 / ⚠️수정 필요]
 
-① 장전 전략 검증 + 투자관
-투자관: [✅지지 / ⚠️도전]  |  오늘 핵심 신호: [한 줄]
-현재: KOSPI [수치] ([+/-X.X%])  KOSDAQ [수치] — 주도 섹터: [섹터]
-장전 예상과: [✅일치 / ❌불일치]  |  원인: [한 줄]
+① 오전 시장 흐름 분석
+KOSPI[수치]([+/-X%]) | 주도 섹터: [섹터] — 외국인[순매수/도] 기관[순매수/도]
+장전 예상 vs 실제: [✅일치 / ❌불일치] — 원인: [한 줄]
+섹터 로테이션 신호: [어떤 섹터에서 어떤 섹터로 자금이 이동하는가]
 
-② 지금 당장 할 것 / 하면 안 되는 것
-✅ [행동] — 조건: [수치]
-❌ [금지 행동] — 이유: [수치]
-
-③ 지금 급등 종목 — 진입 여부
-종목명(코드) +XX%  →  [✅진입 / ❌추격금지 / ⏳눌림대기]
-  재료: [한 줄]  |  수급: [외국인+기관 / 없음]
-  {'진입가 [가격표 수치]원  손절 -X%  목표 +Y%  손익비 Z:1' if has_price else '🚫 원단위 금지 — 조건만'}
-(수급 없는 급등 = ❌추격금지 한 줄로만)
-
-④ 오후 핵심 관전 포인트
-미국 프리마켓: [S&P선물 수치] → 오후 영향: [한 줄]
-경계: KOSPI [수치] 이탈 → [즉시 행동]
-주목 시간대: [시간] — [이유]
+② 오늘 이슈 해석 + 오후 전망
+오전 주요 이슈: [이슈 + 원인분류] — [단발 / 트렌드 판단]
+공급망 시사: [이 이슈로 아직 반영 안 된 섹터·종목]
+오후 주목: S&P선물[방향] | 수혜 섹터 [섹터] | KOSPI 레벨 체크 포인트
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔔 3줄 즉시 실행 요약
-{three_line}
+🔔 오후 핵심 3줄
+▶ [오전 흐름 요약 + 오후 방향 판단]
+📡 [오늘 발굴된 구조적 기회 포인트]
+❌ [오후 투기·단기 추격 경계 사항]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
 def _build_prompt_intra2(has_price: bool) -> str:
-    three_line = _3line_summary(has_price, "지금 실행 3줄", "[홀드/익절XX%/손절/추가매수] — [이유 15자 이내]")
-    price_warn = "" if has_price else "🚫 가격 미확인 — 이 브리핑에서 원 단위 숫자 기재 절대 금지\n"
     return f"""{_COMMON_HEADER}
 
-{price_warn}━━━━━━━━━━━━━━━━━━━━━━━━━━
-🕐 장중 2차 점검  (오후 13:00)
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+🕐 장중 브리핑 (오후)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚡ 오후 방향  (한 줄)
-→ [강세유지 / 박스권 / 약세전환]  상승 XX% / 하락 YY%
-S&P선물 [수치]  |  외국인 오전 [순매수/순매도] XXX억
+⚡ 오후 방향 → [강세유지 / 박스권 / 약세전환]
+S&P선물[방향] | 외국인 오전[순매수/도]XXX억
 
-① 오전 복기 + 장전 전략 검증
-현재: KOSPI [수치] ([+/-X.X%])  KOSDAQ [수치] — 주도 섹터: [섹터]
-장전 예상과: [✅일치 / ❌불일치]  |  원인: [한 줄]
-투자관: [여전히 유효 / 오늘 재검토 신호]
+① 오전 복기 + 오후 방향 판단
+KOSPI[수치]([+/-X%]) | 오전 주도 섹터: [섹터] — 자금 흐름 특이사항
+투자관 유지 여부: [✅유지 / ⚠️수정] — 이유: [한 줄]
+오후 수혜 섹터: [섹터] — [이유]
 
-② 지금 내 포지션 행동
-✅ 유지:  [조건 수치]
-💰 익절:  XX% 매도 → 조건: [무엇이 될 때]
-🛑 손절:  [조건] → 즉시 전량 (이유 묻지 말고 실행)
-📥 추가:  X% → 조건: [무엇이 확인될 때]
-
-③ 오후 급등 종목 — 진입 여부
-종목명(코드) +XX%  →  [✅진입 / ❌추격금지 / ⏳관망]
-  재료: [한 줄]  |  수급: [외국인+기관 / 없음]
-  {'진입가 [가격표 수치]원  손절 -X%  목표 +Y%  손익비 Z:1' if has_price else '🚫 원단위 금지 — 조건만'}
-(수급 없는 급등 = ❌추격금지 한 줄로만)
-
-⚠️ 마감 전 주의
-[시간] [지표]가 [수준] 되면 → [즉시 행동]
-15:10 이후: 미결 손절 포지션 재확인 의무
+② 오늘 이슈 종합 + 장마감 전 시사점
+오늘 핵심 이슈: [이슈] → [단발 / 트렌드] — [공급망·섹터 시사점]
+⚠️ 마감 전 체크: [오늘 흐름이 내일·이번 주 섹터 방향에 미치는 구조적 함의]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔔 3줄 즉시 실행 요약
-{three_line}
+🔔 마감 핵심 3줄
+▶ [오늘 시장이 우리에게 말하는 것]
+📡 [오늘 새롭게 발굴된 구조적 기회]
+❌ [마감 전 투기·단기 추격 경계 사항]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━"""
 
 
@@ -754,12 +699,31 @@ def run(state: InvestmentState) -> InvestmentState:
             surge_ctx = _format_surge_context(state.get("raw_kis_data", {}))
             if surge_ctx:
                 context_parts.append(
-                    "\n[급등종목 수급 교차분석 — ④(장전)/⑨(장마감)/③(장중) 급등종목 즉시 판단의 기초 데이터]\n"
+                    "\n[급등종목 수급 교차분석 — 오늘 시장 흐름·섹터 방향 분석의 기초 데이터]\n"
                     + surge_ctx
                 )
                 logger.info("[CEO] 급등종목 교차분석 주입 완료")
         except Exception as _e:
             logger.debug("[CEO] 급등종목 교차분석 주입 실패: %s", _e)
+
+        if run_type == RUN_TYPE_GLOBAL:
+            # 글로벌 브리핑 전용 컨텍스트 — 미국·글로벌 데이터 중심
+            us_hot = state.get("us_hot_stocks", [])
+            if us_hot:
+                context_parts.append(
+                    "\n[미국 시장 주요 종목 + 한국 공급망 연결]\n"
+                    + format_us_impact_for_prompt(us_hot)
+                )
+            for label, key in [
+                ("[미국 시장 종합 분석]",       "us_market_report"),
+                ("[글로벌 매크로 분석]",         "global_market_report"),
+                ("[미국발 한국 수혜 종목 분석]", "us_impact_report"),
+                ("[빅피겨·Fed 발언]",            "bigfigure_report"),
+                ("[야간 글로벌 뉴스]",           "news_report"),
+                ("[중장기 수혜주 현황]",          "midterm_stock_report"),
+            ]:
+                if state.get(key):
+                    context_parts.append(f"\n{label}\n{state[key]}")
 
         if run_type == RUN_TYPE_PRE:
             us_hot = state.get("us_hot_stocks", [])
@@ -806,7 +770,7 @@ def run(state: InvestmentState) -> InvestmentState:
                         "\n[오늘 주요 DART 공시 — 해당 종목·섹터 판단에 반영]\n"
                         + dart_text
                     )
-            # 실시간 현재가 기반 진입/손절/목표가 주입
+            # 애널리스트 컨센서스 목표주가 주입 (가치 평가 참고용)
             try:
                 kis_pre = KISClient()
 
@@ -835,33 +799,16 @@ def run(state: InvestmentState) -> InvestmentState:
                             _cons_text = format_consensus_for_ceo(_full_consensus)
                             if _cons_text:
                                 context_parts.append(
-                                    "\n[애널리스트 컨센서스 목표주가 — 1차목표가로 반드시 사용]\n"
+                                    "\n[애널리스트 컨센서스 목표주가 — 중장기 가치 평가 참고]\n"
                                     + _cons_text
                                 )
                                 logger.info("[CEO] 컨센서스 목표주가 컨텍스트 주입 완료")
                 except Exception as _ce:
                     logger.debug("[CEO] 컨센서스 컨텍스트 주입 실패: %s", _ce)
 
-                price_ctx = _fetch_price_context(
-                    state.get("candidates", []), kis_pre,
-                    consensus_data=_pre_consensus_map,
-                )
-                if price_ctx and "조회 불가" not in price_ctx:
-                    context_parts.append(
-                        "\n[실시간 가격 데이터 — ③번 종목 추천의 진입/손절/목표가는 반드시 이 수치만 사용]\n"
-                        + price_ctx
-                    )
-                    has_price = True
-                    _price_ctx_snap = price_ctx
-                    logger.info("[CEO] 실시간 가격 데이터 주입 완료")
-                else:
-                    context_parts.append(
-                        "\n🚫 현재가 없음: 종목 추천(③번)에 원 단위 가격 수치 기재 절대 금지.\n"
-                        "진입 조건·손절 조건·목표 조건으로만 작성하세요."
-                    )
-                    logger.warning("[CEO] 가격 데이터 없음 — 조건 기반 지침 주입")
+                logger.info("[CEO] 컨센서스 준비 완료")
             except Exception as e:
-                logger.warning("[CEO] 실시간 가격 조회 실패: %s", e)
+                logger.warning("[CEO] 장전 컨센서스/가격 준비 실패: %s", e)
 
         if run_type == RUN_TYPE_CLOSE:
             # P5-1: 자동 실행 결과 주입 (장마감 브리핑)
@@ -953,7 +900,7 @@ def run(state: InvestmentState) -> InvestmentState:
                 context_parts.append(f"\n[오늘 추천 종목 수익률]\n{returns_text}")
             except Exception as e:
                 logger.warning("[CEO] 종가 수집 실패: %s", e)
-            # 내일 추천용 실시간 종가 기반 진입/손절/목표가 주입
+            # 장마감: 컨센서스 목표주가 주입 (가치 평가 참고용)
             try:
                 # 컨센서스 데이터 준비 (장마감용)
                 _close_consensus_map: dict = {}
@@ -979,33 +926,16 @@ def run(state: InvestmentState) -> InvestmentState:
                             _cons_text_c = format_consensus_for_ceo(_full_consensus_c)
                             if _cons_text_c:
                                 context_parts.append(
-                                    "\n[애널리스트 컨센서스 목표주가 — 1차목표가로 반드시 사용]\n"
+                                    "\n[애널리스트 컨센서스 목표주가 — 중장기 가치 평가 참고]\n"
                                     + _cons_text_c
                                 )
                                 logger.info("[CEO] 장마감 컨센서스 목표주가 컨텍스트 주입 완료")
                 except Exception as _ce_c:
                     logger.debug("[CEO] 장마감 컨센서스 컨텍스트 주입 실패: %s", _ce_c)
 
-                price_ctx = _fetch_price_context(
-                    state.get("candidates", []), kis_close,
-                    consensus_data=_close_consensus_map,
-                )
-                if price_ctx and "조회 불가" not in price_ctx:
-                    context_parts.append(
-                        "\n[실시간 가격 데이터 — ⑦번 종목 추천의 진입/손절/목표가는 반드시 이 수치만 사용]\n"
-                        + price_ctx
-                    )
-                    has_price = True
-                    _price_ctx_snap = price_ctx
-                    logger.info("[CEO] 장마감 실시간 가격 데이터 주입 완료")
-                else:
-                    context_parts.append(
-                        "\n🚫 현재가 없음: 종목 추천(④번)에 원 단위 가격 수치 기재 절대 금지.\n"
-                        "진입 조건·손절 조건·목표 조건으로만 작성하세요."
-                    )
-                    logger.warning("[CEO] 장마감 가격 데이터 없음 — 조건 기반 지침 주입")
+                logger.info("[CEO] 장마감 컨센서스 준비 완료 (가격 데이터 미주입)")
             except Exception as e:
-                logger.warning("[CEO] 장마감 가격 조회 실패: %s", e)
+                logger.warning("[CEO] 장마감 컨센서스/가격 준비 실패: %s", e)
 
         # 장중(intra): 실시간 KOSPI·KOSDAQ 지수 주입
         if run_type in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
@@ -1023,27 +953,27 @@ def run(state: InvestmentState) -> InvestmentState:
                         "\n[실시간 지수 — 현재 장중 수준]\n" + "\n".join(idx_lines)
                     )
 
-        # 장중 실시간 가격 주입 — 신규 진입 추천 시 X,XXX원 placeholder 방지
+        # 장중(intra): 한국 시장 실제 움직임 데이터 주입 (섹터 분석·이슈 판단의 기초)
         if run_type in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
-            try:
-                kis_intra = KISClient()
-                price_ctx = _fetch_price_context(state.get("candidates", []), kis_intra)
-                if price_ctx and "조회 불가" not in price_ctx:
-                    context_parts.append(
-                        "\n[실시간 가격 데이터 — 3줄 요약 📌줄의 진입가·손절가는 반드시 이 수치만 사용]\n"
-                        + price_ctx
-                    )
-                    has_price = True
-                    _price_ctx_snap = price_ctx  # 3줄 후처리용 저장
-                    logger.info("[CEO] 장중 실시간 가격 데이터 주입 완료")
-                else:
-                    context_parts.append(
-                        "\n🚫 현재가 없음: 3줄 요약 📌줄에서 진입가·손절가 원 단위 숫자 금지. '신규진입없음' 사용."
-                    )
-            except Exception as _ie:
-                logger.warning("[CEO] 장중 가격 조회 실패: %s", _ie)
+            if state.get("korea_spot_report"):
                 context_parts.append(
-                    "\n🚫 현재가 없음: 3줄 요약 📌줄에서 진입가·손절가 원 단위 숫자 금지. '신규진입없음' 사용."
+                    "\n[오늘 오전 한국 시장 실제 움직임 — 거래대금·수급 기반]\n"
+                    + state["korea_spot_report"]
+                )
+            if state.get("sector_report"):
+                context_parts.append(
+                    "\n[오전 섹터·테마 흐름]\n"
+                    + state["sector_report"]
+                )
+            if state.get("issue_stocks_report"):
+                context_parts.append(
+                    "\n[오전 이슈 종목 배경 분석]\n"
+                    + state["issue_stocks_report"]
+                )
+            if state.get("money_flow_report"):
+                context_parts.append(
+                    "\n[오전 수급 — 외국인·기관 흐름]\n"
+                    + state["money_flow_report"]
                 )
 
         # 장중(intra) 브리핑에도 DART 공시 포함
@@ -1072,21 +1002,12 @@ def run(state: InvestmentState) -> InvestmentState:
         if state.get("review_report"):
             context_parts.append(f"\n[복기]\n{state['review_report']}")
 
-        # 가격 데이터 없을 때: 컨텍스트 맨 앞과 맨 뒤에 경고 배너 삽입
-        if not has_price and run_type in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
-            context_parts.insert(0,
-                "🚫🚫 가격 경고 — 현재가 데이터 없음 🚫🚫\n"
-                "종목 추천 섹션에 진입가·손절가·목표가 원 단위 숫자 절대 기재 금지.\n"
-                "이 규칙 위반 시 사용자에게 잘못된 투자 정보를 제공하게 됩니다."
-            )
-            context_parts.append(
-                "\n🚫 최종 확인: 가격 데이터 없음 — 종목 추천에 원 단위 숫자 금지."
-            )
-
         context = "\n".join(context_parts)
 
-        # 실행 유형별 프롬프트 선택 — 모든 유형이 has_price에 따라 3줄 요약을 다르게 생성
-        if run_type == RUN_TYPE_PRE:
+        # 실행 유형별 프롬프트 선택
+        if run_type == RUN_TYPE_GLOBAL:
+            prompt = _build_prompt_global()
+        elif run_type == RUN_TYPE_PRE:
             prompt = _build_prompt_pre(has_price)
         elif run_type == RUN_TYPE_CLOSE:
             prompt = _build_prompt_close(has_price)
@@ -1095,7 +1016,7 @@ def run(state: InvestmentState) -> InvestmentState:
         else:
             prompt = _build_prompt_intra2(has_price)
 
-        result = chat_ceo(prompt, context, max_tokens=2500)
+        result = chat_ceo(prompt, context, max_tokens=1500)
         state["ceo_report"] = result
 
         # ── 손익비 3:1 원칙 자동 집행 ────────────────────────────────

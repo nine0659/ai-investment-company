@@ -1,35 +1,26 @@
 """
 services/alert_service.py
-긴급 기회 알림 서비스
+시장 경보 알림 서비스
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[긴급 알림의 의미]
+[알림의 목적]
 
-이 시스템의 "긴급 알림"은 단순 위험 경고가 아닙니다.
-"지금 이 순간 진입해야 기회를 잡을 수 있다"는 신호입니다.
+이 시스템의 알림은 투자 판단을 위한 정보 제공입니다.
+매매 타이밍 신호 발생이 아닙니다. 직접 분석 후 판단하세요.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚀 OPPORTUNITY (기회 긴급 — 지금 매수 진입)
+📡 OPPORTUNITY (시장 이벤트 감지 — 정보 제공)
 
-정의: 복수의 강한 상승 신호가 동시에 발생해 즉각 진입하지 않으면
-       기회를 놓칠 가능성이 높은 상황
-
-발동 조건 (아래 중 2개 이상 동시 충족):
-  [기술적]
-  · 관심종목 RSI ≤ 28 (극과매도) + 볼린저밴드 하단 터치
-  · MA5/MA20 골든크로스 + 거래량 300% 이상 급증
-  · 전일 급락 후 장 초반 강한 반등(+2% 이상) 시작
-  [이벤트/뉴스 촉매]
-  · 지정학 이벤트 → 명확한 수혜 섹터 존재 (방산·원유·방어주 등)
-  · 정책 발표 → 특정 섹터 직접 수혜 (보조금·규제완화·금리인하)
-  · 실적 서프라이즈 → 경쟁사 동반 상승 기대
-  [수급 신호]
+감지 대상:
+  [섹터 이벤트]
+  · 지정학 이벤트 → 관련 섹터 영향 분석 (방산·원유·방어주 등)
+  · 정책 발표 → 특정 섹터 수혜 가능성 (보조금·규제완화·금리인하)
+  · 실적 서프라이즈 → 동일 섹터 영향 파악
+  [수급 이상 감지]
   · 외국인 대규모 순매수 전환 + EWY/EEM ETF 급등
-  · 기관 대량 매수 + 공매도 잔고 감소
+  · 기관 대량 매수 + 워치리스트 종목 급변
 
-🚨 RISK (위험 긴급 — 즉시 포지션 점검)
-
-정의: 예상치 못한 외부 충격으로 보유 포지션이 즉각 위협받는 상황
+🚨 RISK (시장 리스크 경보 — 즉시 점검)
 
 발동 조건:
   · 지정학 블랙스완 (미군기지 공격·핵·전쟁선포·서킷브레이커)
@@ -42,7 +33,7 @@ services/alert_service.py
 [카카오톡 설정]
 환경변수: KAKAO_ACCESS_TOKEN
 발급: https://developers.kakao.com → 앱 생성 → 카카오 로그인 → 액세스토큰
-미설정 시 텔레그램으로만 발송 (OPPORTUNITY·RISK 모두)
+미설정 시 텔레그램으로만 발송
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 import logging
@@ -57,18 +48,18 @@ logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
 # ── 알림 타입 ────────────────────────────────────────────────────
-TYPE_OPPORTUNITY = "opportunity"  # 🚀 지금 진입 기회
-TYPE_RISK        = "risk"         # 🚨 즉각 포지션 점검
-TYPE_ENTRY       = "entry"        # ✅ 관심종목 진입 신호 (실시간모니터)
-TYPE_TARGET      = "target"       # 🎯 목표가 도달
-TYPE_STOP        = "stop"         # 🛑 손절선 도달
+TYPE_OPPORTUNITY = "opportunity"  # 📡 시장 이벤트 감지 (정보 제공)
+TYPE_RISK        = "risk"         # 🚨 시장 리스크 경보
+TYPE_ENTRY       = "entry"        # 📊 워치리스트 동향 (정보 제공)
+TYPE_TARGET      = "target"       # 📈 수익 목표 구간 도달
+TYPE_STOP        = "stop"         # ⚠️ 리스크 기준선 도달
 
 _EMOJI = {
-    TYPE_OPPORTUNITY: "🚀🚀🚀 *[기회 — 지금 진입]*",
+    TYPE_OPPORTUNITY: "📡 *[시장 이벤트 감지]*",
     TYPE_RISK:        "🚨🚨🚨 *[위험 — 즉시 점검]*",
-    TYPE_ENTRY:       "✅ *[진입 신호]*",
-    TYPE_TARGET:      "🎯 *[목표가 도달]*",
-    TYPE_STOP:        "🛑 *[손절선 도달]*",
+    TYPE_ENTRY:       "📊 *[워치리스트 동향]*",
+    TYPE_TARGET:      "📈 *[수익 목표 구간 도달]*",
+    TYPE_STOP:        "⚠️ *[리스크 기준선 도달]*",
 }
 
 # ── 위험 임계값 ──────────────────────────────────────────────────
@@ -76,12 +67,6 @@ RISK_KOSPI_CRASH   = -2.5    # KOSPI 급락 (%)
 RISK_VIX_PANIC     = 35.0    # VIX 패닉 수준
 RISK_USD_KRW       = 1450    # 원달러 긴급 수준 (원)
 RISK_STOCK_CRASH   = -7.0    # 보유 종목 단일일 급락 (%)
-
-# ── 기회 임계값 ──────────────────────────────────────────────────
-OPP_RSI_OVERSOLD   = 28      # RSI 극과매도
-OPP_BB_LOWER_PCT   = 5.0     # 볼린저밴드 하단 (%)
-OPP_VOL_SURGE      = 250     # 거래량 급증 (5일 평균 대비 %)
-OPP_REBOUND_PCT    = 2.0     # 반등 시작 (%)
 
 # ── 지정학 RISK 키워드 ────────────────────────────────────────────
 GEOPOLITICAL_RISK_KEYWORDS = [
@@ -243,37 +228,10 @@ def _already_sent_any_type(today: str, code: str, cooldown_minutes: int = 30) ->
         return False
 
 
-# ── 기회 감지 ─────────────────────────────────────────────────────
-
-def check_opportunity_signals(code: str, name: str, price: int, tech: dict,
-                               today: str) -> list[str]:
-    """특정 종목의 기회 신호 감지. 신호 목록 반환."""
-    signals = []
-
-    rsi    = tech.get("rsi14", 50)
-    bb_pct = tech.get("bb_pct", 50)
-    vol    = tech.get("vol_ratio", 100)
-    golden = tech.get("golden_cross", False)
-    above  = tech.get("above_ma20", True)
-    ma20   = tech.get("ma20", 0)
-
-    # 신호1: RSI 극과매도 + 볼린저 하단
-    if rsi <= OPP_RSI_OVERSOLD and bb_pct is not None and bb_pct <= OPP_BB_LOWER_PCT:
-        signals.append(f"RSI {rsi:.0f} 극과매도 + 볼린저밴드 하단 터치 — 강한 반등 기대")
-
-    # 신호2: 골든크로스 + 거래량 폭발
-    if golden and vol >= OPP_VOL_SURGE:
-        signals.append(f"MA5/MA20 골든크로스 발생 + 거래량 {vol:.0f}% 폭발 — 추세 전환 진입 시점")
-
-    # 신호3: MA20 지지 + 거래량 급증 (눌림목 후 반등)
-    if above and ma20 and price <= ma20 * 1.02 and vol >= 200:
-        signals.append(f"MA20 지지권 반등 + 거래량 {vol:.0f}% 급증 — 눌림목 매수 기회")
-
-    return signals
-
+# ── 섹터 이벤트 감지 (정보 제공용) ───────────────────────────────
 
 def check_news_opportunity(news_data: dict, today: str) -> None:
-    """뉴스 기반 기회 알림 — 특정 촉매 이벤트가 섹터 수혜를 만드는 경우."""
+    """뉴스 촉매 이벤트 감지 — 섹터 관심 정보 제공 (매매 신호 아님)."""
     key = "news_opportunity"
     if _already_sent(today, "MARKET", key):
         return
@@ -291,27 +249,26 @@ def check_news_opportunity(news_data: dict, today: str) -> None:
             _mark_sent(today, "MARKET", key)
             send_alert(
                 TYPE_OPPORTUNITY,
-                f"뉴스 촉매 감지 → {sector} 섹터 기회",
-                f"다음 이슈가 {sector} 섹터 상승 촉매로 작용할 수 있습니다:\n"
+                f"섹터 이벤트 감지 → {sector}",
+                f"다음 이슈가 {sector} 섹터와 관련됩니다:\n"
                 f"감지 키워드: {', '.join(matched_kws)}\n\n"
-                f"주목 종목: {stocks}\n\n"
-                f"지금 진입 검토 — 섹터 ETF·뉴스·수급 동시 확인 후 결정",
+                f"관련 섹터·종목: {stocks}\n\n"
+                f"ℹ️ 투자 검토 참고 자료 — 직접 분석 후 판단 필요",
             )
-            break  # 하나만 발송
+            break
 
 
 def check_watchlist_opportunity(today: str) -> None:
-    """관심종목 중 기회 신호 2개 이상 동시 발생 종목 → 긴급 진입 알림."""
+    """워치리스트 종목 가격 급변 감지 — 정보 제공 (매매 신호 아님)."""
     try:
         from db.database import get_conn
         from sqlalchemy import text
         from clients.kis_client import KISClient
-        from clients.market_data_client import fetch_kr_stock_technicals
 
         with get_conn() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT code, name, target_entry FROM watchlist_items "
+                    "SELECT code, name, reason FROM watchlist_items "
                     "WHERE status='active'"
                 )
             ).fetchall()
@@ -319,54 +276,36 @@ def check_watchlist_opportunity(today: str) -> None:
             return
 
         kis = KISClient()
-        for code, name, target_entry in rows:
+        for code, name, reason in rows:
             alert_key = f"opp_{code}"
             if _already_sent(today, code, alert_key):
                 continue
             try:
-                pd    = kis.get_stock_price(code, market=None)
-                price = pd.get("price", 0)
+                pd      = kis.get_stock_price(code, market=None)
+                price   = pd.get("price", 0)
+                chg_pct = pd.get("change_pct", 0) or 0
                 if not price:
                     continue
 
-                # 기술적 지표
-                tech = {}
-                for sfx in ("KS", "KQ"):
-                    try:
-                        t = fetch_kr_stock_technicals(f"{code}.{sfx}")
-                        if t and t.get("rsi14"):
-                            tech = t
-                            break
-                    except Exception:
-                        pass
+                # 3% 이상 급등락 시에만 정보 알림
+                if abs(chg_pct) < 3.0:
+                    continue
 
-                signals = check_opportunity_signals(code, name, price, tech, today)
-
-                # 목표 진입가 근접도 신호 추가
-                if target_entry and abs(price - target_entry) / target_entry <= 0.01:
-                    signals.append(f"목표진입가 {target_entry:,.0f}원 도달 (현재 {price:,}원)")
-
-                if len(signals) >= 2:
-                    _mark_sent(today, code, alert_key)
-                    tech_info = (
-                        f"RSI {tech['rsi14']:.0f} | "
-                        f"BB% {tech.get('bb_pct',50):.0f}% | "
-                        f"거래량 {tech.get('vol_ratio',100):.0f}%"
-                    ) if tech else "기술지표 없음"
-
-                    send_alert(
-                        TYPE_OPPORTUNITY,
-                        f"{name} — 지금이 진입 타이밍",
-                        f"종목: {name}({code})\n"
-                        f"현재가: {price:,}원 | {tech_info}\n\n"
-                        f"발동 신호:\n" + "\n".join(f"  ✅ {s}" for s in signals)
-                        + "\n\n복수 신호 동시 발생 — 지금 진입하지 않으면 기회를 놓칠 수 있습니다.",
-                        code=code, name=name,
-                    )
-                    logger.info("[기회알림] %s(%s) — 신호 %d개", name, code, len(signals))
+                direction = "급등" if chg_pct > 0 else "급락"
+                _mark_sent(today, code, alert_key)
+                send_alert(
+                    TYPE_ENTRY,
+                    f"워치리스트 동향 — {name} {chg_pct:+.1f}%",
+                    f"종목: {name}({code})\n"
+                    f"현재가: {price:,}원  |  당일 등락: {chg_pct:+.1f}% ({direction})\n"
+                    f"모니터링 사유: {reason or '없음'}\n\n"
+                    f"ℹ️ 투자 검토 참고 자료 — 직접 분석 후 판단 필요",
+                    code=code, name=name,
+                )
+                logger.info("[동향감지] %s(%s) %+.1f%%", name, code, chg_pct)
 
             except Exception as e:
-                logger.debug("[기회알림] %s 체크 실패: %s", code, e)
+                logger.debug("[동향감지] %s 체크 실패: %s", code, e)
 
     except Exception as e:
         logger.error("[기회알림] 관심종목 기회 체크 실패: %s", e)
