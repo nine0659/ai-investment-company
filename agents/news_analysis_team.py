@@ -1,6 +1,7 @@
 import logging
 from graph.state import InvestmentState
 from clients.openai_client import chat
+from clients.article_body_client import enrich_with_body
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,57 @@ _SYSTEM = """당신은 금융 뉴스 분석 전문가입니다.
 - 전체 뉴스 센티먼트: 긍정·부정·혼조 + 한 줄 근거"""
 
 
+def _build_news_text(news: dict) -> str:
+    """뉴스 데이터를 LLM 컨텍스트용 텍스트로 변환.
+
+    처리 순서:
+    1. 전체 아이템 중 링크 있는 상위 10건 → 본문 병렬 fetch
+    2. 제목 + (본문 or RSS 요약) 조합으로 라인 생성
+    3. 최대 40라인 반환
+    """
+    # 1. 전체 아이템 수집 (소스별 상위 5건)
+    all_items: list[tuple[str, dict]] = []
+    for source, items in news.items():
+        for item in items[:5]:
+            if item.get("title"):
+                all_items.append((source, item))
+
+    if not all_items:
+        return "뉴스 없음"
+
+    # 2. 링크 있는 아이템 상위 10건 본문 fetch
+    flat_items = [it for _, it in all_items]
+    enriched_flat = enrich_with_body(flat_items, max_items=10, max_chars=350, workers=6)
+
+    # 링크 → enriched item 매핑
+    enriched_by_link: dict[str, dict] = {
+        it.get("link", ""): it for it in enriched_flat if it.get("link")
+    }
+
+    # 3. 라인 생성
+    lines: list[str] = []
+    for source, item in all_items:
+        title = item.get("title", "")
+        link = item.get("link", "")
+        enriched = enriched_by_link.get(link, item)
+
+        # 본문 > RSS 요약 순으로 사용
+        snippet = enriched.get("body") or item.get("summary", "")
+        snippet = " ".join(snippet.split())[:200] if snippet else ""
+
+        if snippet:
+            lines.append(f"[{source}] {title} — {snippet}")
+        else:
+            lines.append(f"[{source}] {title}")
+
+    return "\n".join(lines[:40])
+
+
 def run(state: InvestmentState) -> InvestmentState:
     try:
         news = state.get("raw_news_data", {})
-        lines = []
-        for source, items in news.items():
-            for item in items[:5]:
-                if t := item.get("title"):
-                    lines.append(f"[{source}] {t}")
-        text = "\n".join(lines[:40]) if lines else "뉴스 없음"
-        result = chat(_SYSTEM, f"오늘의 뉴스 헤드라인:\n{text}", max_tokens=2000)
+        text = _build_news_text(news)
+        result = chat(_SYSTEM, f"오늘의 뉴스:\n{text}", max_tokens=2000)
         state["news_report"] = result
         logger.info("[뉴스팀] 완료")
     except Exception as e:
