@@ -767,6 +767,22 @@ def run(state: InvestmentState) -> InvestmentState:
                     context_parts.append(f"\n{label}\n{state[key]}")
 
         if run_type == RUN_TYPE_PRE:
+            # 야간선물·EWY·VIX — 장전 갭 방향 판단의 핵심 데이터
+            if state.get("futures_report"):
+                context_parts.insert(2,
+                    "\n[야간 선물·EWY·VIX — 오늘 갭 방향 핵심 데이터 (프롬프트 ① 채우기)]\n"
+                    + state["futures_report"]
+                )
+            if state.get("global_market_report"):
+                context_parts.append(
+                    "\n[글로벌 매크로 분석]\n"
+                    + state["global_market_report"]
+                )
+            if state.get("us_market_report"):
+                context_parts.append(
+                    "\n[미국 시장 분석]\n"
+                    + state["us_market_report"]
+                )
             us_hot = state.get("us_hot_stocks", [])
             if us_hot:
                 context_parts.append(
@@ -996,6 +1012,12 @@ def run(state: InvestmentState) -> InvestmentState:
 
         # 장중(intra): 한국 시장 실제 움직임 데이터 주입 (섹터 분석·이슈 판단의 기초)
         if run_type in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
+            # S&P 선물 방향 — 프롬프트에서 요구하는 핵심 글로벌 지표
+            if state.get("futures_report"):
+                context_parts.append(
+                    "\n[S&P·나스닥 선물 현재 방향 — 장중 해외 흐름 판단]\n"
+                    + state["futures_report"]
+                )
             if state.get("korea_spot_report"):
                 context_parts.append(
                     "\n[오늘 오전 한국 시장 실제 움직임 — 거래대금·수급 기반]\n"
@@ -1015,6 +1037,18 @@ def run(state: InvestmentState) -> InvestmentState:
                 context_parts.append(
                     "\n[오전 수급 — 외국인·기관 흐름]\n"
                     + state["money_flow_report"]
+                )
+            # 장중 뉴스·빅피겨 — 장중에도 중요 이벤트 발생 가능
+            if state.get("news_report"):
+                context_parts.append(
+                    "\n[오늘 뉴스]\n"
+                    + state["news_report"]
+                )
+            _bf = state.get("bigfigure_report", "")
+            if _bf and _bf not in ("빅피겨 뉴스 없음", "빅피겨 주요 뉴스 없음", "[빅피겨 분석 일시 불가]"):
+                context_parts.append(
+                    "\n[빅피겨 발언 참조]\n"
+                    + _bf
                 )
 
         # 장중(intra) 브리핑에도 DART 공시 포함
