@@ -7,20 +7,16 @@ from langgraph.graph import StateGraph, END
 from graph.state import InvestmentState
 from config.settings import TZ, RUN_TYPE_GLOBAL, RUN_TYPE_PRE, RUN_TYPE_CLOSE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2
 
-import agents.futures_market_team    as futures_market_team
-import agents.us_market_team         as us_market_team
-import agents.us_impact_agent        as us_impact_agent
-import agents.korea_spot_market_team as korea_spot_market_team
-import agents.global_market_team     as global_market_team
-import agents.news_analysis_team     as news_analysis_team
-import agents.bigfigure_agent        as bigfigure_agent
-import agents.sector_theme_team      as sector_theme_team
-import agents.money_flow_team        as money_flow_team
-import agents.macro_team                  as macro_team
-import agents.event_risk_team             as event_risk_team
-import agents.market_intelligence_team    as market_intelligence_team
-import agents.risk_management_team        as risk_management_team
-import agents.issue_stock_agent          as issue_stock_agent
+import agents.futures_market_team       as futures_market_team
+import agents.us_global_team            as us_global_team        # 통합: us_market + us_impact + global
+import agents.korea_flow_team           as korea_flow_team        # 통합: korea_spot + sector + money_flow
+import agents.news_analysis_team        as news_analysis_team
+import agents.bigfigure_agent           as bigfigure_agent
+import agents.macro_team                as macro_team
+import agents.event_risk_team           as event_risk_team
+import agents.market_intelligence_team  as market_intelligence_team
+import agents.risk_management_team      as risk_management_team
+import agents.issue_stock_agent         as issue_stock_agent
 import agents.review_feedback_team      as review_feedback_team
 import agents.investment_committee      as investment_committee
 import agents.portfolio_manager_agent   as portfolio_manager_agent
@@ -97,10 +93,10 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         kis_data: dict = {}
         for market, code in [("kospi", "J"), ("kosdaq", "Q")]:
             for fn, suffix in [
-                (kis.get_volume_rank,       "volume_rank"),
-                (kis.get_amount_rank,       "amount_rank"),
-                (kis.get_foreign_buy_rank,  "foreign_rank"),
-                (kis.get_institution_buy_rank, "institution_rank"),
+                (kis.get_volume_rank,         "volume_rank"),
+                (kis.get_amount_rank,         "amount_rank"),
+                (kis.get_foreign_buy_rank,    "foreign_rank"),
+                (kis.get_institution_buy_rank,"institution_rank"),
             ]:
                 try:
                     kis_data[f"{market}_{suffix}"] = fn(code)
@@ -118,7 +114,6 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         state["errors"].append(f"collect_kis: {e}")
 
     try:
-        # 시황 데이터를 함께 전달 → LLM이 동적 검색어 생성에 활용
         state["raw_news_data"] = fetch_all_news(
             max_per_category=8,
             market_data=state.get("raw_market_data", {}),
@@ -144,47 +139,33 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.warning("[데이터수집] 한국 지수 실시간 실패: %s", e)
         state["kr_index_realtime"] = {}
 
-    # ── 월간 투자관 로드 (CEO 최우선 컨텍스트 — 모든 판단의 헌법) ──────
     try:
         from services.thesis_service import get_thesis_ceo_summary
         state["investment_thesis"] = get_thesis_ceo_summary()
         if state["investment_thesis"]:
             logger.info("[데이터수집] 투자관 로드 완료")
-        else:
-            logger.debug("[데이터수집] 투자관 없음 (아직 생성 전)")
     except Exception as e:
         logger.debug("[데이터수집] 투자관 로드 실패 (무시): %s", e)
         state["investment_thesis"] = ""
 
-    # ── 최신 주간 전략 요약 로드 (CEO 컨텍스트 주입용) ──────────────────
     try:
         from services.strategy_service import get_latest_strategy_summary
         state["weekly_strategy_summary"] = get_latest_strategy_summary(max_days=7)
         if state["weekly_strategy_summary"]:
             logger.info("[데이터수집] 주간 전략 요약 로드 완료")
-        else:
-            logger.debug("[데이터수집] 주간 전략 없음 (7일 내 실행 기록 없음)")
     except Exception as e:
         logger.debug("[데이터수집] 주간 전략 로드 실패 (무시): %s", e)
         state["weekly_strategy_summary"] = ""
 
-    # ── 애널리스트 컨센서스 목표주가 수집 ─────────────────────────────
     try:
         from clients.consensus_client import fetch_consensus_batch
         from agents.ceo_agent import _BLUECHIP_ALWAYS_FETCH
 
         bluechip_codes = [s["code"] for s in _BLUECHIP_ALWAYS_FETCH]
-        name_map = {s["code"]: s["name"] for s in _BLUECHIP_ALWAYS_FETCH}
-        market_map = {s["code"]: s["market"] for s in _BLUECHIP_ALWAYS_FETCH}
-
-        # 배치 수집 (rate limit 준수)
+        name_map  = {s["code"]: s["name"]   for s in _BLUECHIP_ALWAYS_FETCH}
+        market_map= {s["code"]: s["market"] for s in _BLUECHIP_ALWAYS_FETCH}
         consensus_raw = fetch_consensus_batch(bluechip_codes, delay=0.3, market_map=market_map)
-
-        # raw 컨센서스 + name_map 저장 (현재가와 조합은 ceo_agent에서 수행)
-        state["consensus_data"] = {
-            "_raw": consensus_raw,
-            "_name_map": name_map,
-        }
+        state["consensus_data"] = {"_raw": consensus_raw, "_name_map": name_map}
         logger.info("[데이터수집] 컨센서스 목표주가 완료: %d종목", len(consensus_raw))
     except Exception as e:
         logger.warning("[데이터수집] 컨센서스 수집 실패 (무시): %s", e)
@@ -195,33 +176,34 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
 
 # ── 에이전트 노드 ───────────────────────────────────────────────
 
-def node_futures(state):       return futures_market_team.run(state)
-def node_us(state):            return us_market_team.run(state)
-def node_us_impact(state):     return us_impact_agent.run(state)
-def node_korea(state):         return korea_spot_market_team.run(state)
-def node_global(state):        return global_market_team.run(state)
-def node_news(state):          return news_analysis_team.run(state)
-def node_bigfigure(state):     return bigfigure_agent.run(state)
-def node_sector(state):        return sector_theme_team.run(state)
-def node_issue_stocks(state):  return issue_stock_agent.run(state)
-def node_money_flow(state):    return money_flow_team.run(state)
-def node_macro(state):         return macro_team.run(state)
-def node_event_risk(state):    return event_risk_team.run(state)
-def node_intelligence(state):  return market_intelligence_team.run(state)
-def node_risk(state):          return risk_management_team.run(state)
-def node_committee(state):          return investment_committee.run(state)
-def node_portfolio_manager(state):  return portfolio_manager_agent.run(state)
+def node_futures(state):      return futures_market_team.run(state)
+def node_us_global(state):    return us_global_team.run(state)
+def node_korea_flow(state):   return korea_flow_team.run(state)
+def node_news(state):         return news_analysis_team.run(state)
+def node_bigfigure(state):    return bigfigure_agent.run(state)
+def node_macro(state):        return macro_team.run(state)
+def node_event_risk(state):   return event_risk_team.run(state)
+def node_intelligence(state): return market_intelligence_team.run(state)
+def node_risk(state):         return risk_management_team.run(state)
+def node_issue_stocks(state): return issue_stock_agent.run(state)
+
 def node_midterm_stocks(state):
-    # 장중 브리핑(INTRA1·INTRA2)에서는 중장기 분석 스킵 — PRE·CLOSE·GLOBAL에서만 실행
     if state.get("run_type") in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
         return state
     return midterm_stock_agent.run(state)
-def node_ceo(state):                return ceo_agent.run(state)
+
+def node_ceo(state):               return ceo_agent.run(state)
+def node_portfolio_manager(state): return portfolio_manager_agent.run(state)
+def node_committee(state):         return investment_committee.run(state)
 
 def node_review(state):
     if state.get("run_type") == RUN_TYPE_CLOSE:
         return review_feedback_team.run(state)
     return state
+
+# 병렬 팬-인 배리어 (상태를 그대로 전달)
+def node_l2_barrier(state): return state
+def node_l3_barrier(state): return state
 
 
 # ── 저장 / 발송 노드 ────────────────────────────────────────────
@@ -241,8 +223,6 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         logger.error("[리포트저장] 실패: %s", e)
         state["errors"].append(f"save_report: {e}")
 
-    # ── CEO 추천 종목 저장 (장마감 브리핑 전용) ──────────────────
-    # PRE 추천 저장은 ceo_agent.py에서 이미 처리 — 여기서 중복 실행 방지
     ceo_report = state.get("ceo_report", "")
     if ceo_report and state.get("run_type") == RUN_TYPE_CLOSE:
         try:
@@ -254,7 +234,6 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         except Exception as e:
             logger.debug("[추천저장] 실패: %s", e)
 
-    # ── 시장 방향 예측 저장 ────────────────────────────────────
     if ceo_report:
         try:
             from services.market_prediction_service import save_prediction
@@ -262,7 +241,6 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         except Exception as e:
             logger.debug("[예측저장] 실패: %s", e)
 
-    # ── 시장 스냅샷 아카이브 저장 ───────────────────────────────
     try:
         from services.market_archive_service import save_market_snapshot, save_intelligence_summary
         save_market_snapshot(
@@ -270,12 +248,9 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
             run_type=state["run_type"],
             market_data=state.get("raw_market_data", {}),
         )
-        # 인텔리전스 요약 저장 (market_intelligence_report에서 추출)
         intel_report = state.get("market_intelligence_report", "")
         if intel_report:
-            # 감성 키워드 간단 추출
             sentiment = "강세" if "강세" in intel_report else ("약세" if "약세" in intel_report else "중립")
-            # 테마 키워드 (AI/반도체/금리/환율 등)
             themes = ",".join(
                 kw for kw in ["AI", "반도체", "금리", "환율", "중국", "미국", "수급", "실적"]
                 if kw in intel_report
@@ -296,7 +271,6 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
 
 
 def node_record_nav(state: InvestmentState) -> InvestmentState:
-    """장마감 브리핑 후 포트폴리오 NAV 기록 (자산 성장 추적)."""
     if state.get("run_type") != RUN_TYPE_CLOSE:
         return state
     try:
@@ -333,12 +307,9 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
     return state
 
 
-# ── 글로벌 시황 전용 데이터 수집 (KIS·DART 제외 — 06:30 한국 시장 미개장) ──
+# ── 글로벌 시황 전용 데이터 수집 (KIS·DART 제외) ─────────────────
 
 def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
-    """미국 장 마감 후 글로벌 브리핑용 경량 데이터 수집.
-    KIS(한국 수급·종목), DART 공시, 컨센서스는 수집하지 않는다.
-    """
     logger.info("[글로벌수집] 시작 (KIS 제외)")
 
     for key, fn, label, default in [
@@ -354,7 +325,6 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
             state[key] = default
             state["errors"].append(f"global_{key}: {e}")
 
-    # 데이터 신선도
     try:
         freshness = check_data_freshness(state["raw_market_data"])
         state["data_freshness"] = freshness
@@ -363,7 +333,6 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
     except Exception:
         state["data_freshness"] = {}
 
-    # 미국 주요 종목 (공급망 연결 포함)
     try:
         state["us_hot_stocks"] = fetch_us_top_movers(n=10)
         logger.info("[글로벌수집] 미국 상위 종목 %d개", len(state["us_hot_stocks"]))
@@ -372,7 +341,6 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
         state["us_hot_stocks"] = []
         state["errors"].append(f"global_us_hot: {e}")
 
-    # 빅피겨 발언 (Fed·연준 위원 등 야간 발언)
     try:
         state["bigfigure_news"] = fetch_bigfigure_news(max_per_figure=3)
         logger.info("[글로벌수집] 빅피겨 뉴스 %d명", len(state["bigfigure_news"]))
@@ -380,7 +348,6 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
         logger.error("[글로벌수집] 빅피겨 뉴스 실패: %s", e)
         state["bigfigure_news"] = []
 
-    # 뉴스 (야간 글로벌 이슈 중심)
     try:
         state["raw_news_data"] = fetch_all_news(
             max_per_category=6,
@@ -391,13 +358,11 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
         logger.error("[글로벌수집] 뉴스 실패: %s", e)
         state["raw_news_data"] = {}
 
-    # KIS 없음 — 한국 시장 미개장
-    state["raw_kis_data"]      = {}
-    state["dart_disclosures"]  = []
-    state["consensus_data"]    = {}
-    state["kr_index_realtime"] = {}
+    state["raw_kis_data"]     = {}
+    state["dart_disclosures"] = []
+    state["consensus_data"]   = {}
+    state["kr_index_realtime"]= {}
 
-    # 투자관·주간 전략 로드 (맥락 유지)
     try:
         from services.thesis_service import get_thesis_ceo_summary
         state["investment_thesis"] = get_thesis_ceo_summary()
@@ -414,71 +379,140 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
 
 
 # ── 그래프 빌드 ────────────────────────────────────────────────
+#
+# 병렬 실행 구조:
+#   Layer 1: collect_raw_data (sequential)
+#   Layer 2: futures | us_global | news | bigfigure | macro | event_risk | intelligence (parallel)
+#   [l2_barrier: fan-in]
+#   Layer 3: korea_flow | issue_stocks (parallel)
+#   [l3_barrier: fan-in]
+#   Layer 4: risk → review → committee → portfolio → midterm → ceo (sequential)
+#   Layer 5: save → nav → telegram → END (sequential)
+
+_L2_NODES = [
+    "futures_market_team",
+    "us_global_team",
+    "news_analysis_team",
+    "bigfigure_agent",
+    "macro_team",
+    "event_risk_team",
+    "market_intelligence_team",
+]
+
+_L3_NODES = [
+    "korea_flow_team",
+    "issue_stock_agent",
+]
+
 
 def build_graph() -> StateGraph:
     g = StateGraph(InvestmentState)
 
-    nodes = [
-        ("collect_raw_data",       collect_raw_data),
-        ("futures_market_team",    node_futures),
-        ("us_market_team",         node_us),
-        ("us_impact_agent",        node_us_impact),       # 미국 섹터 → 한국 종목 매핑
-        ("korea_spot_market_team", node_korea),
-        ("global_market_team",     node_global),
-        ("news_analysis_team",     node_news),
-        ("bigfigure_agent",        node_bigfigure),       # 빅피겨 발언 분석
-        ("sector_theme_team",      node_sector),
-        ("issue_stock_agent",      node_issue_stocks),    # 거래량·수급·미국연동 이슈종목 발굴
-        ("money_flow_team",        node_money_flow),
-        ("macro_team",                node_macro),            # 매크로 레짐 분석 (금리/크레딧/달러/구리)
-        ("event_risk_team",         node_event_risk),       # 경제 이벤트 캘린더 리스크
-        ("market_intelligence_team",node_intelligence),     # 글로벌 전문가 서사·컨센서스 (해석 레이어)
-        ("risk_management_team",    node_risk),
-        ("review_feedback_team",   node_review),
-        ("investment_committee",   node_committee),
-        ("portfolio_manager_agent", node_portfolio_manager),  # 실제 포트폴리오 + 워치리스트 분석
-        ("midterm_stock_agent",    node_midterm_stocks),     # 중장기(3~12개월) 종목 추천
-        ("ceo_agent",              node_ceo),
-        ("save_report",            node_save_report),
-        ("record_nav",             node_record_nav),
-        ("send_telegram",          node_send_telegram),
-    ]
-    for name, fn in nodes:
-        g.add_node(name, fn)
+    # ── 노드 등록
+    g.add_node("collect_raw_data",         collect_raw_data)
+    g.add_node("futures_market_team",      node_futures)
+    g.add_node("us_global_team",           node_us_global)
+    g.add_node("news_analysis_team",       node_news)
+    g.add_node("bigfigure_agent",          node_bigfigure)
+    g.add_node("macro_team",               node_macro)
+    g.add_node("event_risk_team",          node_event_risk)
+    g.add_node("market_intelligence_team", node_intelligence)
+    g.add_node("l2_barrier",               node_l2_barrier)
+    g.add_node("korea_flow_team",          node_korea_flow)
+    g.add_node("issue_stock_agent",        node_issue_stocks)
+    g.add_node("l3_barrier",               node_l3_barrier)
+    g.add_node("risk_management_team",     node_risk)
+    g.add_node("review_feedback_team",     node_review)
+    g.add_node("investment_committee",     node_committee)
+    g.add_node("portfolio_manager_agent",  node_portfolio_manager)
+    g.add_node("midterm_stock_agent",      node_midterm_stocks)
+    g.add_node("ceo_agent",               node_ceo)
+    g.add_node("save_report",             node_save_report)
+    g.add_node("record_nav",              node_record_nav)
+    g.add_node("send_telegram",           node_send_telegram)
 
+    # ── 엣지
     g.set_entry_point("collect_raw_data")
-    for i in range(len(nodes) - 1):
-        g.add_edge(nodes[i][0], nodes[i + 1][0])
+
+    # Layer 1 → Layer 2 (fan-out)
+    for n in _L2_NODES:
+        g.add_edge("collect_raw_data", n)
+
+    # Layer 2 → l2_barrier (fan-in)
+    for n in _L2_NODES:
+        g.add_edge(n, "l2_barrier")
+
+    # l2_barrier → Layer 3 (fan-out)
+    for n in _L3_NODES:
+        g.add_edge("l2_barrier", n)
+
+    # Layer 3 → l3_barrier (fan-in)
+    for n in _L3_NODES:
+        g.add_edge(n, "l3_barrier")
+
+    # Sequential tail
+    for src, dst in [
+        ("l3_barrier",           "risk_management_team"),
+        ("risk_management_team", "review_feedback_team"),
+        ("review_feedback_team", "investment_committee"),
+        ("investment_committee", "portfolio_manager_agent"),
+        ("portfolio_manager_agent", "midterm_stock_agent"),
+        ("midterm_stock_agent",  "ceo_agent"),
+        ("ceo_agent",            "save_report"),
+        ("save_report",          "record_nav"),
+        ("record_nav",           "send_telegram"),
+    ]:
+        g.add_edge(src, dst)
     g.add_edge("send_telegram", END)
 
     return g.compile()
 
 
 def build_global_graph() -> StateGraph:
-    """글로벌 시황 브리핑 전용 경량 그래프 (KIS 제외, 미국·글로벌 데이터만)."""
+    """글로벌 시황 브리핑 전용 경량 그래프 (KIS 제외, 미국·글로벌 데이터만).
+
+    Layer 1: collect_raw_data_global
+    Layer 2: futures | us_global | news | bigfigure | macro | intelligence (parallel)
+    [gl2_barrier: fan-in]
+    Layer 3: midterm → ceo → save → telegram
+    """
+    _GL2 = [
+        "futures_market_team",
+        "us_global_team",
+        "news_analysis_team",
+        "bigfigure_agent",
+        "macro_team",
+        "market_intelligence_team",
+    ]
+
     g = StateGraph(InvestmentState)
 
-    nodes = [
-        ("collect_raw_data_global", collect_raw_data_global),
-        ("futures_market_team",     node_futures),     # 선물·EWY·VIX
-        ("us_market_team",          node_us),          # 미국 시장 분석
-        ("us_impact_agent",         node_us_impact),   # 미국 → 한국 공급망 영향
-        ("global_market_team",      node_global),      # 글로벌 매크로
-        ("news_analysis_team",      node_news),        # 야간 뉴스
-        ("bigfigure_agent",         node_bigfigure),   # Fed·전문가 발언
-        ("macro_team",              node_macro),       # 매크로 레짐
-        ("market_intelligence_team", node_intelligence), # 글로벌 서사
-        ("midterm_stock_agent",     node_midterm_stocks), # 중장기 수혜주 업데이트
-        ("ceo_agent",               node_ceo),
-        ("save_report",             node_save_report),
-        ("send_telegram",           node_send_telegram),
-    ]
-    for name, fn in nodes:
-        g.add_node(name, fn)
+    g.add_node("collect_raw_data_global",  collect_raw_data_global)
+    g.add_node("futures_market_team",      node_futures)
+    g.add_node("us_global_team",           node_us_global)
+    g.add_node("news_analysis_team",       node_news)
+    g.add_node("bigfigure_agent",          node_bigfigure)
+    g.add_node("macro_team",               node_macro)
+    g.add_node("market_intelligence_team", node_intelligence)
+    g.add_node("gl2_barrier",              node_l2_barrier)
+    g.add_node("midterm_stock_agent",      node_midterm_stocks)
+    g.add_node("ceo_agent",               node_ceo)
+    g.add_node("save_report",             node_save_report)
+    g.add_node("send_telegram",           node_send_telegram)
 
     g.set_entry_point("collect_raw_data_global")
-    for i in range(len(nodes) - 1):
-        g.add_edge(nodes[i][0], nodes[i + 1][0])
+    for n in _GL2:
+        g.add_edge("collect_raw_data_global", n)
+    for n in _GL2:
+        g.add_edge(n, "gl2_barrier")
+
+    for src, dst in [
+        ("gl2_barrier",     "midterm_stock_agent"),
+        ("midterm_stock_agent", "ceo_agent"),
+        ("ceo_agent",       "save_report"),
+        ("save_report",     "send_telegram"),
+    ]:
+        g.add_edge(src, dst)
     g.add_edge("send_telegram", END)
 
     return g.compile()
@@ -487,13 +521,11 @@ def build_global_graph() -> StateGraph:
 # ── 실행 진입점 ────────────────────────────────────────────────
 
 def run_pipeline(run_type: str) -> InvestmentState:
-    # 글로벌 시황은 별도 경량 파이프라인으로 분기
     if run_type == RUN_TYPE_GLOBAL:
         return _run_global(run_type)
 
     now = datetime.now(TZ)
 
-    # KRX 거래일 체크 — 공휴일·선거일 등 비거래일에는 파이프라인 실행 자체를 차단
     try:
         from utils.market_calendar import is_krx_trading_day, get_holiday_name
         if not is_krx_trading_day(now.date()):
@@ -507,7 +539,6 @@ def run_pipeline(run_type: str) -> InvestmentState:
     except Exception as e:
         logger.debug("[파이프라인] 공휴일 체크 실패 (무시): %s", e)
 
-    # 중복 실행 방지: 같은 날 같은 run_type이 이미 DB에 저장됐으면 스킵
     try:
         from services.report_service import already_ran_today
         if already_ran_today(now.strftime("%Y-%m-%d"), run_type):
@@ -579,9 +610,6 @@ def run_pipeline(run_type: str) -> InvestmentState:
 
 
 def _run_global(run_type: str) -> InvestmentState:
-    """글로벌 시황 브리핑 전용 경량 파이프라인 (06:30 KST).
-    KRX 비거래일에도 미국 시장은 움직이므로 거래일 체크를 생략한다.
-    """
     now = datetime.now(TZ)
 
     try:

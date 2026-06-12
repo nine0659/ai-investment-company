@@ -1,4 +1,5 @@
-from typing import TypedDict, Any
+from typing import TypedDict, Any, Annotated
+import operator
 
 
 class InvestmentState(TypedDict):
@@ -48,5 +49,5 @@ class InvestmentState(TypedDict):
     risk_level: str           # 높음 / 중간 / 낮음
     market_direction: str
 
-    errors: list[str]
+    errors: Annotated[list[str], operator.add]  # parallel branch 오류 자동 병합
     nav_recorded: dict   # 장마감 후 기록된 NAV 스냅샷 (optional — 없으면 {})
