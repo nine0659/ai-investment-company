@@ -50,4 +50,5 @@ class InvestmentState(TypedDict):
     market_direction: str
 
     errors: Annotated[list[str], operator.add]  # parallel branch 오류 자동 병합
-    nav_recorded: dict   # 장마감 후 기록된 NAV 스냅샷 (optional — 없으면 {})
+    nav_recorded: dict        # 장마감 후 기록된 NAV 스냅샷 (optional — 없으면 {})
+    ceo_decisions: dict       # CIO 포트폴리오 의사결정 구조화 출력

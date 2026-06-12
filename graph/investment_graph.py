@@ -224,6 +224,42 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         state["errors"].append(f"save_report: {e}")
 
     ceo_report = state.get("ceo_report", "")
+
+    # CIO 의사결정 아카이브 저장 (신규 구조화 출력)
+    decisions = state.get("ceo_decisions", {})
+    if decisions and decisions.get("new_positions") or decisions.get("position_changes"):
+        try:
+            import json
+            from db.database import get_conn
+            from sqlalchemy import text as _text
+            with get_conn() as conn:
+                conn.execute(_text("""
+                    INSERT INTO cio_decisions_log
+                    (date, run_type, macro_stance, cash_target_pct, thesis_status,
+                     committee_alignment, decisions_json)
+                    VALUES (:date, :run_type, :stance, :cash, :thesis, :align, :json)
+                    ON CONFLICT (date, run_type) DO UPDATE
+                    SET macro_stance=EXCLUDED.macro_stance,
+                        cash_target_pct=EXCLUDED.cash_target_pct,
+                        thesis_status=EXCLUDED.thesis_status,
+                        committee_alignment=EXCLUDED.committee_alignment,
+                        decisions_json=EXCLUDED.decisions_json
+                """), {
+                    "date":     state["date"],
+                    "run_type": state["run_type"],
+                    "stance":   decisions.get("macro_stance", "neutral"),
+                    "cash":     decisions.get("cash_target_pct", 30),
+                    "thesis":   decisions.get("thesis_status", "intact"),
+                    "align":    decisions.get("committee_alignment", "agree"),
+                    "json":     json.dumps(decisions, ensure_ascii=False),
+                })
+            logger.info("[CIO결정저장] %s %s — 신규:%d건 조정:%d건",
+                        state["date"], state["run_type"],
+                        len(decisions.get("new_positions", [])),
+                        len(decisions.get("position_changes", [])))
+        except Exception as e:
+            logger.debug("[CIO결정저장] 실패 (테이블 없을 수 있음): %s", e)
+
     if ceo_report and state.get("run_type") == RUN_TYPE_CLOSE:
         try:
             from services.recommendation_service import parse_recommendations, save_recommendations
@@ -595,6 +631,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "review_report": "",
         "errors": [],
         "nav_recorded": {},
+        "ceo_decisions": {},
     }
 
     graph = build_graph()
@@ -641,6 +678,7 @@ def _run_global(run_type: str) -> InvestmentState:
         "candidates": [], "sector_scores": [], "risks": [],
         "risk_level": "중간", "market_direction": "",
         "review_report": "", "errors": [], "nav_recorded": {},
+        "ceo_decisions": {},
     }
 
     graph = build_global_graph()

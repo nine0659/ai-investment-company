@@ -1,3 +1,10 @@
+"""
+agents/investment_committee.py
+투자 분석팀 — 시장 인텔리전스 보고서 작성
+
+역할: 각 팀 데이터를 종합하여 CIO에게 팩트와 신호를 전달.
+      투자 결론·전략·매수 추천 출력 금지 — 최종 판단은 CIO 권한.
+"""
 import logging
 import re
 from graph.state import InvestmentState
@@ -6,51 +13,34 @@ from services.learning_service import load_learned_weights
 
 logger = logging.getLogger(__name__)
 
-# "시장 방향성: 강한상승" 형식에서 추출 — 콜론 뒤 공백 포함, 전후 오염 제거
 _DIR_LABEL_RE = re.compile(r"시장 방향성[：:\s]+([강한상승하락중립]+)")
 
-_SYSTEM = """당신은 투자위원회 의장입니다.
-각 분석팀의 리포트를 종합하여 오늘 한국 시장 투자 의사결정을 도출하세요.
+_SYSTEM = """당신은 투자 분석팀 수석 애널리스트입니다.
+각 팀의 리포트를 통합하여 CIO(최고투자책임자)에게 전달할 시장 인텔리전스 보고서를 작성하세요.
 
-핵심 원칙 (의결 우선순위):
-  0순위: 글로벌 매크로 레짐 — RISK-ON/OFF/NEUTRAL이 전체 포지션 크기와 섹터 방향의 틀을 결정
-  0-1순위: 이벤트 리스크 — FOMC·CPI·옵션만기 등 HIGH 이벤트 시 【단기】 신규 진입 자제·기존 단기 포지션 50% 축소
-           단, 【중장기(1~3개월)】 관점의 분할매수는 별도 평가 — 변동성 확대일은 오히려 중장기 진입 기회일 수 있음
-  1순위: 전일 미국 증시 방향 — S&P500·NASDAQ·SOX 방향이 오늘 KOSPI 방향의 70%를 결정
-  2순위: 달러/원 환율·미국 금리 — 외국인 수급 방향 결정
-  3순위: 국내 수급(외국인·기관) + EWY/EEM 글로벌 자금 흐름 + 섹터 모멘텀
-  4순위: 뉴스·공시·빅피겨 발언 재료
+핵심 원칙:
+- 투자 결론·전략·매수 추천 절대 출력 금지
+- 팩트·수치·신호만 정리. 최종 판단은 CIO 권한
+- 데이터가 엇갈릴 때 어느 쪽도 편들지 말고 양면을 모두 제시
 
-[매크로 레짐 → 포지션 크기 원칙]
-- RISK-ON  + 미국 강세 일치: 공격적 (자산의 50~70%)
-- RISK-ON  + 미국·국내 엇갈림: 보통 (30~50%)
-- NEUTRAL  : 보통 (30~50%), 확신 종목만
-- RISK-OFF : 보수적 (10~30%), 방어주·현금 비중 확대
-- RISK-OFF + 미국 하락: 최소화 (10% 이하) 또는 관망
-- 이벤트 리스크 HIGH 시 단기: 위 기준에서 50% 추가 축소. 중장기 분할 관점은 섹터 업황·수급 판단 후 별도 의견 제시
+분석 우선순위:
+  0순위: 매크로 레짐 (RISK-ON/OFF/NEUTRAL) — 전체 포지션 크기의 틀
+  0-1순위: 이벤트 리스크 (FOMC·CPI·옵션만기 등) — 변동성 구간 여부
+  1순위: 미국 증시 선행 신호 (S&P500·NASDAQ·SOX)
+  2순위: 환율·금리 → 외국인 수급 방향
+  3순위: 국내 수급·섹터 모멘텀
+  4순위: 뉴스·공시·빅피겨 발언
 
-[필수 출력 규칙]
-- 시장 방향 판단은 반드시 확률(%)로 표현: "상승확률 XX%, 하락확률 YY%" 형식
-- 확률 없는 "상승 예상", "하락 가능" 같은 막연한 표현 금지
-- 미국 신호와 매크로 레짐이 불일치할 때 반드시 명시하고 확률 조정
-- 근거 없는 확률 배분 금지 — 제공된 데이터에서 도출
-
-평가 항목:
-1. [매크로 레짐 확인] 오늘 레짐(Risk-On/Off/Neutral) + 섹터 로테이션 힌트
-2. [미국 증시 선행 신호] S&P500·NASDAQ·SOX → KOSPI 상승확률/하락확률
-3. [환율·금리 필터] 원달러·미국 금리 → 외국인 수급 방향
-4. [국내 섹터 수급] KIS 수급 데이터 교차 검증
-5. 시장 방향성 최종 결정 (강한상승·상승·중립·하락·강한하락)
-
-출력 형식:
-- [매크로 레짐]: RISK-ON/OFF/NEUTRAL + 한 줄 근거
-- [미국 신호 판독]: 한 줄 결론 + S&P500·NASDAQ 수치
-- 상승확률: XX% / 하락확률: YY%
-- 시장 방향성: [방향]
-- 투자 전략: [전략]
-- 포지션 크기: [크기] (투자 자산의 몇 %)
-- 위원회 종합 의견 (5줄 이내)
-- 핵심 근거 3가지"""
+[필수 출력 형식]
+[매크로 레짐] RISK-ON / NEUTRAL / RISK-OFF — 근거 수치 포함
+[이벤트 리스크] HIGH / MEDIUM / LOW — 구체적 이벤트명
+[시장 방향 확률] 상승확률 XX% / 하락확률 YY% — 근거 한 줄
+[시장 방향성] [강한상승 / 상승 / 중립 / 하락 / 강한하락]
+[수급 팩트] 외국인/기관 순매수도 규모 + EWY/EEM 신호
+[섹터 신호] 강세 섹터 3개 / 약세 섹터 — 수급 근거 포함
+[종목 신호] 수급·기술 신호가 강한 종목 5개 이내 — 신호 근거만, 추천 없음
+[리스크 요인] 상위 3가지 — 구체적 조건과 임계값 명시
+[분석팀 전달 사항] CIO에게 전달할 핵심 팩트 3가지 (판단 없이)"""
 
 _DIRECTIONS = ["강한상승", "상승", "강한하락", "하락", "중립"]
 
@@ -60,15 +50,15 @@ def run(state: InvestmentState) -> InvestmentState:
         event_level = state.get("event_risk_level", "중간")
         parts = [
             f"[매크로팀 — 0순위: 전체 투자 환경의 틀]\n{state.get('macro_report', 'N/A')}",
-            f"[이벤트리스크팀 — 0-1순위: 이벤트 레벨={event_level}]\n{state.get('event_risk_report', 'N/A')}",
-            f"[인텔리전스팀 — 글로벌 전문가 서사·강세론/약세론·컨센서스]\n{state.get('market_intelligence_report', 'N/A')}",
+            f"[이벤트리스크팀 — 이벤트 레벨={event_level}]\n{state.get('event_risk_report', 'N/A')}",
+            f"[인텔리전스팀 — 글로벌 전문가 서사·컨센서스]\n{state.get('market_intelligence_report', 'N/A')}",
             f"[선물/파생팀]\n{state.get('futures_report', 'N/A')}",
             f"[미국시장팀]\n{state.get('us_market_report', 'N/A')}",
             f"[한국현물팀]\n{state.get('korea_spot_report', 'N/A')}",
             f"[글로벌팀]\n{state.get('global_market_report', 'N/A')}",
             f"[뉴스분석팀]\n{state.get('news_report', 'N/A')}",
             f"[섹터/테마팀]\n{state.get('sector_report', 'N/A')}",
-            f"[수급팀 — EWY/EEM 글로벌 자금 포함]\n{state.get('money_flow_report', 'N/A')}",
+            f"[수급팀 — EWY/EEM 포함]\n{state.get('money_flow_report', 'N/A')}",
             f"[리스크팀]\n{state.get('risk_report', 'N/A')}",
         ]
 
@@ -76,33 +66,31 @@ def run(state: InvestmentState) -> InvestmentState:
             from agents.dart_alert_agent import format_disclosures_for_briefing
             dart_text = format_disclosures_for_briefing(state["dart_disclosures"])
             if dart_text:
-                parts.append(f"[오늘 DART 공시 — 4순위 재료로 반영]\n{dart_text}")
+                parts.append(f"[DART 공시 — 4순위 재료]\n{dart_text}")
 
         weights = load_learned_weights()
         if weights and "(초기 데이터 없음)" not in weights:
-            parts.insert(0, f"[학습된 가중치 — 반드시 우선 반영]\n{weights}")
+            parts.insert(0, f"[학습된 가중치 — 우선 반영]\n{weights}")
 
         context = "\n\n".join(parts)
-        result = chat(_SYSTEM, context, max_tokens=2500)
+        result = chat(_SYSTEM, context, max_tokens=2000)
 
-        # 확률 합계 검증 — "상승확률 XX% / 하락확률 YY%" 추출 후 합산
+        # 확률 합계 정규화 (100%로 보정)
         up_m   = re.search(r"상승확률[^\d]*(\d+)", result)
         down_m = re.search(r"하락확률[^\d]*(\d+)", result)
         if up_m and down_m:
-            up_pct   = int(up_m.group(1))
-            down_pct = int(down_m.group(1))
-            total    = up_pct + down_pct
-            if total != 100:
-                # 비율 유지하며 100%로 정규화
-                if total > 0:
-                    adj_up   = round(up_pct / total * 100)
-                    adj_down = 100 - adj_up
-                    result = result.replace(up_m.group(0), f"상승확률 {adj_up}%")
-                    result = result.replace(down_m.group(0), f"하락확률 {adj_down}%")
-                    logger.warning("[투자위원회] 확률 합계 %d%% → 100%%로 자동 보정", total)
+            up_pct, down_pct = int(up_m.group(1)), int(down_m.group(1))
+            total = up_pct + down_pct
+            if total != 100 and total > 0:
+                adj_up   = round(up_pct / total * 100)
+                adj_down = 100 - adj_up
+                result = result.replace(up_m.group(0), f"상승확률 {adj_up}%")
+                result = result.replace(down_m.group(0), f"하락확률 {adj_down}%")
+                logger.warning("[분석팀] 확률 합계 %d%% → 100%%로 보정", total)
 
         state["committee_report"] = result
-        # "시장 방향성: XXX" 라벨 우선 추출, 없으면 첫 발견 단어로 폴백
+
+        # 시장 방향 추출 (하위 노드 사용)
         m = _DIR_LABEL_RE.search(result)
         if m:
             label = m.group(1).strip()
@@ -110,12 +98,13 @@ def run(state: InvestmentState) -> InvestmentState:
         else:
             direction = next((d for d in _DIRECTIONS if d in result), "중립")
         state["market_direction"] = direction
-        logger.info("[투자위원회] 완료 — 방향: %s (상승확률 %s%% / 하락확률 %s%%)",
+
+        logger.info("[분석팀] 완료 — 방향: %s (상승확률 %s%% / 하락확률 %s%%)",
                     direction,
                     up_m.group(1) if up_m else "?",
                     down_m.group(1) if down_m else "?")
     except Exception as e:
-        logger.error("[투자위원회] 실패: %s", e)
-        state["committee_report"] = "위원회 의견 생성 실패"
+        logger.error("[분석팀] 실패: %s", e)
+        state["committee_report"] = "분석팀 보고 실패"
         state["errors"].append(f"committee: {e}")
     return state
