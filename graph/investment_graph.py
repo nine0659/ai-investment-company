@@ -227,12 +227,26 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
 
     # CIO 의사결정 아카이브 저장 (신규 구조화 출력)
     decisions = state.get("ceo_decisions", {})
-    if decisions and decisions.get("new_positions") or decisions.get("position_changes"):
+    if decisions and (decisions.get("new_positions") or decisions.get("position_changes")):
         try:
             import json
             from db.database import get_conn
             from sqlalchemy import text as _text
             with get_conn() as conn:
+                conn.execute(_text("""
+                    CREATE TABLE IF NOT EXISTS cio_decisions_log (
+                        id           SERIAL PRIMARY KEY,
+                        date         TEXT NOT NULL,
+                        run_type     TEXT NOT NULL,
+                        macro_stance TEXT,
+                        cash_target_pct INTEGER,
+                        thesis_status   TEXT,
+                        committee_alignment TEXT,
+                        decisions_json TEXT,
+                        created_at   TIMESTAMP DEFAULT NOW(),
+                        UNIQUE (date, run_type)
+                    )
+                """))
                 conn.execute(_text("""
                     INSERT INTO cio_decisions_log
                     (date, run_type, macro_stance, cash_target_pct, thesis_status,

@@ -12,11 +12,10 @@ CIO (Chief Investment Officer) — 최고투자책임자
 """
 import logging
 import re
-from datetime import datetime, time as _time
+from datetime import datetime
 from graph.state import InvestmentState
 from clients.openai_client import chat_ceo
 from clients.kis_client import KISClient
-from clients.market_data_client import fetch_kr_stock_technicals
 from clients.us_stock_client import format_us_impact_for_prompt
 
 from services.recommendation_service import (
@@ -24,8 +23,6 @@ from services.recommendation_service import (
 )
 from config.settings import RUN_TYPE_GLOBAL, RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE, TZ
 
-_MARKET_OPEN  = _time(9, 0)
-_MARKET_CLOSE = _time(15, 35)
 logger = logging.getLogger(__name__)
 
 # ── 블루칩 목록 (컨센서스 수집용) ─────────────────────────────────────────
@@ -44,9 +41,7 @@ _BLUECHIP_ALWAYS_FETCH: list[dict] = [
 
 
 # ── CIO 결정 로그 파싱 ────────────────────────────────────────────────────
-_LOG_START = "=CIO_DECISION_START="
-_LOG_END   = "=CIO_DECISION_END="
-_LOG_RE    = re.compile(r"=CIO_DECISION_START=\n(.*?)\n=CIO_DECISION_END=", re.DOTALL)
+_LOG_RE = re.compile(r"=CIO_DECISION_START=[ \t]*\n(.*?)\n[ \t]*=CIO_DECISION_END=", re.DOTALL)
 
 
 def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict]:
