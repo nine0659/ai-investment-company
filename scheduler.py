@@ -474,6 +474,44 @@ def shutdown(signum, frame):
     sys.exit(0)
 
 
+def _recover_missed_briefings():
+    """스케줄러 재시작 후 당일 미발송 브리핑 복구.
+
+    정상 시간 윈도우보다 넓은 복구 윈도우를 사용하여
+    컨테이너 재시작으로 인한 누락을 자동으로 보정.
+    """
+    if not is_krx_trading_day():
+        return
+
+    now = datetime.now(_KST)
+    cur_min = now.hour * 60 + now.minute
+
+    # (run_type, 예약분, 복구마감분)
+    _RECOVERY: list[tuple[str, int, int]] = [
+        (RUN_TYPE_GLOBAL, 6 * 60 + 30,  9 * 60),       # 06:30 → 복구 마감 09:00
+        (RUN_TYPE_PRE,    8 * 60 + 20,  11 * 60),      # 08:20 → 복구 마감 11:00
+        (RUN_TYPE_INTRA1, 10 * 60,      13 * 60),      # 10:00 → 복구 마감 13:00
+        (RUN_TYPE_INTRA2, 13 * 60,      15 * 60 + 30), # 13:00 → 복구 마감 15:30
+        (RUN_TYPE_CLOSE,  16 * 60 + 30, 20 * 60),      # 16:30 → 복구 마감 20:00
+    ]
+
+    for run_type, sched_min, deadline_min in _RECOVERY:
+        if cur_min < sched_min:
+            continue  # 아직 예약 시간 전
+        if cur_min > deadline_min:
+            continue  # 복구 마감 초과
+        if _already_sent_today(run_type):
+            continue  # 이미 발송됨
+
+        logger.warning(
+            "🔄 [복구] %s 브리핑 누락 감지 — 지금 바로 실행 (예약 %02d:%02d, 현재 %02d:%02d)",
+            run_type, sched_min // 60, sched_min % 60, now.hour, now.minute,
+        )
+        threading.Thread(
+            target=_run_safe, args=(run_type,), name=f"recover-{run_type}", daemon=True
+        ).start()
+
+
 def main():
     # 환경변수 검증
     missing = validate_env()
@@ -493,6 +531,12 @@ def main():
     console.print("\n등록된 스케줄 (평일 Mon-Fri):")
 
     setup_jobs()
+
+    # 재시작으로 인한 당일 미발송 브리핑 복구
+    try:
+        _recover_missed_briefings()
+    except Exception as e:
+        logger.warning("복구 실행 오류 (무시): %s", e)
 
     # 텔레그램 봇을 백그라운드 스레드로 함께 시작
     try:
