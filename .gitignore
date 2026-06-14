@@ -30,3 +30,9 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# 로컬 로그
+logs/
+
+# Windows 실행 스크립트 (로컬 전용)
+*.bat
