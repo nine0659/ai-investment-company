@@ -28,6 +28,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # 핑 로그 억제
 
+socketserver.TCPServer.allow_reuse_address = True  # 재시작 시 포트 충돌 방지
 with socketserver.TCPServer(('', PORT), Handler) as s:
     s.serve_forever()
 "

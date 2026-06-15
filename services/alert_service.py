@@ -344,16 +344,19 @@ def check_risk_signals(market_data: dict, news_data: dict, today: str) -> None:
                 f"역발상 매수 검토는 VIX 30 이하 복귀 확인 후.",
             )
 
-    # 환율 급등
+    # 환율 급등 (원화 약세 = 상승할 때만 경보 — 하락은 원화 강세이므로 위험 아님)
     usd = market_data.get("usd_krw", {})
     if isinstance(usd, dict):
-        rate = usd.get("close", 0) or 0
-        if rate >= RISK_USD_KRW and not _already_sent(today, "USDKRW", "crisis"):
+        rate     = usd.get("close", 0) or 0
+        chg_pct  = usd.get("change_pct", 0) or 0
+        # 1450원 이상이고 당일 상승 중일 때만 경보 (하락 중이면 원화 강세 → 외국인 유입 환경)
+        if rate >= RISK_USD_KRW and chg_pct > 0 and not _already_sent(today, "USDKRW", "crisis"):
             _mark_sent(today, "USDKRW", "crisis")
             send_alert(
                 TYPE_RISK,
-                f"원달러 {rate:,.0f}원 — 외국인 이탈 위험",
-                f"환율 {rate:,.0f}원 돌파. 외국인 KOSPI 대규모 매도 우려.\n\n"
+                f"원달러 {rate:,.0f}원 상승 — 외국인 이탈 위험",
+                f"환율 {rate:,.0f}원 ({chg_pct:+.2f}%). 원화 약세 지속 중.\n\n"
+                f"외국인 KOSPI 대규모 매도 우려.\n"
                 f"환율 연동 수출주 수혜(삼성전자·현대차) 확인.\n"
                 f"외국인 수급 동향 실시간 모니터링 필요.",
             )
