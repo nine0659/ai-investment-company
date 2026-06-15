@@ -1,31 +1,10 @@
 #!/usr/bin/env bash
-# start.sh — 스케줄러 + 최소 헬스체크 서버 동시 실행
-# Render Web Service 무료 플랜: 자체 핑으로 슬립 방지
+# start.sh — 스케줄러 + 헬스체크 서버 동시 실행
+# 순서 중요: HTTP 서버를 먼저 올려서 Render 헬스체크가 즉시 200 받도록 함
 
-set -e
-
-# DB 초기화 (최초 실행 시)
-python main.py --init-db 2>/dev/null || true
-
-# 스케줄러 백그라운드 실행
-echo "[start.sh] 스케줄러 시작..."
-python scheduler.py &
-
-# 자체 핑 — Render 슬립 방지 (10분마다 자기 자신 호출)
-# RENDER_EXTERNAL_URL은 Render가 자동으로 주입하는 공개 URL 환경변수
-(
-  sleep 60  # 헬스체크 서버 기동 대기
-  while true; do
-    if [ -n "${RENDER_EXTERNAL_URL:-}" ]; then
-      curl -sf "${RENDER_EXTERNAL_URL}/health" -o /dev/null 2>/dev/null || true
-    fi
-    sleep 600  # 10분
-  done
-) &
-
-# Render 헬스체크 + UptimeRobot 핑 수신용 최소 HTTP 서버 (포그라운드)
+# 1. 헬스체크 HTTP 서버를 백그라운드에서 먼저 기동 (Render 포트 즉시 바인딩)
 echo "[start.sh] 헬스체크 서버 시작 (포트: ${PORT:-8000})..."
-exec python -c "
+python -c "
 import os, http.server, socketserver, json
 from datetime import datetime
 
@@ -38,9 +17,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({'ok': True, 'time': datetime.utcnow().isoformat()}).encode())
     def log_message(self, fmt, *args):
-        pass  # 핑 로그 억제
+        pass
 
-socketserver.TCPServer.allow_reuse_address = True  # 재시작 시 포트 충돌 방지
+socketserver.TCPServer.allow_reuse_address = True
 with socketserver.TCPServer(('', PORT), Handler) as s:
     s.serve_forever()
-"
+" &
+HTTP_PID=$!
+
+# 2. DB 초기화 (HTTP 서버가 이미 올라온 상태에서 실행)
+python main.py --init-db 2>/dev/null || true
+
+# 3. 스케줄러 백그라운드 실행
+echo "[start.sh] 스케줄러 시작..."
+python scheduler.py &
+
+# 4. 자체 핑 — Render 슬립 방지 (10분마다 자기 자신 호출)
+(
+  sleep 60
+  while true; do
+    if [ -n "${RENDER_EXTERNAL_URL:-}" ]; then
+      curl -sf "${RENDER_EXTERNAL_URL}/health" -o /dev/null 2>/dev/null || true
+    fi
+    sleep 600
+  done
+) &
+
+# 5. HTTP 서버 프로세스가 종료되면 컨테이너도 종료
+echo "[start.sh] 모든 프로세스 시작 완료. HTTP 서버(PID=$HTTP_PID) 대기 중..."
+wait $HTTP_PID

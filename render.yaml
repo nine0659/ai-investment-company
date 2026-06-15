@@ -6,7 +6,6 @@ services:
     startCommand: bash start.sh
     # 무료 플랜: UptimeRobot으로 /health 5분마다 핑 → 슬립 방지
     plan: free
-    healthCheckPath: /
     envVars:
       - key: OPENAI_API_KEY
         sync: false
