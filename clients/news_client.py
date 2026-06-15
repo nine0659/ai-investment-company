@@ -14,9 +14,14 @@ import urllib.parse
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import socket
+
 import feedparser
+import requests as _req
 
 logger = logging.getLogger(__name__)
+
+_FEED_TIMEOUT = 8  # feedparser 소켓 타임아웃 (초)
 _KST = ZoneInfo("Asia/Seoul")
 
 # ── 고정 RSS 피드 (국내 주요 경제지) ───────────────────────────────
@@ -47,7 +52,9 @@ _FALLBACK_QUERIES: list[tuple[str, str, str]] = [
 
 def fetch_news(name: str, url: str, max_items: int = 10) -> list[dict]:
     try:
-        feed = feedparser.parse(url)
+        # requests로 타임아웃 적용 후 feedparser에 콘텐츠 전달 (무한 대기 방지)
+        resp = _req.get(url, timeout=_FEED_TIMEOUT, headers={"User-Agent": "Mozilla/5.0"})
+        feed = feedparser.parse(resp.content)
         return [
             {
                 "source":    name,
