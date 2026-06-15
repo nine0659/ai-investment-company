@@ -2,53 +2,58 @@ from typing import TypedDict, Any, Annotated
 import operator
 
 
+def _last(a, b):
+    """병렬 브랜치에서 동일 키에 여러 값이 들어올 때 마지막 값 사용 (last-writer-wins)."""
+    return b
+
+
 class InvestmentState(TypedDict):
-    run_type: str
-    timestamp: str
-    date: str
+    run_type:   Annotated[str, _last]
+    timestamp:  Annotated[str, _last]
+    date:       Annotated[str, _last]
 
-    raw_market_data: dict[str, Any]
-    data_freshness: dict[str, Any]    # check_data_freshness() 결과
-    raw_kis_data: dict[str, Any]
-    raw_news_data: dict[str, Any]
-    us_hot_stocks: list[dict]        # 미국 거래량 급증·등락 상위 종목 + 한국 연관 매핑
-    us_sector_data: dict[str, Any]   # 미국 섹터 ETF 등락률 데이터
-    us_52w_highs: list[dict]         # 미국 52주 신고가 근접 종목
-    bigfigure_news: list[dict]       # 글로벌 빅피겨 최신 뉴스
-    dart_disclosures: list[dict]     # 오늘 주요 DART 공시 (브리핑 통합용)
-    kr_index_realtime: dict[str, Any]  # 장중 KOSPI·KOSDAQ 실시간 현재 지수
-    consensus_data: dict[str, Any]   # 종목별 컨센서스 목표주가 데이터
-    weekly_strategy_summary: str     # 최신 주간 전략 요약 (CEO 컨텍스트 주입용)
-    investment_thesis: str           # 현재 월간 투자관 요약 (CEO 최우선 컨텍스트)
+    raw_market_data:        Annotated[dict[str, Any], _last]
+    data_freshness:         Annotated[dict[str, Any], _last]
+    raw_kis_data:           Annotated[dict[str, Any], _last]
+    raw_news_data:          Annotated[dict[str, Any], _last]
+    us_hot_stocks:          Annotated[list[dict],     _last]
+    us_sector_data:         Annotated[dict[str, Any], _last]
+    us_52w_highs:           Annotated[list[dict],     _last]
+    bigfigure_news:         Annotated[list[dict],     _last]
+    dart_disclosures:       Annotated[list[dict],     _last]
+    kr_index_realtime:      Annotated[dict[str, Any], _last]
+    consensus_data:         Annotated[dict[str, Any], _last]
+    weekly_strategy_summary:Annotated[str, _last]
+    investment_thesis:      Annotated[str, _last]
 
-    futures_report: str
-    us_market_report: str
-    us_impact_report: str            # 미국 섹터 → 한국 수혜 종목 분석
-    korea_spot_report: str
-    global_market_report: str
-    news_report: str
-    bigfigure_report: str            # 빅피겨 발언 분석
-    dart_report: str                 # 오늘 DART 공시 요약
-    macro_report: str                # 매크로 레짐 분석 (금리/크레딧/달러/VIX/구리/LIT)
-    event_risk_report: str           # 경제 이벤트 캘린더 리스크 (FOMC/CPI/옵션만기 등)
-    event_risk_level: str            # 높음 / 중간 / 낮음
-    market_intelligence_report: str  # 글로벌 전문가 서사·강세론/약세론·컨센서스 변화
-    sector_report: str
-    issue_stocks_report: str   # 이슈종목 발굴 — 거래량/수급/미국연동 기반, 1~3주 대응전략
-    midterm_stock_report: str  # 중장기 종목 추천 — 3~12개월 밸류에이션·섹터사이클 기반
-    money_flow_report: str
-    risk_report: str
-    committee_report: str
-    review_report: str
-    portfolio_report: str  # 포트폴리오 매니저 분석 (보유 종목 행동 지시 + 워치리스트 트리거)
-    ceo_report: str
+    futures_report:             Annotated[str, _last]
+    us_market_report:           Annotated[str, _last]
+    us_impact_report:           Annotated[str, _last]
+    korea_spot_report:          Annotated[str, _last]
+    global_market_report:       Annotated[str, _last]
+    news_report:                Annotated[str, _last]
+    bigfigure_report:           Annotated[str, _last]
+    dart_report:                Annotated[str, _last]
+    macro_report:               Annotated[str, _last]
+    event_risk_report:          Annotated[str, _last]
+    event_risk_level:           Annotated[str, _last]
+    market_intelligence_report: Annotated[str, _last]
+    sector_report:              Annotated[str, _last]
+    issue_stocks_report:        Annotated[str, _last]
+    midterm_stock_report:       Annotated[str, _last]
+    money_flow_report:          Annotated[str, _last]
+    risk_report:                Annotated[str, _last]
+    committee_report:           Annotated[str, _last]
+    review_report:              Annotated[str, _last]
+    portfolio_report:           Annotated[str, _last]
+    ceo_report:                 Annotated[str, _last]
 
-    candidates: list[dict]
-    sector_scores: list[dict]
-    risks: list[str]
-    risk_level: str           # 높음 / 중간 / 낮음
-    market_direction: str
+    candidates:     Annotated[list[dict], _last]
+    sector_scores:  Annotated[list[dict], _last]
+    risks:          Annotated[list[str],  _last]
+    risk_level:     Annotated[str, _last]
+    market_direction: Annotated[str, _last]
 
-    errors: Annotated[list[str], operator.add]  # parallel branch 오류 자동 병합
-    nav_recorded: dict        # 장마감 후 기록된 NAV 스냅샷 (optional — 없으면 {})
-    ceo_decisions: dict       # CIO 포트폴리오 의사결정 구조화 출력
+    errors:         Annotated[list[str], operator.add]  # 병렬 브랜치 오류 자동 병합
+    nav_recorded:   Annotated[dict,      _last]
+    ceo_decisions:  Annotated[dict,      _last]

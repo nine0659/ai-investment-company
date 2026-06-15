@@ -189,7 +189,7 @@ def node_issue_stocks(state): return issue_stock_agent.run(state)
 
 def node_midterm_stocks(state):
     if state.get("run_type") in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
-        return state
+        return {}
     return midterm_stock_agent.run(state)
 
 def node_ceo(state):               return ceo_agent.run(state)
@@ -199,11 +199,11 @@ def node_committee(state):         return investment_committee.run(state)
 def node_review(state):
     if state.get("run_type") == RUN_TYPE_CLOSE:
         return review_feedback_team.run(state)
-    return state
+    return {}
 
-# 병렬 팬-인 배리어 (상태를 그대로 전달)
-def node_l2_barrier(state): return state
-def node_l3_barrier(state): return state
+# 병렬 팬-인 배리어 (변경 없음 — state는 LangGraph가 자동 유지)
+def node_l2_barrier(state): return {}
+def node_l3_barrier(state): return {}
 
 
 # ── 저장 / 발송 노드 ────────────────────────────────────────────
