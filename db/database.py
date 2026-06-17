@@ -376,6 +376,11 @@ def init_db():
     """모든 테이블 생성 (존재하면 스킵). 애플리케이션 시작 시 한 번 호출."""
     metadata.create_all(engine, checkfirst=True)
     _migrate_order_history()
+    try:
+        from services.position_lifecycle_service import migrate_portfolio_positions
+        migrate_portfolio_positions()
+    except Exception as _me:
+        logger.warning("[DB] 포지션 생애주기 마이그레이션 실패: %s", _me)
     logger.info("[DB] 테이블 초기화 완료")
 
 

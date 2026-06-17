@@ -269,6 +269,22 @@ note|[전략 메모]
 # 없는 항목은 행 전체 생략. new/reduce/exit/hold는 해당 종목 수만큼 반복."""
 
 
+def _build_pre_analysis_prompt() -> str:
+    """Phase A: 팩트 시트 + 투자관만으로 CIO 독립 가설 수립 (분析팀 보고 전 단계)."""
+    return """당신은 CIO입니다.
+아래 [CIO 핵심 수치 팩트 시트]와 [월간 투자관]만 보고 독립적인 시장 가설을 세우세요.
+분析팀 보고서, 위원회 의견, 뉴스는 아직 보지 않은 상태입니다.
+
+출력 규칙: 5줄 이하. 괄호·예시 텍스트 출력 금지. 팩트 시트 수치만 인용.
+
+[CIO 선행 가설 — 분析팀 보고 전]
+레짐: [RISK-ON/NEUTRAL/RISK-OFF] — 팩트 시트 수치 2가지 근거
+방향: [상승/보합/하락] 예상 — 핵심 근거 수치 포함
+역발상: [시장 컨센서스가 틀릴 조건] 또는 역발상 기회 없음
+핵심 리스크: [가장 우려되는 1가지 + 임계값]
+포지션: [공격적 확대 / 현상 유지 / 방어적 축소]"""
+
+
 def _build_prompt_global() -> str:
     return f"""{_CIO_CHARTER}
 
@@ -549,6 +565,24 @@ def run(state: InvestmentState) -> InvestmentState:
                 "[CIO 핵심 수치 팩트 시트 — 브리핑에 이 수치를 그대로 인용]\n" + "\n".join(fact_rows)
             )
 
+        # Phase B: 포지션 생애주기 현황 주입
+        try:
+            from services.position_lifecycle_service import get_lifecycle_context
+            lc_ctx = get_lifecycle_context()
+            if lc_ctx:
+                context_parts.append("\n" + lc_ctx)
+        except Exception as _lce:
+            logger.debug("[CIO] 생애주기 주입 실패: %s", _lce)
+
+        # Phase C: 예측 적중률 주입 (자기학습)
+        try:
+            from services.prediction_service import get_accuracy_summary
+            acc_ctx = get_accuracy_summary(days=20)
+            if acc_ctx:
+                context_parts.append("\n" + acc_ctx)
+        except Exception as _ace:
+            logger.debug("[CIO] 적중률 주입 실패: %s", _ace)
+
         # 투자관 — 모든 판단의 최우선 기준
         thesis = state.get("investment_thesis", "")
         if thesis:
@@ -683,15 +717,25 @@ def run(state: InvestmentState) -> InvestmentState:
         if run_type == RUN_TYPE_CLOSE:
             # 오늘 장전 CIO 예측 — 자기점검용
             try:
-                from db.database import get_conn as _gc
-                from sqlalchemy import text as _t
-                with _gc() as _conn:
-                    _pre_row = _conn.execute(
-                        _t("SELECT ceo_report FROM reports WHERE date=:d AND run_type='pre_market' ORDER BY id DESC LIMIT 1"),
-                        {"d": date}
-                    ).fetchone()
-                if _pre_row and _pre_row[0]:
-                    context_parts.insert(2, "\n[오늘 장전 CIO 예측 — 🔍 자기점검용: 예측과 실제를 비교하라]\n" + _pre_row[0][:700])
+                from services.prediction_service import get_selfcheck_context as _gsc
+                _sc_ctx = _gsc(date)
+                if _sc_ctx:
+                    context_parts.insert(2, "\n" + _sc_ctx)
+                else:
+                    # fallback: ceo_report 원문
+                    from db.database import get_conn as _gc
+                    from sqlalchemy import text as _t
+                    with _gc() as _conn:
+                        _pre_row = _conn.execute(
+                            _t("SELECT ceo_report FROM reports "
+                               "WHERE date=:d AND run_type='pre_market' "
+                               "ORDER BY id DESC LIMIT 1"),
+                            {"d": date}
+                        ).fetchone()
+                    if _pre_row and _pre_row[0]:
+                        context_parts.insert(2,
+                            "\n[오늘 장전 CIO 예측 — 자기점검: 예측 vs 실제 비교]\n"
+                            + _pre_row[0][:600])
             except Exception as _pe:
                 logger.debug("[CIO] 장전 예측 로드 실패: %s", _pe)
 
@@ -821,8 +865,6 @@ def run(state: InvestmentState) -> InvestmentState:
         if state.get("review_report"):
             context_parts.append(f"\n[복기]\n{state['review_report']}")
 
-        context = "\n".join(context_parts)
-
         # ── 프롬프트 선택 ──────────────────────────────────────────────────
         if run_type == RUN_TYPE_GLOBAL:
             prompt = _build_prompt_global()
@@ -835,6 +877,44 @@ def run(state: InvestmentState) -> InvestmentState:
         else:
             prompt = _build_prompt_intra2()
 
+        # ── Phase A: CIO 선행 가설 수립 (팩트 시트만으로 독립 판단) ────────
+        _pre_analysis = ""
+        if run_type in (RUN_TYPE_PRE, RUN_TYPE_CLOSE, RUN_TYPE_GLOBAL):
+            try:
+                _pre_ctx_parts = [p for p in context_parts
+                                  if any(k in p for k in (
+                                      "팩트 시트", "투자관", "전략 프레임",
+                                      "생애주기", "적중률",
+                                  ))]
+                _pre_ctx = "\n".join(_pre_ctx_parts)[:3000]
+                if _pre_ctx:
+                    _pre_analysis = chat_ceo(
+                        _build_pre_analysis_prompt(), _pre_ctx, max_tokens=400
+                    )
+                    logger.info("[CIO] Phase A 선행 가설 수립 완료")
+            except Exception as _pae:
+                logger.debug("[CIO] Phase A 선행 가설 실패: %s", _pae)
+
+        # 선행 가설을 분析팀 보고서 바로 앞에 삽입 (앵커링 방지)
+        if _pre_analysis:
+            _ctx_final = []
+            _inserted = False
+            for _part in context_parts:
+                if not _inserted and "분析팀 인텔리전스" in _part:
+                    _ctx_final.append(
+                        "\n[CIO 선행 가설 — 팩트 시트 독립 판단 (아래 분析팀 보고서와 비교)]\n"
+                        + _pre_analysis
+                    )
+                    _inserted = True
+                _ctx_final.append(_part)
+            if not _inserted:
+                _ctx_final.insert(1,
+                    "\n[CIO 선행 가설 — 팩트 시트 독립 판단]\n" + _pre_analysis
+                )
+            context = "\n".join(_ctx_final)
+        else:
+            context = "\n".join(context_parts)
+
         # ── LLM 호출 ──────────────────────────────────────────────────────
         raw_result = chat_ceo(prompt, context, max_tokens=1800)
 
@@ -842,6 +922,44 @@ def run(state: InvestmentState) -> InvestmentState:
         ceo_report, ceo_decisions = _parse_cio_decisions(raw_result, date, run_type)
         state["ceo_report"]   = ceo_report
         state["ceo_decisions"]= ceo_decisions
+
+        # Phase B: R/R 검증 — 3:1 미달 포지션 경고
+        try:
+            from services.position_lifecycle_service import check_rr_warnings
+            _rr_warns = check_rr_warnings(ceo_decisions)
+            if _rr_warns:
+                for _w in _rr_warns:
+                    logger.warning("[CIO] %s", _w)
+                state["errors"].extend(_rr_warns)
+        except Exception as _rre:
+            logger.debug("[CIO] R/R 검증 실패: %s", _rre)
+
+        # Phase B: 생애주기 DB 업데이트
+        try:
+            from services.position_lifecycle_service import update_from_cio_decisions
+            update_from_cio_decisions(date, ceo_decisions)
+        except Exception as _lce2:
+            logger.debug("[CIO] 생애주기 업데이트 실패: %s", _lce2)
+
+        # Phase C: 장전·글로벌 브리핑 예측 저장
+        if run_type in (RUN_TYPE_PRE, RUN_TYPE_GLOBAL):
+            try:
+                from services.prediction_service import save_cio_prediction
+                save_cio_prediction(date, run_type, ceo_report,
+                                    state.get("raw_market_data", {}))
+            except Exception as _pse:
+                logger.debug("[CIO] 예측 저장 실패: %s", _pse)
+
+        # Phase C: 장마감 → 실제 KOSPI 결과 기록
+        if run_type == RUN_TYPE_CLOSE:
+            try:
+                from services.prediction_service import update_actual_result
+                _kr_rt = state.get("kr_index_realtime", {})
+                _k_chg = _kr_rt.get("kospi", {}).get("change_pct")
+                if _k_chg is not None:
+                    update_actual_result(date, float(_k_chg))
+            except Exception as _are:
+                logger.debug("[CIO] 실제결과 기록 실패: %s", _are)
 
         logger.info(
             "[CIO] 브리핑 완료 — 스탠스: %s | 현금목표: %d%% | 테제: %s | 신규: %d건 | 조정: %d건",
