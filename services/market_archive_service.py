@@ -125,7 +125,36 @@ def get_market_trend_context(days: int = 7) -> str:
     if not rows:
         return ""
 
-    lines = ["[최근 시장 추세 (장마감 기준)]"]
+    lines = ["[최근 시장 추세 (장마감 기준) — 방향 파악용, 현재 판단은 CIO 핵심 수치 팩트 시트 기준]"]
+
+    # 추세 방향 요약: 가장 오래된 날(rows[-1]) vs 가장 최근 날(rows[0]) 비교
+    oldest, newest = rows[-1], rows[0]
+    trend_parts = []
+
+    old_kospi, new_kospi = oldest[2], newest[2]
+    if old_kospi and new_kospi:
+        diff = new_kospi - old_kospi
+        arrow = "↑" if diff > 0 else "↓"
+        trend_parts.append(f"KOSPI {old_kospi:,.0f}→{new_kospi:,.0f}({arrow}{abs(diff):,.0f}p)")
+
+    old_usd, new_usd = oldest[6], newest[6]
+    if old_usd and new_usd:
+        diff = new_usd - old_usd
+        if diff < 0:
+            trend_parts.append(f"USD/KRW {old_usd:,.0f}→{new_usd:,.0f}(↓{abs(diff):.0f}원 원화강세✅)")
+        elif diff > 0:
+            trend_parts.append(f"USD/KRW {old_usd:,.0f}→{new_usd:,.0f}(↑{diff:.0f}원 원화약세⚠️)")
+        else:
+            trend_parts.append(f"USD/KRW {new_usd:,.0f}(보합)")
+
+    old_vix, new_vix = oldest[7], newest[7]
+    if old_vix and new_vix:
+        arrow = "↓안정" if new_vix < old_vix else "↑경계"
+        trend_parts.append(f"VIX {old_vix:.1f}→{new_vix:.1f}({arrow})")
+
+    if trend_parts:
+        lines.append(f"  ▶ {len(rows)}일 추세: " + " | ".join(trend_parts))
+
     for r in reversed(rows):
         date, _, kospi, kospi_chg, kosdaq, kosdaq_chg, usd_krw, vix, oil, gold, us10y, sp500_chg, nq_chg = r
         parts = [f"{date}"]
@@ -165,10 +194,17 @@ def get_intelligence_context(days: int = 5) -> str:
     if not rows:
         return ""
 
-    lines = ["[최근 인텔리전스 아카이브]"]
+    today_dt = datetime.now(_KST).date()
+    lines = ["[최근 인텔리전스 아카이브 — 과거 흐름 참고용. 현재 환율·지수 판단은 팩트 시트 기준]"]
     for r in rows:
         date, src, sentiment, themes, summary = r
-        lines.append(f"  [{date}][{src}][{sentiment}] {themes}")
+        try:
+            days_ago = (today_dt - datetime.strptime(date, "%Y-%m-%d").date()).days
+            ago_label = f"{days_ago}일전" if days_ago > 0 else "오늘"
+        except Exception:
+            ago_label = ""
+        date_str = f"{date}({ago_label})" if ago_label else date
+        lines.append(f"  [{date_str}][{src}][{sentiment}] {themes}")
         if summary:
             lines.append(f"    → {summary[:200]}")
     return "\n".join(lines)

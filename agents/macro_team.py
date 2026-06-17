@@ -28,6 +28,12 @@ _SYSTEM = """당신은 글로벌 매크로 경제 분석 전문가입니다.
    - 상승: 외국인 KOSPI 매도 압력 → 외국인 수급 악화
    - 하락: 외국인 유입 기대 → 대형주·성장주 유리
 
+3-1. 원달러(USD/KRW) — DXY와 함께 외국인 수급 방향 판단
+   - 하락(change_pct < 0) = 원화 강세: 외국인 KOSPI 순매수 환경. 대형주·성장주 유리
+   - 상승(change_pct > 0) = 원화 약세: 외국인 이탈 주의. 단 수출기업(삼성·현대차·조선·방산) 수혜
+   - 1,450원 돌파+상승 = 외국인 이탈 가속 위험 구간
+   - DXY↓ but USD/KRW↑ 불일치 시: 한국 고유 리스크(지정학·정치) 점검 필요
+
 4. 공포지수(VIX)
    - <15: 과도한 낙관 (경계)
    - 15~25: 정상
@@ -66,6 +72,7 @@ NEUTRAL: 신호 혼재
 ⚡ 핵심 신호 3가지 (수치 포함, 한 줄씩)
 ✅ 오늘 유리한 섹터: [섹터1, 섹터2, 섹터3]
 🚫 오늘 불리한 섹터: [섹터1, 섹터2]
+🔄 원달러(USD/KRW): [원화강세/원화약세/중립] + 외국인 수급 방향 한 줄
 🔩 구리 신호: [경기확장/경기둔화/중립] + 한 줄 근거
 🔋 배터리(LIT) 신호: [긍정/부정/중립] + 한국 2차전지 섹터 영향
 ⚠️ 매크로 주의사항: [한 줄]"""
@@ -103,13 +110,19 @@ def run(state: InvestmentState) -> InvestmentState:
         def val(key: str, field: str = "close"):
             return raw.get(key, {}).get(field)
 
-        vix       = val("vix")
-        us10y     = val("us10y")
-        us3m      = val("us3m")   # 13주(3개월) T-Bill — 단기금리 기준
-        dxy       = val("dxy")
-        dxy_chg   = val("dxy", "change_pct")
-        gold_chg  = val("gold", "change_pct")
-        sp500_chg = val("sp500", "change_pct")
+        vix        = val("vix")
+        us10y      = val("us10y")
+        us3m       = val("us3m")   # 13주(3개월) T-Bill — 단기금리 기준
+        dxy        = val("dxy")
+        dxy_chg    = val("dxy", "change_pct")
+        gold_chg   = val("gold", "change_pct")
+        sp500_chg  = val("sp500", "change_pct")
+        usd_krw    = val("usd_krw")
+        usd_krw_chg = val("usd_krw", "change_pct")
+        if usd_krw_chg is not None:
+            usd_krw_dir = " ← 원화강세✅(외국인유입환경)" if usd_krw_chg < 0 else " ← 원화약세⚠️(외국인이탈주의)"
+        else:
+            usd_krw_dir = ""
 
         # HYG / LQD 크레딧 데이터
         credit  = _fetch_credit_data()
@@ -149,6 +162,7 @@ def run(state: InvestmentState) -> InvestmentState:
             f"수익률 곡선(10Y-3M): {yc_label}",
             f"신용 스프레드(HYG-LQD): {credit_signal}",
             f"달러인덱스(DXY)  : {dxy or 'N/A'} (전일비 {f'{dxy_chg:+.2f}%' if dxy_chg is not None else 'N/A'})",
+            f"원달러(USD/KRW)  : {f'{usd_krw:,.0f}원' if usd_krw else 'N/A'} (전일비 {f'{usd_krw_chg:+.2f}%' if usd_krw_chg is not None else 'N/A'}){usd_krw_dir}",
             f"금(Gold) 등락    : {f'{gold_chg:+.2f}%' if gold_chg is not None else 'N/A'}",
             f"구리(Copper) 등락: {f'{copper_chg:+.2f}%' if copper_chg is not None else 'N/A'}  ← 글로벌 경기 선행",
             f"LIT(리튬배터리ETF): {f'{lit_chg:+.2f}%' if lit_chg is not None else 'N/A'}  ← 2차전지 섹터 선행",

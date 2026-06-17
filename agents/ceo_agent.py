@@ -222,6 +222,9 @@ _CIO_CHARTER = """
 - 진입: "현 수준 ±X% 분할" (특정 가격 금지) | 손절: "thesis 훼손 또는 -X%"
 - 불확실할 때 "판단 보류, 현금 유지"는 유효한 결정
 - 한국어. 괄호 예시 텍스트 출력 금지. 지침 텍스트 출력 금지.
+- 현재 수치 우선: [CIO 핵심 수치 팩트 시트]의 최신 수치가 최우선. 아카이브(과거 N일 추세)는 방향 파악 참고용에 불과함.
+- 환율 방향 판단: 팩트 시트 USD/KRW change_pct가 음수(-)면 원화강세 = 외국인 유입 환경 (긍정 신호). 양수(+)면 원화약세 = 외국인 이탈 주의.
+- 아카이브에 과거 고환율 데이터가 있어도 팩트 시트 현재가 하락 중이면 반드시 "원화강세·안정" 방향으로 분석할 것. "최근 환율 상승 어려움" 표현 금지.
 
 [의사결정 로그 출력 규칙]
 브리핑 마지막에 반드시 아래 블록을 출력 (파싱용, 텔레그램 메시지에서 제거됨):
@@ -425,21 +428,25 @@ def run(state: InvestmentState) -> InvestmentState:
 
         fact_rows = []
         for label, key, fld in [
-            ("S&P500",    "sp500",          "close"),
-            ("NASDAQ",    "nasdaq",         "close"),
-            ("SOX",       "sox",            "close"),
-            ("EWY(한국ETF)",  "ewy",        "close"),
-            ("USD/KRW",   "usd_krw",        "close"),
-            ("미10Y(%)",  "us10y",          "close"),
-            ("VIX",       "vix",            "close"),
-            ("DXY",       "dxy",            "close"),
+            ("S&P500",       "sp500",          "close"),
+            ("NASDAQ",       "nasdaq",         "close"),
+            ("SOX",          "sox",            "close"),
+            ("EWY(한국ETF)", "ewy",            "close"),
+            ("USD/KRW",      "usd_krw",        "close"),
+            ("미10Y(%)",     "us10y",          "close"),
+            ("VIX",          "vix",            "close"),
+            ("DXY",          "dxy",            "close"),
         ]:
             v = _mval(key, fld)
             if v is None:
                 continue
             chg = _mval(key, "change_pct")
             chg_str = f" ({chg:+.2f}%)" if chg is not None else ""
-            fact_rows.append(f"  {label}: {v}{chg_str}")
+            if key == "usd_krw" and chg is not None:
+                fx_dir = "원화강세↑외국인유입✅" if chg < 0 else "원화약세↓외국인이탈주의⚠️"
+                fact_rows.append(f"  {label}: {float(v):,.0f}{chg_str} ← {fx_dir}")
+            else:
+                fact_rows.append(f"  {label}: {v}{chg_str}")
 
         # 실시간 선물
         for label, key in [

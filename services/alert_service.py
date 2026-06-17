@@ -68,6 +68,9 @@ RISK_VIX_PANIC     = 35.0    # VIX 패닉 수준
 RISK_USD_KRW       = 1450    # 원달러 긴급 수준 (원)
 RISK_STOCK_CRASH   = -7.0    # 보유 종목 단일일 급락 (%)
 
+# ── 기회 임계값 ──────────────────────────────────────────────────
+OPP_USD_KRW_DROP   = -1.0    # 원달러 급락 (%) — 원화 강세 = 외국인 유입 기회 신호
+
 # ── 지정학 RISK 키워드 ────────────────────────────────────────────
 GEOPOLITICAL_RISK_KEYWORDS = [
     "전쟁선포", "미군기지 공격", "핵공격", "핵폭탄", "이란 공습",
@@ -378,6 +381,27 @@ def check_risk_signals(market_data: dict, news_data: dict, today: str) -> None:
             )
 
 
+def check_market_opportunity_signals(market_data: dict, today: str) -> None:
+    """시장 데이터 기반 기회 신호 감지 (뉴스 키워드와 별개)."""
+
+    # 원달러 급락 = 원화 강세 = 외국인 유입 환경 (기회 신호)
+    usd = market_data.get("usd_krw", {})
+    if isinstance(usd, dict):
+        rate    = usd.get("close", 0) or 0
+        chg_pct = usd.get("change_pct", 0) or 0
+        if chg_pct <= OPP_USD_KRW_DROP and not _already_sent(today, "USDKRW", "krw_strengthen"):
+            _mark_sent(today, "USDKRW", "krw_strengthen")
+            send_alert(
+                TYPE_OPPORTUNITY,
+                f"원화 강세 {chg_pct:+.2f}% — 외국인 유입 환경 감지",
+                f"USD/KRW: {rate:,.0f}원 ({chg_pct:+.2f}%)\n\n"
+                f"원화 강세는 외국인 KOSPI 순매수 환경을 조성합니다.\n"
+                f"대형주·성장주(삼성전자·SK하이닉스) 외국인 수급 모니터링 권장.\n"
+                f"내수주·원자재 수입기업 비용 절감 효과 병행 확인.\n\n"
+                f"ℹ️ 투자 검토 참고 자료 — 직접 분석 후 판단 필요",
+            )
+
+
 def check_portfolio_risk(today: str) -> None:
     """보유 종목 단일일 급락 감지."""
     try:
@@ -442,6 +466,11 @@ def run_full_alert_check(market_data: dict, news_data: dict = None) -> None:
         check_news_opportunity(news_data, today)
     except Exception as e:
         logger.error("[알림] 뉴스 기회 체크 실패: %s", e)
+
+    try:
+        check_market_opportunity_signals(market_data, today)
+    except Exception as e:
+        logger.error("[알림] 시장 기회 신호 체크 실패: %s", e)
 
     # 2. 위험 감지
     try:
