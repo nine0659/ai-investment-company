@@ -381,6 +381,11 @@ def init_db():
         migrate_portfolio_positions()
     except Exception as _me:
         logger.warning("[DB] 포지션 생애주기 마이그레이션 실패: %s", _me)
+    try:
+        from services.prediction_service import migrate_market_predictions
+        migrate_market_predictions()
+    except Exception as _me2:
+        logger.warning("[DB] 예측 테이블 마이그레이션 실패: %s", _me2)
     logger.info("[DB] 테이블 초기화 완료")
 
 

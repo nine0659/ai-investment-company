@@ -989,19 +989,30 @@ def run(state: InvestmentState) -> InvestmentState:
         if run_type in (RUN_TYPE_PRE, RUN_TYPE_GLOBAL):
             try:
                 from services.prediction_service import save_cio_prediction
-                save_cio_prediction(date, run_type, ceo_report,
-                                    state.get("raw_market_data", {}))
+                save_cio_prediction(
+                    date, run_type, ceo_report,
+                    raw_market_data=state.get("raw_market_data", {}),
+                    ceo_decisions=ceo_decisions,
+                )
             except Exception as _pse:
                 logger.debug("[CIO] 예측 저장 실패: %s", _pse)
 
-        # Phase C: 장마감 → 실제 KOSPI 결과 기록
+        # Phase C: 장마감 → 실제 KOSPI 결과 + 오판 원인 기록
         if run_type == RUN_TYPE_CLOSE:
             try:
                 from services.prediction_service import update_actual_result
+                import re as _re
                 _kr_rt = state.get("kr_index_realtime", {})
                 _k_chg = _kr_rt.get("kospi", {}).get("change_pct")
                 if _k_chg is not None:
-                    update_actual_result(date, float(_k_chg))
+                    # 오판 원인 — 자기점검 🔍 섹션에서 추출
+                    _miss = ""
+                    _miss_m = _re.search(
+                        r"오판 원인[:\s:\uff1a]*([^\n]{5,80})", ceo_report
+                    )
+                    if _miss_m:
+                        _miss = _miss_m.group(1).strip()[:80]
+                    update_actual_result(date, float(_k_chg), miss_reason=_miss)
             except Exception as _are:
                 logger.debug("[CIO] 실제결과 기록 실패: %s", _are)
 
