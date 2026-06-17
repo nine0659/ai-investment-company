@@ -592,6 +592,34 @@ def run(state: InvestmentState) -> InvestmentState:
         except Exception as _ace:
             logger.debug("[CIO] 적중률 주입 실패: %s", _ace)
 
+        # Phase B: 단계 전환 경고 — CLOSE 브리핑에서 평가 후 팩트 시트 주입
+        if run_type == RUN_TYPE_CLOSE:
+            try:
+                from services.position_lifecycle_service import evaluate_stage_transitions
+                _st_prices = {}
+                _raw_kis = state.get("raw_kis_data", {})
+                for _ki in (_raw_kis.get("kospi_rise_rank", []) +
+                             _raw_kis.get("kosdaq_rise_rank", []) +
+                             _raw_kis.get("kospi_foreign_rank", []) +
+                             _raw_kis.get("kosdaq_foreign_rank", [])):
+                    _c = _ki.get("stck_shrn_iscd") or _ki.get("mksc_shrn_iscd", "")
+                    _p = _ki.get("stck_prpr") or _ki.get("prdy_clpr")
+                    if _c and _p:
+                        try:
+                            _st_prices[_c] = float(_p)
+                        except (ValueError, TypeError):
+                            pass
+                _st_alerts = evaluate_stage_transitions(
+                    prices=_st_prices, auto_update=True
+                )
+                if _st_alerts:
+                    context_parts.append(
+                        "\n[⚡ 포지션 단계 전환 경보 — CIO 즉시 검토]\n"
+                        + "\n".join(f"  {a}" for a in _st_alerts)
+                    )
+            except Exception as _ste:
+                logger.debug("[CIO] 단계전환 평가 실패: %s", _ste)
+
         # 투자관 — 모든 판단의 최우선 기준
         thesis = state.get("investment_thesis", "")
         if thesis:
@@ -932,7 +960,7 @@ def run(state: InvestmentState) -> InvestmentState:
         state["ceo_report"]   = ceo_report
         state["ceo_decisions"]= ceo_decisions
 
-        # Phase B: R/R 검증 — 3:1 미달 포지션 경고
+        # Phase B: R/R 검증 — 3:1 미달 포지션 경고 + 보고서에 경고 삽입
         try:
             from services.position_lifecycle_service import check_rr_warnings
             _rr_warns = check_rr_warnings(ceo_decisions)
@@ -940,6 +968,13 @@ def run(state: InvestmentState) -> InvestmentState:
                 for _w in _rr_warns:
                     logger.warning("[CIO] %s", _w)
                 state["errors"].extend(_rr_warns)
+                # 브리핑 맨 앞에 경고 블록 삽입 (텔레그램 가시성)
+                _rr_block = (
+                    "\n\n🚨 [CIO 헌장 위반 — R/R 기준 미달]\n"
+                    + "\n".join(_rr_warns)
+                    + "\n⛔ 위 포지션 진입 전 CIO 재검토 필수\n"
+                )
+                state["ceo_report"] = _rr_block + state["ceo_report"]
         except Exception as _rre:
             logger.debug("[CIO] R/R 검증 실패: %s", _rre)
 

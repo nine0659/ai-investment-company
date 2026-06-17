@@ -5,7 +5,8 @@ services/position_lifecycle_service.py
 Phase B 핵심 구현:
 - CIO 결정 로그에서 lifecycle 필드를 portfolio_positions DB에 반영
 - R/R < 3:1 포지션 경고
-- 현재 포지션 생애주기 현황을 팩트 시트에 주입
+- 현재 포지션 생애주기 현황 (수익률·목표가 진행도 포함)을 팩트 시트에 주입
+- 단계 전환 자동 탐지 + DB 갱신
 """
 import logging
 from datetime import datetime
@@ -20,7 +21,7 @@ _KST = ZoneInfo("Asia/Seoul")
 _STAGE_LABEL = {
     "early":      "🌱EARLY(탐색·1~3%)",
     "developing": "🌿DEVELOPING(성장·3~7%)",
-    "mature":     "🍎MATURE(성숙·유지)",
+    "mature":     "🍎MATURE(성숙·유지/축소)",
     "exhausted":  "⚰️EXHAUSTED(소진·청산검토)",
 }
 _CONV_LABEL = {
@@ -30,7 +31,7 @@ _CONV_LABEL = {
 }
 
 
-# ── DB 마이그레이션 (애플리케이션 시작 시 호출) ──────────────────────────
+# ── DB 마이그레이션 ──────────────────────────────────────────────────────
 
 def migrate_portfolio_positions() -> None:
     """portfolio_positions에 생애주기 관련 컬럼이 없으면 추가."""
@@ -136,16 +137,21 @@ def update_from_cio_decisions(date: str, decisions: dict) -> None:
         logger.warning("[생애주기] 반영 실패: %s", e)
 
 
-# ── 팩트 시트 주입용 현황 조회 ──────────────────────────────────────────
+# ── 팩트 시트 주입용 현황 조회 (수익률·목표가 진행도 포함) ────────────────
 
-def get_lifecycle_context() -> str:
-    """현재 보유 포지션 생애주기 현황 텍스트 — CIO 팩트 시트에 주입."""
+def get_lifecycle_context(prices: dict[str, float] | None = None) -> str:
+    """현재 보유 포지션 생애주기 현황 — avg_price·target_price·목표가 진행도 포함.
+
+    Args:
+        prices: {code: current_price} 딕셔너리 (없으면 현재가 생략)
+    """
     try:
         with get_conn() as conn:
             rows = conn.execute(
                 text("""
                     SELECT code, name, thesis_stage, conviction,
-                           risk_reward, falsification, thesis
+                           risk_reward, falsification, thesis,
+                           avg_price, target_price, entry_date
                     FROM portfolio_positions
                     WHERE status IN ('holding', 'draft')
                     ORDER BY
@@ -165,14 +171,47 @@ def get_lifecycle_context() -> str:
     if not rows:
         return ""
 
-    lines = ["[현재 포지션 생애주기 — CIO 판단 참고]"]
-    for code, name, stage, conviction, rr, falsify, thesis in rows:
+    lines = ["[현재 포지션 생애주기 — CIO 비중·단계 판단 참고]"]
+    for code, name, stage, conviction, rr, falsify, thesis, avg_price, target_price, entry_date in rows:
         stage_lbl = _STAGE_LABEL.get(str(stage or "").lower(), stage or "미정")
         conv_lbl  = _CONV_LABEL.get(str(conviction or "").lower(), conviction or "")
         rr_lbl    = f" | R:R={rr}" if rr else ""
-        falsify_lbl = f"\n    반증: {falsify[:60]}" if falsify else ""
-        thesis_lbl  = f"\n    테제: {thesis[:60]}" if thesis else ""
-        lines.append(f"  {name}({code}): {stage_lbl} | {conv_lbl}{rr_lbl}{falsify_lbl}{thesis_lbl}")
+
+        # 수익률 + 목표가 진행도
+        perf_parts = []
+        cur_price = (prices or {}).get(code)
+        if avg_price and avg_price > 0:
+            if cur_price:
+                ret_pct = (cur_price - avg_price) / avg_price * 100
+                perf_parts.append(f"수익률 {ret_pct:+.1f}%")
+                if target_price and target_price > avg_price:
+                    tgt_progress = (cur_price - avg_price) / (target_price - avg_price) * 100
+                    perf_parts.append(f"목표가 {tgt_progress:.0f}% 도달")
+            else:
+                perf_parts.append(f"진입가 {avg_price:,.0f}원")
+                if target_price:
+                    perf_parts.append(f"목표 {target_price:,.0f}원")
+
+        perf_lbl = f" | {' / '.join(perf_parts)}" if perf_parts else ""
+
+        # 보유기간
+        days_held = ""
+        if entry_date:
+            try:
+                from datetime import date as _date
+                ed = datetime.strptime(str(entry_date), "%Y-%m-%d").date()
+                days_held = f" | {(_date.today() - ed).days}일 보유"
+            except Exception:
+                pass
+
+        falsify_lbl = f"\n    ⛔반증: {falsify[:60]}" if falsify else ""
+        thesis_lbl  = f"\n    📝테제: {thesis[:60]}" if thesis else ""
+
+        lines.append(
+            f"  {name}({code}): {stage_lbl} | {conv_lbl}{rr_lbl}{perf_lbl}{days_held}"
+            f"{falsify_lbl}{thesis_lbl}"
+        )
+
     return "\n".join(lines)
 
 
@@ -186,28 +225,44 @@ def check_rr_warnings(decisions: dict) -> list[str]:
         rr_raw = str(pos.get("risk_reward", "")).strip()
         if not rr_raw:
             warnings.append(
-                f"⚠️ R/R 미명시: {name} — R/R 산출 불가, 진입 재검토 권고"
+                f"⚠️ R/R 미명시: {name} — 진입 재검토 권고"
             )
             continue
         try:
             rr_num = float(rr_raw.split(":")[0].replace("R", "").strip())
             if rr_num < 3.0:
                 warnings.append(
-                    f"⚠️ R/R 미달: {name} R/R={rr_raw} < 3:1 (CIO 헌장 기준 위반, 진입 보류 권고)"
+                    f"⚠️ R/R 미달: {name} R/R={rr_raw} < 3:1 → 헌장 위반, 진입 보류 권고"
                 )
         except (ValueError, IndexError):
             pass
     return warnings
 
 
-# ── 단계 자동 전환 평가 ─────────────────────────────────────────────────
+def get_rr_warning_context(decisions: dict) -> str:
+    """R/R 경고를 팩트 시트 주입용 텍스트로 포맷."""
+    warns = check_rr_warnings(decisions)
+    if not warns:
+        return ""
+    return "[⚠️ CIO 헌장 경고 — R/R 기준 위반]\n" + "\n".join(f"  {w}" for w in warns)
 
-def evaluate_stage_transitions(raw_market_data: dict) -> list[str]:
-    """현재 포지션 중 단계 전환이 필요한 종목을 탐지해 알림 텍스트 반환.
 
-    EARLY → DEVELOPING: 수익률 +10% 이상
-    DEVELOPING → MATURE: 수익률 +25% 이상 또는 컨센서스 목표가 도달 80%
-    MATURE → EXHAUSTED:  수익률 +40% 이상 또는 목표가 도달 95%
+# ── 단계 자동 전환 평가 + DB 갱신 ──────────────────────────────────────
+
+def evaluate_stage_transitions(
+    prices: dict[str, float] | None = None,
+    auto_update: bool = False,
+) -> list[str]:
+    """현재 포지션 단계 전환 탐지.
+
+    Args:
+        prices:      {code: current_price} (없으면 KIS API 직접 조회)
+        auto_update: True이면 전환 조건 충족 시 DB thesis_stage 자동 갱신
+
+    전환 기준:
+        EARLY → DEVELOPING: 수익률 +10% 이상
+        DEVELOPING → MATURE: 수익률 +25% 또는 목표가 도달 80%
+        MATURE → EXHAUSTED:  수익률 +40% 또는 목표가 도달 95%
     """
     try:
         with get_conn() as conn:
@@ -224,40 +279,65 @@ def evaluate_stage_transitions(raw_market_data: dict) -> list[str]:
         return []
 
     alerts: list[str] = []
+    now_str = datetime.now(_KST).strftime("%Y-%m-%d %H:%M:%S")
+
     for code, name, avg_price, stage, target_price in rows:
         if not avg_price:
             continue
-        # 현재가 조회 (raw_market_data에 없으면 생략)
-        cur_price = None
-        try:
-            from clients.kis_client import KISClient
-            _kis = KISClient()
-            pd = _kis.get_stock_price(code, market=None)
-            cur_price = pd.get("price")
-        except Exception:
-            pass
+
+        # 현재가 결정 (전달받은 prices → 없으면 KIS 직접 조회)
+        cur_price = (prices or {}).get(code)
+        if not cur_price:
+            try:
+                from clients.kis_client import KISClient
+                _kis = KISClient()
+                _pd = _kis.get_stock_price(code, market=None)
+                cur_price = _pd.get("price")
+            except Exception:
+                pass
 
         if not cur_price:
             continue
 
-        ret_pct = (cur_price - avg_price) / avg_price * 100
+        ret_pct   = (cur_price - avg_price) / avg_price * 100
         tgt_ratio = (cur_price / target_price * 100) if target_price else 0
-        stage = (stage or "early").lower()
+        cur_stage = (stage or "early").lower()
+        next_stage = None
 
-        if stage == "early" and ret_pct >= 10:
+        if cur_stage == "early" and ret_pct >= 10:
+            next_stage = "developing"
             alerts.append(
                 f"📈 단계 전환 검토: {name}({code}) EARLY→DEVELOPING "
-                f"(수익률 +{ret_pct:.1f}%)"
+                f"(수익률 {ret_pct:+.1f}%)"
             )
-        elif stage == "developing" and (ret_pct >= 25 or tgt_ratio >= 80):
+        elif cur_stage == "developing" and (ret_pct >= 25 or tgt_ratio >= 80):
+            next_stage = "mature"
             alerts.append(
                 f"🍎 단계 전환 검토: {name}({code}) DEVELOPING→MATURE "
-                f"(수익률 +{ret_pct:.1f}%, 목표가 {tgt_ratio:.0f}%)"
+                f"(수익률 {ret_pct:+.1f}%, 목표가 {tgt_ratio:.0f}%)"
             )
-        elif stage == "mature" and (ret_pct >= 40 or tgt_ratio >= 95):
+        elif cur_stage == "mature" and (ret_pct >= 40 or tgt_ratio >= 95):
+            next_stage = "exhausted"
             alerts.append(
                 f"⚰️ 청산 검토: {name}({code}) MATURE→EXHAUSTED "
-                f"(수익률 +{ret_pct:.1f}%, 목표가 {tgt_ratio:.0f}%)"
+                f"(수익률 {ret_pct:+.1f}%, 목표가 {tgt_ratio:.0f}%)"
             )
+
+        # 자동 DB 갱신
+        if auto_update and next_stage:
+            try:
+                with get_conn() as conn2:
+                    conn2.execute(
+                        text("""
+                            UPDATE portfolio_positions
+                            SET thesis_stage = :stage, updated_at = :now
+                            WHERE code = :code AND status IN ('holding', 'draft')
+                        """),
+                        {"stage": next_stage, "code": code, "now": now_str},
+                    )
+                logger.info("[생애주기] %s(%s) 자동 전환: %s → %s",
+                            name, code, cur_stage, next_stage)
+            except Exception as _ue:
+                logger.warning("[생애주기] 자동 전환 실패: %s", _ue)
 
     return alerts
