@@ -63,13 +63,17 @@ _EMOJI = {
 }
 
 # ── 위험 임계값 ──────────────────────────────────────────────────
-RISK_KOSPI_CRASH   = -2.5    # KOSPI 급락 (%)
-RISK_VIX_PANIC     = 35.0    # VIX 패닉 수준
-RISK_USD_KRW       = 1450    # 원달러 긴급 수준 (원)
-RISK_STOCK_CRASH   = -7.0    # 보유 종목 단일일 급락 (%)
+RISK_KOSPI_CRASH        = -2.5   # KOSPI 급락 (%)
+RISK_VIX_PANIC          = 35.0   # VIX 패닉 수준
+RISK_USD_KRW            = 1450   # 원달러 긴급 수준 (원)
+RISK_USD_KRW_MIN_CHANGE = 0.5    # 환율 경보 최소 일일 상승폭 (%) — 노이즈 필터: 0.5% 미만은 무시
+RISK_STOCK_CRASH        = -7.0   # 보유 종목 단일일 급락 (%)
 
 # ── 기회 임계값 ──────────────────────────────────────────────────
 OPP_USD_KRW_DROP   = -1.0    # 원달러 급락 (%) — 원화 강세 = 외국인 유입 기회 신호
+
+# ── 지정학 OPPORTUNITY 키워드 — 2개 이상 동시 등장해야 발동 (배경 기사 오작동 방지) ──
+_GEO_OPPORTUNITY_KEYWORDS = frozenset({"이란", "중동 분쟁", "호르무즈", "북한 도발", "북한 미사일"})
 
 # ── 지정학 RISK 키워드 ────────────────────────────────────────────
 GEOPOLITICAL_RISK_KEYWORDS = [
@@ -248,7 +252,10 @@ def check_news_opportunity(news_data: dict, today: str) -> None:
 
     for keywords, sector, stocks in OPPORTUNITY_CATALYSTS:
         matched_kws = [kw for kw in keywords if any(kw in t for t in all_titles)]
-        if len(matched_kws) >= 1:
+        # 지정학 키워드(이란·호르무즈·북한)는 배경 기사 오작동 방지를 위해 2개 이상 동시 등장 필요
+        is_geo = bool(set(keywords) & _GEO_OPPORTUNITY_KEYWORDS)
+        required = 2 if is_geo else 1
+        if len(matched_kws) >= required:
             _mark_sent(today, "MARKET", key)
             send_alert(
                 TYPE_OPPORTUNITY,
@@ -347,13 +354,13 @@ def check_risk_signals(market_data: dict, news_data: dict, today: str) -> None:
                 f"역발상 매수 검토는 VIX 30 이하 복귀 확인 후.",
             )
 
-    # 환율 급등 (원화 약세 = 상승할 때만 경보 — 하락은 원화 강세이므로 위험 아님)
+    # 환율 급등 경보 — 3중 조건: ① 임계값 초과 ② 최소 0.5% 이상 상승 ③ 당일 미발송
+    # chg_pct > 0 이었던 기존 조건은 +0.01% 소음에도 발동 → RISK_USD_KRW_MIN_CHANGE 필터 추가
     usd = market_data.get("usd_krw", {})
     if isinstance(usd, dict):
         rate     = usd.get("close", 0) or 0
         chg_pct  = usd.get("change_pct", 0) or 0
-        # 1450원 이상이고 당일 상승 중일 때만 경보 (하락 중이면 원화 강세 → 외국인 유입 환경)
-        if rate >= RISK_USD_KRW and chg_pct > 0 and not _already_sent(today, "USDKRW", "crisis"):
+        if rate >= RISK_USD_KRW and chg_pct >= RISK_USD_KRW_MIN_CHANGE and not _already_sent(today, "USDKRW", "crisis"):
             _mark_sent(today, "USDKRW", "crisis")
             send_alert(
                 TYPE_RISK,
