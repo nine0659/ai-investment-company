@@ -88,6 +88,21 @@ _SYSTEM = """당신은 글로벌 경제 이벤트 리스크 전문가입니다.
 - 미국 트리플위칭은 한국 시간 기준 해당 금요일 밤 → 다음 월요일 KOSPI 영향 명시"""
 
 
+_BOK_DATES_2026: list[date] = [
+    date(2026, 1, 16), date(2026, 2, 25), date(2026, 4, 17),
+    date(2026, 5, 29), date(2026, 7, 17), date(2026, 8, 28),
+    date(2026, 10, 16), date(2026, 11, 27),
+]
+
+
+def _next_bok_date(today: date) -> date | None:
+    """오늘 이후(당일 포함) 가장 가까운 BOK 금리 결정일 반환."""
+    for d in _BOK_DATES_2026:
+        if d >= today:
+            return d
+    return None
+
+
 def _calc_third_friday(year: int, month: int) -> date:
     """해당 월의 셋째 금요일 계산 (미국 트리플위칭 날짜)."""
     first_day = date(year, month, 1)
@@ -164,6 +179,15 @@ def run(state: InvestmentState) -> InvestmentState:
         next_year  = now.year if month < 12 else now.year + 1
         export_date = f"{next_year}년 {next_month}월 1일"
 
+        # ── BOK 기준금리 결정일 ────────────────────────────────
+        bok_next = _next_bok_date(today)
+        if bok_next:
+            bok_label = _days_label(bok_next, today)
+            bok_risk  = "🔴HIGH" if (bok_next - today).days <= 3 else "🟡MEDIUM"
+            bok_text  = f"{bok_next.strftime('%m월 %d일')} ({bok_label}) — BOK 기준금리 결정 {bok_risk}"
+        else:
+            bok_text = "2026년 일정 종료"
+
         # ── 매크로 지표 ───────────────────────────────────────────
         raw  = state.get("raw_market_data", {})
         vix  = raw.get("vix",   {}).get("close", "N/A")
@@ -184,6 +208,9 @@ def run(state: InvestmentState) -> InvestmentState:
   이번 달 만기일: {kr_expiry.strftime('%m월 %d일')} ({kr_expiry_label}) — {kr_expiry_type}
   이번 달이 쿼드러플위칭 월(3/6/9/12월)인가: {"예" if is_quad_month else "아니오"}
 
+■ 한국은행(BOK) 기준금리 결정
+  다음 BOK 회의: {bok_text}
+
 ■ 미국 트리플위칭 (Triple Witching)
   다음 트리플위칭 날짜: {us_witching_this.strftime('%Y년 %m월 %d일 (금요일)')} ({us_witching_label})
   {"⚠️ 5일 이내 임박! 나스닥 변동성 급증 + KOSPI 월요일 갭하락 주의" if us_witching_near else "현재 트리플위칭까지 여유 있음"}
@@ -203,7 +230,8 @@ def run(state: InvestmentState) -> InvestmentState:
         state["event_risk_report"] = result
 
         # 리스크 레벨 추출 (리스크팀·투자위원회 참고용)
-        if "🔴" in result or "HIGH" in result or us_witching_near or bool(mega_ipos):
+        bok_imminent = bok_next is not None and (bok_next - today).days <= 3
+        if "🔴" in result or "HIGH" in result or us_witching_near or bool(mega_ipos) or bok_imminent:
             state["event_risk_level"] = "높음"
         elif "🟡" in result or "MEDIUM" in result:
             state["event_risk_level"] = "중간"
@@ -211,8 +239,9 @@ def run(state: InvestmentState) -> InvestmentState:
             state["event_risk_level"] = "낮음"
 
         logger.info(
-            "[이벤트리스크팀] 완료 — 리스크 레벨: %s | 한국만기: %s | 미국트리플위칭: %s (%s) | 메가IPO: %d건",
+            "[이벤트리스크팀] 완료 — 리스크 레벨: %s | BOK: %s | 한국만기: %s | 미국트리플위칭: %s (%s) | 메가IPO: %d건",
             state["event_risk_level"],
+            bok_next.strftime("%m/%d") if bok_next else "일정 없음",
             kr_expiry_label,
             us_witching_this.strftime("%m/%d"),
             us_witching_label,

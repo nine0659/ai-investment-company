@@ -524,7 +524,7 @@ def build_global_graph() -> StateGraph:
     Layer 1: collect_raw_data_global
     Layer 2: futures | us_global | news | bigfigure | macro | intelligence (parallel)
     [gl2_barrier: fan-in]
-    Layer 3: midterm → ceo → save → telegram
+    Layer 3: midterm → committee → ceo → save → telegram
     """
     _GL2 = [
         "futures_market_team",
@@ -546,6 +546,7 @@ def build_global_graph() -> StateGraph:
     g.add_node("market_intelligence_team", node_intelligence)
     g.add_node("gl2_barrier",              node_l2_barrier)
     g.add_node("midterm_stock_agent",      node_midterm_stocks)
+    g.add_node("investment_committee",     node_committee)
     g.add_node("ceo_agent",               node_ceo)
     g.add_node("save_report",             node_save_report)
     g.add_node("send_telegram",           node_send_telegram)
@@ -557,10 +558,11 @@ def build_global_graph() -> StateGraph:
         g.add_edge(n, "gl2_barrier")
 
     for src, dst in [
-        ("gl2_barrier",     "midterm_stock_agent"),
-        ("midterm_stock_agent", "ceo_agent"),
-        ("ceo_agent",       "save_report"),
-        ("save_report",     "send_telegram"),
+        ("gl2_barrier",         "midterm_stock_agent"),
+        ("midterm_stock_agent", "investment_committee"),
+        ("investment_committee","ceo_agent"),
+        ("ceo_agent",           "save_report"),
+        ("save_report",         "send_telegram"),
     ]:
         g.add_edge(src, dst)
     g.add_edge("send_telegram", END)
