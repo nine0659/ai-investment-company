@@ -19,7 +19,7 @@ from pathlib import Path
 
 from sqlalchemy import (
     Column, Float, Integer, MetaData, String, Table, Text,
-    create_engine,
+    create_engine, text,
 )
 from sqlalchemy.pool import StaticPool
 
@@ -188,6 +188,15 @@ price_alert_log = Table("price_alert_log", metadata,
     Column("code",    Text, primary_key=True),
     Column("type",    Text, primary_key=True),
     Column("sent_at", Text, server_default="CURRENT_TIMESTAMP"),
+)
+
+# 장중 KOSPI 등락률 변동 추적 — 급반전(트렌드 역전) 감지용 (긴급모니터 5분마다 갱신)
+intraday_extremes = Table("intraday_extremes", metadata,
+    Column("date",             Text,    primary_key=True),
+    Column("min_kospi_chg",    Float),
+    Column("max_kospi_chg",    Float),
+    Column("reversal_alerted", Integer, default=0),
+    Column("updated_at",       Text,    server_default="CURRENT_TIMESTAMP"),
 )
 
 alert_notifications = Table("alert_notifications", metadata,

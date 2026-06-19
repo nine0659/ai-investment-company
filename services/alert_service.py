@@ -67,6 +67,8 @@ RISK_KOSPI_CRASH        = -2.5   # KOSPI 급락 (%)
 RISK_VIX_PANIC          = 35.0   # VIX 패닉 수준
 RISK_USD_KRW            = 1450   # 원달러 긴급 수준 (원)
 RISK_USD_KRW_MIN_CHANGE = 0.5    # 환율 경보 최소 일일 상승폭 (%) — 노이즈 필터: 0.5% 미만은 무시
+RISK_USD_KRW_KOSPI_CONFIRM = -0.3  # 환율 경보 발동을 위한 KOSPI 동반 약세 확인선 (%)
+                                    # 환율만 오르고 KOSPI가 견조/강세면 "외국인 이탈" 진단이 틀린 것 → 발동 차단
 RISK_STOCK_CRASH        = -7.0   # 보유 종목 단일일 급락 (%)
 
 # ── 기회 임계값 ──────────────────────────────────────────────────
@@ -354,18 +356,27 @@ def check_risk_signals(market_data: dict, news_data: dict, today: str) -> None:
                 f"역발상 매수 검토는 VIX 30 이하 복귀 확인 후.",
             )
 
-    # 환율 급등 경보 — 3중 조건: ① 임계값 초과 ② 최소 0.5% 이상 상승 ③ 당일 미발송
+    # 환율 급등 경보 — 4중 조건: ① 임계값 초과 ② 최소 0.5% 이상 상승
+    # ③ KOSPI 동반 약세(외국인 이탈 진단의 근거) ④ 당일 미발송
     # chg_pct > 0 이었던 기존 조건은 +0.01% 소음에도 발동 → RISK_USD_KRW_MIN_CHANGE 필터 추가
+    # KOSPI가 견조/강세인데 환율만 올랐다면 "외국인 이탈 위험" 진단 자체가 틀린 것 → KOSPI 동반 확인 필수
     usd = market_data.get("usd_krw", {})
     if isinstance(usd, dict):
-        rate     = usd.get("close", 0) or 0
-        chg_pct  = usd.get("change_pct", 0) or 0
-        if rate >= RISK_USD_KRW and chg_pct >= RISK_USD_KRW_MIN_CHANGE and not _already_sent(today, "USDKRW", "crisis"):
+        rate        = usd.get("close", 0) or 0
+        chg_pct     = usd.get("change_pct", 0) or 0
+        kospi_chg   = (kospi.get("change_pct", 0) or 0) if isinstance(kospi, dict) else 0
+        if (
+            rate >= RISK_USD_KRW
+            and chg_pct >= RISK_USD_KRW_MIN_CHANGE
+            and kospi_chg <= RISK_USD_KRW_KOSPI_CONFIRM
+            and not _already_sent(today, "USDKRW", "crisis")
+        ):
             _mark_sent(today, "USDKRW", "crisis")
             send_alert(
                 TYPE_RISK,
                 f"원달러 {rate:,.0f}원 상승 — 외국인 이탈 위험",
-                f"환율 {rate:,.0f}원 ({chg_pct:+.2f}%). 원화 약세 지속 중.\n\n"
+                f"환율 {rate:,.0f}원 ({chg_pct:+.2f}%). 원화 약세 지속 중.\n"
+                f"KOSPI {kospi_chg:+.1f}% 동반 약세 — 외국인 이탈 정황 확인.\n\n"
                 f"외국인 KOSPI 대규모 매도 우려.\n"
                 f"환율 연동 수출주 수혜(삼성전자·현대차) 확인.\n"
                 f"외국인 수급 동향 실시간 모니터링 필요.",
@@ -456,6 +467,151 @@ def check_portfolio_risk(today: str) -> None:
         logger.error("[위험] 포트폴리오 점검 실패: %s", e)
 
 
+# ── 장중 급반전(트렌드 역전) 분석 ───────────────────────────────────
+# 단순 임계값 알림(RISK/OPPORTUNITY)은 환율·KOSPI 같은 단일 지표만 보고 쏘기 때문에,
+# "환율은 올랐지만 반도체 강세로 KOSPI가 오후에 급반등" 같은 날엔 거짓 경보가 된다.
+# 당일 KOSPI 변동폭(저점·고점)을 추적해 뚜렷한 트렌드 반전이 감지되면,
+# 단순 경보 대신 뉴스·반도체 대형주 동향을 묶어 "왜 반전됐는지 + 어떻게 대응할지"를 LLM으로 분석해 알린다.
+
+REVERSAL_MIN_SWING  = 1.3   # 저점↔고점 대비 최소 반전폭 (%p)
+REVERSAL_TROUGH_MAX = -1.0  # 반등 인정을 위한 최소 저점 (이 이하로 빠졌어야 "반등"으로 인정)
+REVERSAL_PEAK_MIN   = 1.0   # 반락 인정을 위한 최소 고점
+REVERSAL_LEADERS    = [("005930", "삼성전자"), ("000660", "SK하이닉스")]
+
+_REVERSAL_SYSTEM = """당신은 시장 반전 원인 분석 전문가입니다.
+오늘 장중 KOSPI가 뚜렷한 트렌드 반전(저점·고점 대비 큰 반등 또는 반락)을 보였습니다.
+주어진 데이터만으로 반전 원인을 추정하고, 투자자가 지금 취해야 할 대응을 제시하세요.
+
+[출력 형식]
+📐 장중 반전 분석
+오늘 흐름: [저점 X% → 고점 Y% → 현재 Z% (반전폭 W%p)]
+추정 원인: [뉴스·반도체 대형주 동향·환율 등 근거 기반 1~2가지 — 확인 안 된 추측은 "추정"이라고 명시]
+대응 전략: [지금 시점에서 포지션을 어떻게 가져가야 하는지 구체적으로]
+
+근거가 부족하면 "데이터 부족으로 명확한 원인 특정 어려움. 추가 모니터링 필요"라고 명시할 것.
+매매 신호 발생 아님 — 투자 판단을 위한 정보 제공."""
+
+
+def _fmt_reversal_news(news_data: dict) -> str:
+    lines = []
+    for source, articles in (news_data or {}).items():
+        for a in (articles or [])[:2]:
+            if t := a.get("title"):
+                lines.append(f"  [{source}] {t}")
+        if len(lines) >= 8:
+            break
+    return "\n".join(lines) if lines else "없음"
+
+
+def check_intraday_reversal(market_data: dict, news_data: dict, today: str) -> None:
+    """KOSPI 당일 변동폭(저점·고점)을 추적해 뚜렷한 트렌드 반전 감지 시 원인·대응 분석 발송."""
+    kospi = market_data.get("kospi", {})
+    if not isinstance(kospi, dict):
+        return
+    chg = kospi.get("change_pct")
+    if chg is None:
+        return
+
+    row = None
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT min_kospi_chg, max_kospi_chg, reversal_alerted "
+                    "FROM intraday_extremes WHERE date=:d"
+                ),
+                {"d": today},
+            ).fetchone()
+
+            if row is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO intraday_extremes "
+                        "(date, min_kospi_chg, max_kospi_chg, reversal_alerted) "
+                        "VALUES (:d, :c, :c, 0)"
+                    ),
+                    {"d": today, "c": chg},
+                )
+                return  # 오늘 첫 기록 — 비교 대상 없음
+
+            prev_min, prev_max, alerted = row
+            new_min = min(prev_min, chg)
+            new_max = max(prev_max, chg)
+            conn.execute(
+                text(
+                    "UPDATE intraday_extremes SET min_kospi_chg=:mn, max_kospi_chg=:mx, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE date=:d"
+                ),
+                {"mn": new_min, "mx": new_max, "d": today},
+            )
+    except Exception as e:
+        logger.debug("[반전감지] DB 조회/갱신 실패: %s", e)
+        return
+
+    if alerted:
+        return  # 오늘 이미 발송됨
+
+    swing_up   = chg - new_min  # 저점 대비 회복폭
+    swing_down = new_max - chg  # 고점 대비 하락폭
+
+    is_rebound = new_min <= REVERSAL_TROUGH_MAX and swing_up >= REVERSAL_MIN_SWING
+    is_selloff = new_max >= REVERSAL_PEAK_MIN  and swing_down >= REVERSAL_MIN_SWING
+    if not (is_rebound or is_selloff):
+        return
+
+    direction = "반등" if is_rebound else "반락"
+    swing     = swing_up if is_rebound else swing_down
+
+    # 반도체 대형주 동향 (반전 원인 추정 보조 데이터)
+    try:
+        from clients.kis_client import KISClient
+        kis = KISClient()
+        leader_lines = []
+        for code, name in REVERSAL_LEADERS:
+            pd = kis.get_stock_price(code, market="J")
+            if pd.get("price"):
+                leader_lines.append(f"  {name}({code}): {pd.get('change_pct', 0):+.2f}%")
+        leaders_text = "\n".join(leader_lines) if leader_lines else "조회 실패"
+    except Exception as e:
+        logger.debug("[반전감지] 반도체 대형주 조회 실패: %s", e)
+        leaders_text = "조회 실패"
+
+    # 반전 원인 추정용 뉴스 — 평소 5분 체크용(max_per=2)보다 넉넉히 수집 (드물게만 호출됨)
+    try:
+        from clients.news_client import fetch_static_rss
+        reversal_news = fetch_static_rss(max_per=4)
+    except Exception:
+        reversal_news = news_data or {}
+
+    context = (
+        f"오늘 KOSPI 흐름: 저점 {new_min:+.2f}% → 고점 {new_max:+.2f}% → 현재 {chg:+.2f}% "
+        f"({direction} {swing:.1f}%p)\n\n"
+        f"[반도체 대형주 당일 등락]\n{leaders_text}\n\n"
+        f"[최근 뉴스 헤드라인]\n{_fmt_reversal_news(reversal_news)}"
+    )
+
+    try:
+        from clients.openai_client import chat
+        analysis = chat(_REVERSAL_SYSTEM, context, max_tokens=500)
+    except Exception as e:
+        logger.warning("[반전감지] LLM 분석 실패: %s", e)
+        return
+
+    if not _send_telegram(f"📐 *장중 급{direction} 감지*\n\n{analysis}"):
+        return
+
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                text("UPDATE intraday_extremes SET reversal_alerted=1 WHERE date=:d"),
+                {"d": today},
+            )
+    except Exception:
+        pass
+
+    logger.info("[반전감지] %s %.1f%%p 감지 — 분석 발송 완료", direction, swing)
+
+
 # ── 통합 실행 ─────────────────────────────────────────────────────
 
 def run_full_alert_check(market_data: dict, news_data: dict = None) -> None:
@@ -489,6 +645,12 @@ def run_full_alert_check(market_data: dict, news_data: dict = None) -> None:
         check_portfolio_risk(today)
     except Exception as e:
         logger.error("[알림] 포트폴리오 위험 체크 실패: %s", e)
+
+    # 3. 장중 급반전 분석 (단순 임계값 알림과 별개 — 트렌드 역전 감지 시에만 발동)
+    try:
+        check_intraday_reversal(market_data, news_data, today)
+    except Exception as e:
+        logger.error("[알림] 반전 감지 체크 실패: %s", e)
 
 
 # ── 하위 호환 (emergency_monitor_agent에서 호출) ───────────────────
