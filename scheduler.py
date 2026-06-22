@@ -6,10 +6,13 @@ APScheduler 기반 자동 스케줄 실행
   python scheduler.py
 
 스케줄 (평일만):
-  08:20 → 장전 브리핑
+  08:20 → 장전 브리핑 (미국 장 마감 후 시황 포함, 통합)
   10:00 → 장중 1차
   13:00 → 장중 2차
   15:50 → 장마감 복기
+
+* GLOBAL(구 05:30 새벽 시황)은 PRE와 내용이 겹쳐 PRE로 통합됨 (2026-06-22).
+  ceo_agent.py의 _build_prompt_global / build_global_graph()는 수동 실행용으로 남겨둠.
 """
 import logging
 import os
@@ -338,9 +341,12 @@ def _parse_time(time_str: str) -> tuple[int, int]:
 
 
 def setup_jobs():
-    """평일(월~금) 스케줄 등록"""
+    """평일(월~금) 스케줄 등록.
+
+    GLOBAL(05:30~08:00)은 PRE(07:50~09:30)와 내용이 거의 겹쳐 PRE로 통합.
+    job_global_briefing은 main.py를 통한 수동 실행용으로만 남겨둔다.
+    """
     for run_type, func, time_str in [
-        (RUN_TYPE_GLOBAL, job_global_briefing, SCHEDULE_GLOBAL),
         (RUN_TYPE_PRE,    job_pre_market,      SCHEDULE_PRE_MARKET),
         (RUN_TYPE_INTRA1, job_intra1,          SCHEDULE_INTRA_1),
         (RUN_TYPE_INTRA2, job_intra2,          SCHEDULE_INTRA_2),
@@ -488,7 +494,6 @@ def _recover_missed_briefings():
 
     # (run_type, 예약분, 복구마감분)
     _RECOVERY: list[tuple[str, int, int]] = [
-        (RUN_TYPE_GLOBAL, 6 * 60 + 30,  9 * 60),       # 06:30 → 복구 마감 09:00
         (RUN_TYPE_PRE,    8 * 60 + 20,  11 * 60),      # 08:20 → 복구 마감 11:00
         (RUN_TYPE_INTRA1, 10 * 60,      13 * 60),      # 10:00 → 복구 마감 13:00
         (RUN_TYPE_INTRA2, 13 * 60,      15 * 60 + 30), # 13:00 → 복구 마감 15:30
