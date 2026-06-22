@@ -47,6 +47,16 @@ _FALLBACK_QUERIES: list[tuple[str, str, str]] = [
     ("EN", "global_risk",     "geopolitical risk stock market crash oil"),
 ]
 
+# ── 매 실행 항상 검색할 지정학/매크로 속보 쿼리 ─────────────────────
+# 동적 검색어는 국내 RSS 헤드라인에서 파생되므로, 국내 경제지가 아직
+# 다루지 않은 속보(중동 분쟁, 해협 봉쇄 등)는 놓칠 수 있다.
+# 이를 보완하기 위해 LLM 동적 생성 성공 여부와 무관하게 항상 실행.
+_ALWAYS_ON_QUERIES: list[tuple[str, str, str]] = [
+    ("EN", "always_geopolitical", "Middle East conflict oil supply Strait of Hormuz"),
+    ("EN", "always_breaking_risk", "breaking news market sell-off war escalation"),
+    ("KO", "always_지정학속보",     "중동 호르무즈 해협 전쟁 확산 유가"),
+]
+
 
 # ── 기사 수집 ─────────────────────────────────────────────────────
 
@@ -201,7 +211,8 @@ def fetch_all_news(max_per_category: int = 8, market_data: dict = None) -> dict[
     1단계: 고정 RSS 수집
     2단계: RSS 헤드라인 + 시황 → LLM 검색어 동적 생성
     3단계: 동적 검색어로 Google News 추가 수집
-    4단계: 전체 병합
+    4단계: 지정학/매크로 속보 상시 검색 (국내 RSS가 아직 안 다룬 이슈 보완)
+    5단계: 전체 병합
     """
     # 1단계: 고정 RSS
     result = fetch_static_rss(max_per_category)
@@ -215,5 +226,10 @@ def fetch_all_news(max_per_category: int = 8, market_data: dict = None) -> dict[
     result.update(dynamic_news)
     logger.info("[뉴스수집] 동적검색 완료: %d개 쿼리, 총 %d개 소스",
                 len(dynamic_queries), len(result))
+
+    # 4단계: 지정학/매크로 속보 상시 검색 (LLM 동적생성 성공 여부와 무관하게 항상 실행)
+    always_news = fetch_dynamic_compound_news(_ALWAYS_ON_QUERIES, max_items=5)
+    result.update(always_news)
+    logger.info("[뉴스수집] 상시 지정학 속보 검색 완료: %d개 소스", len(always_news))
 
     return result
