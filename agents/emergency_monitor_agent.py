@@ -1,14 +1,13 @@
 """
 agents/emergency_monitor_agent.py
-긴급 시장 상황 모니터 — 5분마다 실행 (장중)
+긴급 시장 상황 모니터 — scheduler.py의 통합 시장 모니터(15분)에서 호출
 
-체크 항목:
+체크 항목 (보유 종목 급락은 alert_service.check_portfolio_risk가 처리 — 중복 제거):
   1. KOSPI/KOSDAQ 급락 (LEVEL 1: -2.5%, LEVEL 2: -1.5%)
   2. VIX 급등 (LEVEL 1: 32 이상)
   3. 원달러 환율 급등 (LEVEL 1: 1,450원, LEVEL 2: 1,420원)
   4. WTI 원유 급등 (LEVEL 1: 5% 이상)
   5. 뉴스 지정학 키워드 감지 (LEVEL 1)
-  6. 보유 종목 단일일 급락 (LEVEL 1: -7%, LEVEL 2: -4%)
 """
 import logging
 from datetime import datetime
@@ -63,15 +62,9 @@ def run() -> None:
     except Exception as e:
         logger.error("[긴급모니터] 알림 체크 실패: %s", e)
 
-    # 4. 보유 종목 급락 체크 (portfolio에 KIS 조회)
-    try:
-        _check_portfolio_crash()
-    except Exception as e:
-        logger.debug("[긴급모니터] 포트폴리오 급락 체크 실패: %s", e)
-
-    # 5. 투자관 무효조건 감지 (1시간마다 1회 — 중복 발송 방지)
+    # 4. 투자관 무효조건 감지 (1시간마다 1회 — 통합 모니터가 매 정시에 호출됨)
     now_dt = datetime.now(_KST)
-    if now_dt.minute < 5:  # 매 시간 :00~:04 에만 실행
+    if now_dt.minute == 0:
         try:
             _check_thesis_invalidation(market_data, news_data)
         except Exception as e:
@@ -151,73 +144,3 @@ def _fmt_news_headlines(news_data: dict) -> str:
     return "\n".join(lines) if lines else "없음"
 
 
-def _check_portfolio_crash() -> None:
-    """보유 종목 단일일 급락 체크."""
-    from clients.kis_client import KISClient
-    from services.alert_service import (
-        send_alert, _already_sent, _mark_sent,
-        TYPE_RISK,
-        RISK_STOCK_CRASH,          # -7.0%  즉시 손절 검토
-    )
-    from db.database import get_conn
-    from sqlalchemy import text
-
-    _URGENT_DROP = -4.0  # -4% 이상 하락 시 경고 (alert_service 기준)
-
-    today = datetime.now(_KST).strftime("%Y-%m-%d")
-
-    try:
-        with get_conn() as conn:
-            rows = conn.execute(
-                text(
-                    "SELECT code, name, avg_price FROM portfolio_positions "
-                    "WHERE status='holding' AND quantity > 0"
-                )
-            ).fetchall()
-    except Exception:
-        return
-
-    if not rows:
-        return
-
-    try:
-        kis = KISClient()
-    except Exception:
-        return
-
-    for code, name, avg_price in rows:
-        try:
-            pd = kis.get_stock_price(code, market=None)
-            price = pd.get("price", 0)
-            chg_pct = pd.get("change_pct", 0) or 0  # 당일 등락률
-            if not price:
-                continue
-
-            if chg_pct <= RISK_STOCK_CRASH:
-                if not _already_sent(today, code, "portfolio_crash"):
-                    pnl = (price - avg_price) / avg_price * 100
-                    send_alert(
-                        TYPE_RISK,
-                        f"[보유종목] {name} 급락 {chg_pct:+.1f}%",
-                        f"종목: {name}({code})\n"
-                        f"현재가: {price:,}원  |  당일 등락: {chg_pct:+.1f}%\n"
-                        f"평균단가: {avg_price:,.0f}원  |  총 수익률: {pnl:+.1f}%\n\n"
-                        f"포지션 재검토가 필요합니다.",
-                        code=code, name=name,
-                    )
-                    _mark_sent(today, code, "portfolio_crash")
-
-            elif chg_pct <= _URGENT_DROP:
-                if not _already_sent(today, code, "portfolio_drop"):
-                    send_alert(
-                        TYPE_RISK,
-                        f"[보유종목] {name} 하락 {chg_pct:+.1f}%",
-                        f"종목: {name}({code})\n"
-                        f"현재가: {price:,}원  |  당일 등락: {chg_pct:+.1f}%\n"
-                        f"포지션 점검 권고. 손절가와의 거리 확인 필요.",
-                        code=code, name=name,
-                    )
-                    _mark_sent(today, code, "portfolio_drop")
-
-        except Exception as e:
-            logger.debug("[긴급모니터] %s 종목 체크 실패: %s", code, e)

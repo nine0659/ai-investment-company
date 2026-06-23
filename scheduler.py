@@ -7,12 +7,14 @@ APScheduler 기반 자동 스케줄 실행
 
 스케줄 (평일만):
   08:20 → 장전 브리핑 (미국 장 마감 후 시황 포함, 통합)
-  10:00 → 장중 1차
-  13:00 → 장중 2차
   15:50 → 장마감 복기
 
 * GLOBAL(구 05:30 새벽 시황)은 PRE와 내용이 겹쳐 PRE로 통합됨 (2026-06-22).
   ceo_agent.py의 _build_prompt_global / build_global_graph()는 수동 실행용으로 남겨둠.
+* INTRA1·INTRA2(장중 1·2차)는 정기 브리핑 과다 발송 피드백으로 자동 스케줄에서 제외됨 (2026-06-23).
+  python main.py --type intra1/intra2 로 수동 실행은 계속 가능.
+* 실시간모니터(구 15분)·긴급모니터(구 5분)는 중복 체크(보유종목 급락·워치리스트 변동을
+  두 모니터가 각자 따로 발송)가 있어 단일 15분 주기 모니터로 통합됨 (2026-06-23).
 """
 import logging
 import os
@@ -29,8 +31,8 @@ from rich.logging import RichHandler
 
 from config.settings import (
     TIMEZONE_STR,
-    SCHEDULE_GLOBAL, SCHEDULE_PRE_MARKET, SCHEDULE_INTRA_1, SCHEDULE_INTRA_2, SCHEDULE_CLOSE,
-    RUN_TYPE_GLOBAL, RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE,
+    SCHEDULE_PRE_MARKET, SCHEDULE_CLOSE,
+    RUN_TYPE_PRE, RUN_TYPE_CLOSE,
     validate_env,
 )
 from clients.telegram_client import send_error_alert
@@ -46,10 +48,7 @@ _MONITOR_LOCK = threading.Lock()
 # 각 run_type별 허용 실행 시간 윈도우 (KST 기준, 시작~종료 분)
 # 스케줄 시간 ±30분 이내에만 실제 브리핑 발송
 _TIME_WINDOWS: dict[str, tuple[int, int]] = {
-    RUN_TYPE_GLOBAL: (5 * 60 + 30,  8 * 60),         # 05:30 ~ 08:00  (미국 장 마감 후)
     RUN_TYPE_PRE:    (7 * 60 + 50,  9 * 60 + 30),   # 07:50 ~ 09:30
-    RUN_TYPE_INTRA1: (9 * 60 + 30, 11 * 60),         # 09:30 ~ 11:00
-    RUN_TYPE_INTRA2: (12 * 60 + 30, 14 * 60),        # 12:30 ~ 14:00
     RUN_TYPE_CLOSE:  (16 * 60,      18 * 60),        # 16:00 ~ 18:00  (수급 집계 완료 후)
 }
 
@@ -139,48 +138,36 @@ def _run_safe(run_type: str):
         _PIPELINE_LOCK.release()
 
 
-def job_global_briefing():
-    _run_safe(RUN_TYPE_GLOBAL)
-
 def job_pre_market():
     _run_safe(RUN_TYPE_PRE)
-
-def job_intra1():
-    _run_safe(RUN_TYPE_INTRA1)
-
-def job_intra2():
-    _run_safe(RUN_TYPE_INTRA2)
 
 def job_close():
     _run_safe(RUN_TYPE_CLOSE)
 
-def job_monitor():
+def job_market_monitor():
+    """15분마다 실행 — 실시간 모니터(워치리스트·포지션·추적종목) + 긴급모니터
+    (KOSPI 급락·VIX 급등·환율 급등·지정학 뉴스)를 한 번에 체크.
+
+    과거엔 15분/5분 두 잡이 따로 돌며 보유종목 급락·워치리스트 변동을
+    중복 체크해 같은 사건에 메시지가 2건씩 나갔다 — 단일 잡으로 통합 (2026-06-23).
+    """
     if not is_krx_trading_day():
         return
     if not _MONITOR_LOCK.acquire(blocking=False):
-        logger.debug("⏳ [모니터 잠금] 모니터 실행 중 — 이번 실시간 모니터 스킵")
+        logger.debug("⏳ [모니터 잠금] 모니터 실행 중 — 이번 회차 스킵")
         return
-    from agents.realtime_monitor_agent import run as monitor_run
     try:
-        monitor_run()
-    except Exception as e:
-        logger.error("실시간 모니터 실패: %s", e)
-    finally:
-        _MONITOR_LOCK.release()
+        from agents.realtime_monitor_agent import run as realtime_run
+        try:
+            realtime_run()
+        except Exception as e:
+            logger.error("실시간 모니터 실패: %s", e)
 
-
-def job_emergency():
-    """5분마다 실행 — KOSPI 급락·VIX 급등·환율 급등·지정학 뉴스 감지"""
-    if not is_krx_trading_day():
-        return
-    if not _MONITOR_LOCK.acquire(blocking=False):
-        logger.debug("⏳ [모니터 잠금] 모니터 실행 중 — 이번 긴급 모니터 스킵")
-        return
-    from agents.emergency_monitor_agent import run as emergency_run
-    try:
-        emergency_run()
-    except Exception as e:
-        logger.error("긴급 모니터 실패: %s", e)
+        from agents.emergency_monitor_agent import run as emergency_run
+        try:
+            emergency_run()
+        except Exception as e:
+            logger.error("긴급 모니터 실패: %s", e)
     finally:
         _MONITOR_LOCK.release()
 
@@ -343,13 +330,12 @@ def _parse_time(time_str: str) -> tuple[int, int]:
 def setup_jobs():
     """평일(월~금) 스케줄 등록.
 
+    정기 브리핑은 장전(PRE)+장마감(CLOSE) 2회만 자동 발송 (과다 발송 피드백으로
+    INTRA1·INTRA2는 자동 스케줄에서 제외, 수동 실행만 가능 — 2026-06-23).
     GLOBAL(05:30~08:00)은 PRE(07:50~09:30)와 내용이 거의 겹쳐 PRE로 통합.
-    job_global_briefing은 main.py를 통한 수동 실행용으로만 남겨둔다.
     """
     for run_type, func, time_str in [
         (RUN_TYPE_PRE,    job_pre_market,      SCHEDULE_PRE_MARKET),
-        (RUN_TYPE_INTRA1, job_intra1,          SCHEDULE_INTRA_1),
-        (RUN_TYPE_INTRA2, job_intra2,          SCHEDULE_INTRA_2),
         (RUN_TYPE_CLOSE,  job_close,           SCHEDULE_CLOSE),
     ]:
         h, m = _parse_time(time_str)
@@ -363,38 +349,22 @@ def setup_jobs():
         )
         console.print(f"  [cyan]⏰ {time_str}[/cyan] {run_type}")
 
-    # 실시간 모니터: 장중 9:00-15:30, 15분마다
+    # 시장 모니터(실시간+긴급 통합): 장중 9:00-15:30, 15분마다
+    # 워치리스트·포지션·추적종목 + KOSPI급락·VIX·환율·지정학 뉴스를 한 번에 체크
     scheduler.add_job(
-        job_monitor,
+        job_market_monitor,
         CronTrigger(
             day_of_week="mon-fri",
             hour="9-15",
             minute="*/15",
             timezone=TIMEZONE_STR,
         ),
-        id="realtime_monitor",
-        name="[15분] 시장 급변 경보 모니터 (수급·지수·섹터 이상 감지)",
+        id="market_monitor",
+        name="[15분] 시장 모니터 (실시간+긴급 통합 — 수급·지수·포지션·섹터 이상 감지)",
         misfire_grace_time=120,
         coalesce=True,
     )
-    console.print("  [cyan]⏰ 09:00-15:30 매 15분[/cyan] 시장 급변 경보 모니터")
-
-    # 긴급 모니터: 장중 9:00-15:30, 5분마다
-    # KOSPI 급락 / VIX 급등 / 원달러 급등 / 지정학 뉴스 / 보유 종목 급락 체크
-    scheduler.add_job(
-        job_emergency,
-        CronTrigger(
-            day_of_week="mon-fri",
-            hour="9-15",
-            minute="*/5",
-            timezone=TIMEZONE_STR,
-        ),
-        id="emergency_monitor",
-        name="[5분] 긴급알림 — KOSPI급락·VIX·환율·지정학·보유종목",
-        misfire_grace_time=60,
-        coalesce=True,
-    )
-    console.print("  [cyan]⏰ 09:00-15:30 매 5분[/cyan] 긴급 알림 모니터")
+    console.print("  [cyan]⏰ 09:00-15:30 매 15분[/cyan] 시장 모니터 (실시간+긴급 통합)")
 
     # 월간 투자관: 매월 첫째 주 월요일 19:00 (job 내부에서 날짜 재확인)
     scheduler.add_job(
@@ -495,8 +465,6 @@ def _recover_missed_briefings():
     # (run_type, 예약분, 복구마감분)
     _RECOVERY: list[tuple[str, int, int]] = [
         (RUN_TYPE_PRE,    8 * 60 + 20,  11 * 60),      # 08:20 → 복구 마감 11:00
-        (RUN_TYPE_INTRA1, 10 * 60,      13 * 60),      # 10:00 → 복구 마감 13:00
-        (RUN_TYPE_INTRA2, 13 * 60,      15 * 60 + 30), # 13:00 → 복구 마감 15:30
         (RUN_TYPE_CLOSE,  16 * 60 + 30, 20 * 60),      # 16:30 → 복구 마감 20:00
     ]
 

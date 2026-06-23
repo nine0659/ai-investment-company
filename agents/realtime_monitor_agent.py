@@ -1,12 +1,11 @@
 """
 agents/realtime_monitor_agent.py
-시장 급변 경보 모니터 — 장중 15분마다 실행
+시장 급변 경보 모니터 — scheduler.py의 통합 시장 모니터(15분)에서 호출
 
 목적: 투자 판단을 위한 정보 제공. 매매 타이밍 신호 발생 아님.
-기능:
-  1. 워치리스트 이상 동향 감지 (가격·거래량 급변 — 정보 제공)
-  2. 보유 포지션 리스크 기준선 도달 알림 (포트폴리오 관리)
-  3. 추적 종목 기준가격 도달 통보 (투자 검토 참고 자료)
+기능 (워치리스트 가격 급변은 alert_service.check_watchlist_opportunity가 처리 — 중복 제거):
+  1. 보유 포지션 리스크 기준선 도달 알림 (포트폴리오 관리)
+  2. 추적 종목 기준가격 도달 통보 (투자 검토 참고 자료)
 """
 import logging
 from datetime import datetime
@@ -106,64 +105,6 @@ def _auto_execute_gate(code: str, action: str) -> tuple[bool, str]:
 
     _last_auto_execute[gate_key] = now
     return True, ""
-
-
-# ── 워치리스트 이상 동향 감지 ──────────────────────────────────────
-
-def run_watchlist_monitor(today: str, kis: KISClient) -> list[str]:
-    """워치리스트 종목 가격 이상 동향 감지 — 정보 제공 (매매 신호 아님)."""
-    try:
-        with get_conn() as conn:
-            rows = conn.execute(
-                text("""
-                    SELECT code, name, reason
-                    FROM watchlist_items
-                    WHERE status = 'active'
-                    ORDER BY priority DESC, code
-                """)
-            ).fetchall()
-    except Exception as e:
-        logger.warning("[경보모니터] 워치리스트 조회 실패: %s", e)
-        return []
-
-    fired = []
-    for code, name, reason in rows:
-        if _already_alerted(today, code, "watchlist_move"):
-            continue
-        try:
-            from services.alert_service import _already_sent_any_type
-            if _already_sent_any_type(today, code, cooldown_minutes=30):
-                logger.debug("[경보모니터] %s(%s) 최근 30분 내 알림 발송됨 — 중복 스킵", name, code)
-                continue
-        except Exception:
-            pass
-        try:
-            pd = kis.get_stock_price(code, market=None)
-            price = pd.get("price", 0)
-            chg_pct = pd.get("change_pct", 0) or 0
-            if not price:
-                continue
-
-            # 3% 이상 급등락 시에만 정보 알림 발송
-            if abs(chg_pct) < 3.0:
-                continue
-
-            direction = "급등" if chg_pct > 0 else "급락"
-            msg = (
-                f"📊 *워치리스트 동향 감지* {name}({code})\n"
-                f"  현재가: {price:,}원  |  당일 등락: {chg_pct:+.1f}% ({direction})\n"
-                f"  모니터링 사유: {reason or '없음'}\n"
-                f"  ℹ️ 투자 검토 참고 자료 — 직접 분석 후 판단 필요"
-            )
-            fired.append(msg)
-            _mark_alerted(today, code, "watchlist_move")
-            _save_notification(today, "watchlist_move", code, name, msg)
-            send_message(msg)
-            logger.info("[경보모니터] 워치리스트 동향: %s(%s) %+.1f%%", name, code, chg_pct)
-        except Exception as e:
-            logger.debug("[경보모니터] %s 워치리스트 조회 실패: %s", code, e)
-
-    return fired
 
 
 # ── 포트폴리오 리스크 기준선 모니터 ────────────────────────────────
@@ -361,20 +302,14 @@ def run() -> None:
         logger.error("[경보모니터] KIS 연결 실패: %s", e)
         return
 
-    # 1. 워치리스트 이상 동향 감지
-    try:
-        run_watchlist_monitor(today, kis)
-    except Exception as e:
-        logger.error("[경보모니터] 워치리스트 동향 감지 실패: %s", e)
-
-    # 2. 보유 포지션 리스크 기준선 모니터
+    # 1. 보유 포지션 리스크 기준선 모니터
     try:
         stop_alerts, target_alerts = run_portfolio_monitor(today, kis)
         logger.info("[경보모니터] 리스크 알림 %d건 / 수익목표 알림 %d건", len(stop_alerts), len(target_alerts))
     except Exception as e:
         logger.error("[경보모니터] 포지션 리스크 모니터 실패: %s", e)
 
-    # 3. 추적 종목 기준선 도달 통보
+    # 2. 추적 종목 기준선 도달 통보
     try:
         ai_stops, ai_targets = run_ai_rec_monitor(today, kis)
         all_alerts = ai_stops + ai_targets
