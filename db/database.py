@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 from sqlalchemy import (
-    Column, Float, Integer, MetaData, String, Table, Text,
+    Column, Float, Integer, MetaData, String, Table, Text, UniqueConstraint,
     create_engine, text,
 )
 from sqlalchemy.pool import StaticPool
@@ -79,6 +79,29 @@ reports = Table("reports", metadata,
     Column("sector_scores",    Text),
     Column("market_direction", Text),
     Column("created_at",       Text,    server_default="CURRENT_TIMESTAMP"),
+)
+
+# 브리핑 파이프라인 중복 실행 방지용 원자적 선점 테이블.
+# 스케줄러 cron · 웹 대시보드 수동실행 · 재시작 복구 스레드 등 여러 경로가
+# 같은 (date, run_type) 브리핑을 동시에 시작하려 할 때, UNIQUE 제약으로
+# 단 하나만 통과시킨다 (reports 테이블 INSERT는 파이프라인 끝에서야 일어나
+# 그 전까지는 중복 트리거를 막지 못했음 — 2026-06-24 중복발송 원인).
+report_claims = Table("report_claims", metadata,
+    Column("date",       Text, nullable=False),
+    Column("run_type",   Text, nullable=False),
+    Column("claimed_at", Text, server_default="CURRENT_TIMESTAMP"),
+    UniqueConstraint("date", "run_type", name="uq_report_claims_date_run_type"),
+)
+
+# 메인 텔레그램 브리핑은 짧은 결론(헤드라인+액션)만 담는다 — 글로벌 시장 서사,
+# 전문가·텔레그램 채널 시각, 종목별 기술적·수급 분석처럼 압축 과정에서 잘려나가는
+# 내용은 여기에 보존해 /insight 명령어·대시보드에서 조회한다 (2026-06-24).
+deep_reports = Table("deep_reports", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("date",       Text,    nullable=False),
+    Column("run_type",   Text,    nullable=False),
+    Column("content",    Text),
+    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
 )
 
 reviews = Table("reviews", metadata,

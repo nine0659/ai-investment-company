@@ -134,6 +134,9 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/orders` — 미체결 주문 목록\n"
         "`/cancel ORDER_NO CODE SIDE QTY` — 주문 취소\n"
         "`/history` — 최근 주문 이력\n\n"
+        "🔍 *심층 분석*\n"
+        "`/insight` — 글로벌 시장 서사·전문가/텔레그램 채널 시각·종목 기술/수급 분석\n"
+        "  (메인 브리핑에서 압축돼 빠진 분석 원문)\n\n"
         "📜 *전략·투자관*\n"
         "`/thesis` — 현재 월간 투자관\n"
         "`/strategy` — 현재 주간 전략\n"
@@ -553,6 +556,23 @@ def _cmd_history(chat_id: str, _args: str) -> None:
     except Exception as e:
         logger.error("[Bot] /history 오류: %s", e)
         _send(chat_id, f"❌ 주문 이력 조회 오류: {e}")
+
+
+def _cmd_insight(chat_id: str, _args: str) -> None:
+    """메인 브리핑에서 압축돼 잘려나간 분석 원문(글로벌 시장 서사·전문가/텔레그램
+    채널 시각·빅피겨 발언·종목별 기술적·수급 분석) 조회."""
+    _typing(chat_id)
+    try:
+        from services.report_service import get_latest_deep_report
+        report = get_latest_deep_report()
+        if not report or not report.get("content"):
+            _send(chat_id, "🔍 아직 생성된 심층 리포트가 없습니다 — 다음 브리핑 이후 확인해주세요.")
+            return
+        header = f"🔍 *심층 분석* ({report['date']} {report['run_type']})\n\n"
+        _send(chat_id, header + report["content"])
+    except Exception as e:
+        logger.error("[Bot] /insight 오류: %s", e)
+        _send(chat_id, f"❌ 심층 리포트 조회 오류: {e}")
 
 
 def _cmd_thesis(chat_id: str, _args: str) -> None:
@@ -980,6 +1000,7 @@ _HANDLERS: dict = {
     "/orders":    _cmd_orders,
     "/cancel":    _cmd_cancel,
     "/history":   _cmd_history,
+    "/insight":   _cmd_insight,
     "/thesis":    _cmd_thesis,
     "/strategy":  _cmd_strategy,
     "/nav":       _cmd_nav,

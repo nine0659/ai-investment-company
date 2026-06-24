@@ -320,6 +320,19 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
     return state
 
 
+def node_deep_report(state: InvestmentState) -> InvestmentState:
+    """메인 브리핑에서 압축돼 잘려나간 분석(글로벌 서사·전문가시각·종목 기술/수급)을
+    보존 — /insight 명령어·대시보드에서 조회."""
+    try:
+        from services.deep_report_service import build_deep_report
+        from services.report_service import save_deep_report
+        content = build_deep_report(state)
+        save_deep_report(state["date"], state["run_type"], content)
+    except Exception as e:
+        logger.warning("[심층리포트] 생성 실패 (무시): %s", e)
+    return state
+
+
 def node_record_nav(state: InvestmentState) -> InvestmentState:
     if state.get("run_type") != RUN_TYPE_CLOSE:
         return state
@@ -341,7 +354,7 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         logger.warning("[텔레그램] 발송할 리포트 없음")
         return state
     try:
-        send_message(report)
+        send_message(report + "\n\n🔍 자세한 시황·전문가시각·기술분석: /insight")
         logger.info("[텔레그램] 발송 완료")
         errors = state.get("errors", [])
         if errors:
@@ -478,6 +491,7 @@ def build_graph() -> StateGraph:
     g.add_node("midterm_stock_agent",      node_midterm_stocks)
     g.add_node("ceo_agent",               node_ceo)
     g.add_node("save_report",             node_save_report)
+    g.add_node("deep_report",             node_deep_report)
     g.add_node("record_nav",              node_record_nav)
     g.add_node("send_telegram",           node_send_telegram)
 
@@ -509,7 +523,8 @@ def build_graph() -> StateGraph:
         ("portfolio_manager_agent", "midterm_stock_agent"),
         ("midterm_stock_agent",  "ceo_agent"),
         ("ceo_agent",            "save_report"),
-        ("save_report",          "record_nav"),
+        ("save_report",          "deep_report"),
+        ("deep_report",          "record_nav"),
         ("record_nav",           "send_telegram"),
     ]:
         g.add_edge(src, dst)
@@ -549,6 +564,7 @@ def build_global_graph() -> StateGraph:
     g.add_node("investment_committee",     node_committee)
     g.add_node("ceo_agent",               node_ceo)
     g.add_node("save_report",             node_save_report)
+    g.add_node("deep_report",             node_deep_report)
     g.add_node("send_telegram",           node_send_telegram)
 
     g.set_entry_point("collect_raw_data_global")
@@ -562,7 +578,8 @@ def build_global_graph() -> StateGraph:
         ("midterm_stock_agent", "investment_committee"),
         ("investment_committee","ceo_agent"),
         ("ceo_agent",           "save_report"),
-        ("save_report",         "send_telegram"),
+        ("save_report",         "deep_report"),
+        ("deep_report",         "send_telegram"),
     ]:
         g.add_edge(src, dst)
     g.add_edge("send_telegram", END)
@@ -591,16 +608,14 @@ def run_pipeline(run_type: str) -> InvestmentState:
     except Exception as e:
         logger.debug("[파이프라인] 공휴일 체크 실패 (무시): %s", e)
 
-    try:
-        from services.report_service import already_ran_today
-        if already_ran_today(now.strftime("%Y-%m-%d"), run_type):
-            logger.warning(
-                "[중복방지] %s/%s 오늘 이미 실행 완료 — 중복 발송 방지를 위해 스킵",
-                run_type, now.strftime("%Y-%m-%d"),
-            )
-            return {}
-    except Exception as e:
-        logger.debug("[중복방지] DB 체크 실패 (무시): %s", e)
+    from services.report_service import claim_report_slot, release_report_slot
+    date_str = now.strftime("%Y-%m-%d")
+    if not claim_report_slot(date_str, run_type):
+        logger.warning(
+            "[중복방지] %s/%s 이미 다른 트리거가 선점함 — 중복 발송 방지를 위해 스킵",
+            run_type, date_str,
+        )
+        return {}
 
     initial: InvestmentState = {
         "run_type": run_type,
@@ -658,6 +673,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         return final
     except Exception as e:
         logger.error("파이프라인 실패: %s", e)
+        release_report_slot(date_str, run_type)  # 실패 시 선점 해제 — 재시도 가능하도록
         send_error_alert(f"파이프라인 실패 ({run_type}): {e}")
         raise
 
@@ -665,13 +681,11 @@ def run_pipeline(run_type: str) -> InvestmentState:
 def _run_global(run_type: str) -> InvestmentState:
     now = datetime.now(TZ)
 
-    try:
-        from services.report_service import already_ran_today
-        if already_ran_today(now.strftime("%Y-%m-%d"), run_type):
-            logger.info("[글로벌] 오늘 이미 발송 — 스킵")
-            return {}
-    except Exception as e:
-        logger.debug("[글로벌] 중복 체크 실패 (무시): %s", e)
+    from services.report_service import claim_report_slot, release_report_slot
+    date_str = now.strftime("%Y-%m-%d")
+    if not claim_report_slot(date_str, run_type):
+        logger.info("[글로벌] 이미 다른 트리거가 선점함 — 스킵")
+        return {}
 
     initial: InvestmentState = {
         "run_type": run_type,
@@ -705,5 +719,6 @@ def _run_global(run_type: str) -> InvestmentState:
         return final
     except Exception as e:
         logger.error("[글로벌] 파이프라인 실패: %s", e)
+        release_report_slot(date_str, run_type)  # 실패 시 선점 해제 — 재시도 가능하도록
         send_error_alert(f"글로벌 시황 파이프라인 실패: {e}")
         raise

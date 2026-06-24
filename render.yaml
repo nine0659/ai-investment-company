@@ -17,6 +17,15 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
+      # 텔레그램 투자채널 인텔리전스 수집용 (market_intelligence_team) — 누락 시
+      # 채널 수집이 매번 조용히 빈 결과로 스킵된다. my.telegram.org에서 발급,
+      # generate_telegram_session.py로 SESSION_STRING 생성 후 여기에 값 입력 필요.
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_SESSION_STRING
+        sync: false
       - key: KIS_APP_KEY
         sync: false
       - key: KIS_APP_SECRET
