@@ -14,59 +14,58 @@ _TZ = ZoneInfo("Asia/Seoul")
 
 # ── 파싱 ──────────────────────────────────────────────────────────
 
-# 종목명(6자리코드) 패턴 — "SK(주)바이오팜(123456)", "삼성·SDI(006400)" 등 특수케이스 포함
-# 종목명: 한글·영문·숫자·특수문자(·&()·△▶- 등) 허용, 마지막 (6자리숫자) 가 코드
-_HEADER_RE = re.compile(r"([\w가-힣A-Za-z·&()\-\s]{1,30}?)\s*\((\d{6})\)")
-# "진입①(즉시): XXXXX원" 또는 "진입②(눌림): XXXXX원" 형식 (현재 브리핑 포맷)
-_ENTRY_NUMBERED_RE = re.compile(r"진입[①②][^\n]{0,30}?([\d,]{4,})\s*원")
-# "즉시진입: XXXXX원" 또는 구형 "진입가: XXXXX원" 형식
-# '진입' 부분문자열로 '즉시진입: XXX원' 도 매칭됨
-_ENTRY_OLD_RE = re.compile(r"진입[가격：: ]{0,5}([\d,]{4,})\s*원")
-_STOP_RE      = re.compile(r"손절[가격：: ·]{0,5}([\d,]{4,})\s*원")
-_TARGET_RE    = re.compile(r"목표[가격：: ·]{0,5}([\d,]{4,})\s*원")
-_RATIONALE_RE = re.compile(r"선택 이유[：:]\s*([^\n]{10,200})")
+# "목표 +X% / 손절 -Y%" 패턴 — 현재 CIO 브리핑 포맷
+_PCT_RE = re.compile(r"목표\s+\+?([\d.]+)%\s*/\s*손절\s+-?([\d.]+)%")
 
 
-def _extract_price(pattern: re.Pattern, text_: str) -> int | None:
-    m = pattern.search(text_)
-    if m:
-        try:
-            return int(m.group(1).replace(",", ""))
-        except ValueError:
-            pass
-    return None
+def recs_from_cio_decisions(
+    decisions: dict,
+    ceo_report: str,
+    price_fn,  # Callable[[str], int] — 종목코드 → 현재가(원), 실패 시 0
+) -> list[dict]:
+    """ceo_decisions.new_positions + 브리핑 텍스트 % + 현재가 → stock_recommendations 레코드.
 
-
-def parse_recommendations(report_text: str) -> list[dict]:
-    """CEO 브리핑 텍스트에서 추천 종목 파싱."""
+    진입가: price_fn으로 조회한 현재가
+    목표가/손절가: 브리핑 텍스트 "목표 +X% / 손절 -Y%" 파싱 후 현재가에 적용
+    """
     results: list[dict] = []
-    seen_codes: set[str] = set()
-    lines = report_text.split("\n")
+    seen: set[str] = set()
 
-    for i, line in enumerate(lines):
-        m = _HEADER_RE.search(line)
-        if not m:
-            continue
-        name = m.group(1).strip()
-        code = m.group(2)
-        if code in seen_codes:
+    for pos in decisions.get("new_positions", []):
+        code = pos.get("code", "")
+        name = pos.get("name", "")
+        if not code or code in seen:
             continue
 
-        block = "\n".join(lines[i: i + 10])
-        # 진입①(즉시): 우선, 즉시진입:/진입가: 차선으로 시도
-        entry  = _extract_price(_ENTRY_NUMBERED_RE, block) or _extract_price(_ENTRY_OLD_RE, block)
-        stop   = _extract_price(_STOP_RE, block)
-        target = _extract_price(_TARGET_RE, block)
+        # 브리핑 텍스트에서 해당 종목 주변 블록 추출 (코드 또는 이름 앞 4자 기준)
+        target_pct = stop_pct = None
+        for anchor in (code, name[:4] if name else ""):
+            idx = ceo_report.find(anchor)
+            if idx < 0:
+                continue
+            nearby = ceo_report[max(0, idx - 10): idx + 140]
+            m = _PCT_RE.search(nearby)
+            if m:
+                try:
+                    target_pct = float(m.group(1))
+                    stop_pct   = float(m.group(2))
+                except ValueError:
+                    pass
+                break
 
-        if entry and stop and target and entry > 0 and stop > 0 and target > 0:
-            seen_codes.add(code)
-            rm = _RATIONALE_RE.search(block)
-            rationale = rm.group(1).strip() if rm else ""
-            results.append({
-                "name": name, "code": code,
-                "entry_price": entry, "stop_price": stop,
-                "target_price": target, "rationale": rationale,
-            })
+        entry  = price_fn(code) if price_fn else 0
+        target = int(entry * (1 + target_pct / 100)) if entry and target_pct else 0
+        stop   = int(entry * (1 - stop_pct   / 100)) if entry and stop_pct   else 0
+
+        seen.add(code)
+        results.append({
+            "name":         name,
+            "code":         code,
+            "entry_price":  entry,
+            "stop_price":   stop,
+            "target_price": target,
+            "rationale":    pos.get("thesis", ""),
+        })
 
     return results
 
