@@ -274,28 +274,6 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         except Exception as e:
             logger.debug("[CIO결정저장] 실패 (테이블 없을 수 있음): %s", e)
 
-    # PRE 브리핑 추천 종목 저장 (진입가 = 장전 현재가)
-    # CLOSE의 update_close_prices()가 이 레코드를 당일 종가로 업데이트해 수익률 계산
-    if ceo_report and state.get("run_type") == RUN_TYPE_PRE:
-        try:
-            from services.recommendation_service import recs_from_cio_decisions, save_recommendations
-            from clients.kis_client import KISClient
-            _kis_rec = KISClient()
-
-            def _price_fn(code: str) -> int:
-                try:
-                    d = _kis_rec.get_stock_price(code, market=None)
-                    return int(d.get("price", 0))
-                except Exception:
-                    return 0
-
-            recs = recs_from_cio_decisions(decisions, ceo_report, _price_fn)
-            if recs:
-                save_recommendations(state["date"], recs)
-                logger.info("[추천저장] 장전 %d건 저장", len(recs))
-        except Exception as e:
-            logger.debug("[추천저장] 실패: %s", e)
-
     if ceo_report:
         try:
             from services.market_prediction_service import save_prediction

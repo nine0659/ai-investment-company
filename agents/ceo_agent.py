@@ -18,9 +18,7 @@ from clients.openai_client import chat_ceo
 from clients.kis_client import KISClient
 from clients.us_stock_client import format_us_impact_for_prompt
 
-from services.recommendation_service import (
-    update_close_prices, format_returns_for_report, get_performance_stats,
-)
+
 from config.settings import RUN_TYPE_GLOBAL, RUN_TYPE_PRE, RUN_TYPE_INTRA1, RUN_TYPE_INTRA2, RUN_TYPE_CLOSE, TZ
 
 logger = logging.getLogger(__name__)
@@ -763,18 +761,6 @@ def run(state: InvestmentState) -> InvestmentState:
             except Exception:
                 pass
 
-            # 추천 성과 통계 (30일)
-            try:
-                stats = get_performance_stats(days=30)
-                if stats["total"] >= 3:
-                    context_parts.append(
-                        f"\n[최근 30일 추천 성과]\n"
-                        f"총 {stats['total']}건 | 승률 {stats['win_rate']}% | "
-                        f"평균수익률 {stats['avg_return']:+.2f}% | 손익비 {stats['profit_factor']:.2f}\n"
-                        f"→ 승률 50% 미만이면 확신도 '하' 결정 자제"
-                    )
-            except Exception:
-                pass
 
             # NAV 현황
             try:
@@ -810,14 +796,6 @@ def run(state: InvestmentState) -> InvestmentState:
                 if dart_text:
                     context_parts.append("\n[DART 공시 — 내일 포트폴리오 함의]\n" + dart_text)
 
-            # 오늘 추천 종목 수익률
-            try:
-                kis_close = KISClient()
-                results = update_close_prices(date, kis_close)
-                returns_text = format_returns_for_report(results)
-                context_parts.append(f"\n[오늘 추천 종목 수익률]\n{returns_text}")
-            except Exception as e:
-                logger.warning("[CIO] 종가 수집 실패: %s", e)
 
             # 장마감 컨센서스
             try:
