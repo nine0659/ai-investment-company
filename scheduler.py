@@ -5,16 +5,19 @@ APScheduler 기반 자동 스케줄 실행
 실행:
   python scheduler.py
 
-스케줄 (평일만):
-  08:20 → 장전 브리핑 (미국 장 마감 후 시황 포함, 통합)
-  15:50 → 장마감 복기
+정기 브리핑 스케줄:
+  월·수·금 08:20 → 장전 브리핑 (주 3회 — 한 주의 시작·중간·끝 매크로·테제 점검)
+  금     16:30 → 주간 마감 브리핑 (주 1회 — 한 주 정리 + 다음 주 테제 점검)
 
-* GLOBAL(구 05:30 새벽 시황)은 PRE와 내용이 겹쳐 PRE로 통합됨 (2026-06-22).
-  ceo_agent.py의 _build_prompt_global / build_global_graph()는 수동 실행용으로 남겨둠.
-* INTRA1·INTRA2(장중 1·2차)는 정기 브리핑 과다 발송 피드백으로 자동 스케줄에서 제외됨 (2026-06-23).
-  python main.py --type intra1/intra2 로 수동 실행은 계속 가능.
-* 실시간모니터(구 15분)·긴급모니터(구 5분)는 중복 체크(보유종목 급락·워치리스트 변동을
-  두 모니터가 각자 따로 발송)가 있어 단일 15분 주기 모니터로 통합됨 (2026-06-23).
+장기 투자자 관점에서 매일 브리핑은 정보 과잉이다.
+테제 훼손·이상 신호는 15분 모니터(조건부)가 실시간 처리한다.
+화·목 장전과 월~목 장마감은 자동 발송하지 않는다.
+
+* GLOBAL(새벽 시황)은 PRE로 통합됨 (2026-06-22).
+* INTRA1·INTRA2(장중)는 자동 스케줄에서 제외됨 (2026-06-23).
+  python main.py --type intra1/intra2 로 수동 실행 가능.
+* 실시간·긴급 모니터는 단일 15분 주기로 통합됨 (2026-06-23).
+* PRE 주 5회→3회(월·수·금), CLOSE 주 5회→1회(금) 로 축소 (2026-06-26).
 """
 import logging
 import os
@@ -328,26 +331,35 @@ def _parse_time(time_str: str) -> tuple[int, int]:
 
 
 def setup_jobs():
-    """평일(월~금) 스케줄 등록.
+    """정기 브리핑 스케줄 등록.
 
-    정기 브리핑은 장전(PRE)+장마감(CLOSE) 2회만 자동 발송 (과다 발송 피드백으로
-    INTRA1·INTRA2는 자동 스케줄에서 제외, 수동 실행만 가능 — 2026-06-23).
-    GLOBAL(05:30~08:00)은 PRE(07:50~09:30)와 내용이 거의 겹쳐 PRE로 통합.
+    PRE:   월·수·금 08:20 (주 3회)
+    CLOSE: 금      16:30 (주 1회 — 주간 마감 랩업)
+
+    장기 투자자에게 매일 브리핑은 정보 과잉이다. 화·목 장전과 월~목 장마감은
+    자동 발송하지 않는다. 이상 신호는 15분 모니터(조건부)가 처리한다.
     """
-    for run_type, func, time_str in [
-        (RUN_TYPE_PRE,    job_pre_market,      SCHEDULE_PRE_MARKET),
-        (RUN_TYPE_CLOSE,  job_close,           SCHEDULE_CLOSE),
-    ]:
-        h, m = _parse_time(time_str)
-        scheduler.add_job(
-            func,
-            CronTrigger(day_of_week="mon-fri", hour=h, minute=m, timezone=TIMEZONE_STR),
-            id=run_type,
-            name=f"[{time_str}] {run_type}",
-            misfire_grace_time=300,  # 5분 내 재실행 허용
-            coalesce=True,
-        )
-        console.print(f"  [cyan]⏰ {time_str}[/cyan] {run_type}")
+    pre_h, pre_m = _parse_time(SCHEDULE_PRE_MARKET)
+    scheduler.add_job(
+        job_pre_market,
+        CronTrigger(day_of_week="mon,wed,fri", hour=pre_h, minute=pre_m, timezone=TIMEZONE_STR),
+        id=RUN_TYPE_PRE,
+        name=f"[{SCHEDULE_PRE_MARKET} 월·수·금] {RUN_TYPE_PRE}",
+        misfire_grace_time=300,
+        coalesce=True,
+    )
+    console.print(f"  [cyan]⏰ {SCHEDULE_PRE_MARKET} 월·수·금[/cyan] {RUN_TYPE_PRE}")
+
+    close_h, close_m = _parse_time(SCHEDULE_CLOSE)
+    scheduler.add_job(
+        job_close,
+        CronTrigger(day_of_week="fri", hour=close_h, minute=close_m, timezone=TIMEZONE_STR),
+        id=RUN_TYPE_CLOSE,
+        name=f"[{SCHEDULE_CLOSE} 금] {RUN_TYPE_CLOSE}",
+        misfire_grace_time=300,
+        coalesce=True,
+    )
+    console.print(f"  [cyan]⏰ {SCHEDULE_CLOSE} 금[/cyan] {RUN_TYPE_CLOSE}")
 
     # 시장 모니터(실시간+긴급 통합): 장중 9:00-15:30, 15분마다
     # 워치리스트·포지션·추적종목 + KOSPI급락·VIX·환율·지정학 뉴스를 한 번에 체크
@@ -462,13 +474,17 @@ def _recover_missed_briefings():
     now = datetime.now(_KST)
     cur_min = now.hour * 60 + now.minute
 
-    # (run_type, 예약분, 복구마감분)
-    _RECOVERY: list[tuple[str, int, int]] = [
-        (RUN_TYPE_PRE,    8 * 60 + 20,  11 * 60),      # 08:20 → 복구 마감 11:00
-        (RUN_TYPE_CLOSE,  16 * 60 + 30, 20 * 60),      # 16:30 → 복구 마감 20:00
+    weekday = now.weekday()  # 0=Mon … 4=Fri
+
+    # (run_type, 예약분, 복구마감분, 허용요일집합)
+    _RECOVERY: list[tuple[str, int, int, set[int]]] = [
+        (RUN_TYPE_PRE,   8 * 60 + 20, 11 * 60, {0, 2, 4}),  # 월·수·금 08:20 → 마감 11:00
+        (RUN_TYPE_CLOSE, 16 * 60 + 30, 20 * 60, {4}),        # 금      16:30 → 마감 20:00
     ]
 
-    for run_type, sched_min, deadline_min in _RECOVERY:
+    for run_type, sched_min, deadline_min, allowed_days in _RECOVERY:
+        if weekday not in allowed_days:
+            continue  # 오늘은 이 run_type 발송일 아님
         if cur_min < sched_min:
             continue  # 아직 예약 시간 전
         if cur_min > deadline_min:
