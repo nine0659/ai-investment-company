@@ -122,9 +122,18 @@ def fetch_kr_index_realtime() -> dict:
     전일 종가를 일봉(5d)에서 가져와 변동률을 정확히 계산.
     반환: {"kospi": {current, prev_close, change_pct}, "kosdaq": {...}}
     """
+    # yfinance가 간헐적으로 오염된 값을 반환함 — 유효 범위로 필터
+    _VALID_RANGE = {
+        "^KS11": (1_000, 6_000),   # KOSPI 역사적 범위
+        "^KQ11": (300,   3_000),   # KOSDAQ 역사적 범위
+    }
+    # 한국 서킷브레이커 ±8% → 그 이상은 yfinance 오류 데이터
+    _MAX_DAILY_CHANGE = 10.0
+
     result: dict = {}
     key_map = {"^KS11": "kospi", "^KQ11": "kosdaq"}
     for sym, key in key_map.items():
+        lo, hi = _VALID_RANGE[sym]
         try:
             # 전일 종가: 일봉 5일치에서 안정적으로 확보
             daily = yf.Ticker(sym).history(period="5d", interval="1d")
@@ -134,11 +143,26 @@ def fetch_kr_index_realtime() -> dict:
 
             # 장중 현재가: 5분봉 최근 1일
             intra = yf.Ticker(sym).history(period="1d", interval="5m")
-            current = float(intra.iloc[-1]["Close"]) if not intra.empty else float(daily.iloc[-1]["Close"])
+            raw_current = float(intra.iloc[-1]["Close"]) if not intra.empty else float(daily.iloc[-1]["Close"])
 
-            chg_pct = (current - prev_close) / prev_close * 100 if prev_close else 0
+            # 1차 검증: 지수값 자체가 유효 범위 밖이면 일봉 최신 종가로 대체
+            if not (lo < raw_current < hi):
+                logger.warning(
+                    "한국 지수 실시간 값 비정상 (%s): %.2f — 일봉 종가로 대체", sym, raw_current
+                )
+                raw_current = float(daily.iloc[-1]["Close"])
+
+            chg_pct = (raw_current - prev_close) / prev_close * 100 if prev_close else 0
+
+            # 2차 검증: 일간 변동률이 서킷브레이커 한계 초과이면 오류 데이터로 간주해 스킵
+            if abs(chg_pct) > _MAX_DAILY_CHANGE:
+                logger.warning(
+                    "한국 지수 변동률 비정상 (%s): %.2f%% — 경보 방지를 위해 해당 데이터 제외", sym, chg_pct
+                )
+                continue
+
             result[key] = {
-                "current":    round(current, 2),
+                "current":    round(raw_current, 2),
                 "prev_close": round(prev_close, 2),
                 "change_pct": round(chg_pct, 2),
             }

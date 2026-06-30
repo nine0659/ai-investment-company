@@ -332,12 +332,15 @@ def check_risk_signals(market_data: dict, news_data: dict, today: str) -> None:
     kospi = market_data.get("kospi", {})
     if isinstance(kospi, dict):
         chg = kospi.get("change_pct", 0) or 0
-        if chg <= RISK_KOSPI_CRASH and not _already_sent(today, "KOSPI", "crash"):
+        current_val = kospi.get("current") or kospi.get("close") or 0
+        # 한국 서킷브레이커 한계(±8%)를 넘는 변동률은 yfinance 오류 데이터 — 경보 차단
+        _data_ok = (RISK_KOSPI_CRASH <= chg <= 0) and (1_000 < current_val < 6_000)
+        if _data_ok and not _already_sent(today, "KOSPI", "crash"):
             _mark_sent(today, "KOSPI", "crash")
             send_alert(
                 TYPE_RISK,
                 f"KOSPI 급락 {chg:+.1f}% — 즉시 포지션 점검",
-                f"KOSPI: {kospi.get('current', 0):,.2f}  ({chg:+.1f}%)\n\n"
+                f"KOSPI: {current_val:,.2f}  ({chg:+.1f}%)\n\n"
                 f"손절 조건 확인 필요. 외국인 수급 동향 즉시 확인.\n"
                 f"반등 신호 없으면 현금 비중 확대 권고.",
             )

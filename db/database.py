@@ -281,7 +281,7 @@ investment_thesis = Table("investment_thesis", metadata,
     Column("bull_scenario",   Text),   # 강세 시나리오 + 확률
     Column("base_scenario",   Text),   # 기본 시나리오 + 확률
     Column("bear_scenario",   Text),   # 약세 시나리오 + 확률
-    Column("invalidation",    Text),   # 테제 무효 조건
+    Column("invalidation",    Text),   # 투자 근거 무효 조건
     Column("full_report",     Text),   # 전체 리포트 원문
     Column("ceo_summary",     Text),   # CEO 일일 주입용 압축 요약 (~600자)
     Column("created_at",      Text,    server_default="CURRENT_TIMESTAMP"),
@@ -314,9 +314,9 @@ attribution_log = Table("attribution_log", metadata,
     Column("sector_score",  Float),  # 섹터 선택 점수
     Column("stock_score",   Float),  # 종목 선택 점수
     Column("timing_score",  Float),  # 타이밍 점수
-    Column("thesis_score",  Float),  # 테제 정합도 점수
+    Column("thesis_score",  Float),  # 투자관 부합도 점수
     Column("total_score",   Float),  # 종합 점수
-    Column("key_learnings", Text),   # 핵심 교훈 (다음 테제에 반영할 내용)
+    Column("key_learnings", Text),   # 핵심 교훈 (다음 투자에 반영할 내용)
     Column("full_report",   Text),   # 전체 귀인 분석 리포트
     Column("created_at",    Text,    server_default="CURRENT_TIMESTAMP"),
 )

@@ -205,7 +205,7 @@ def get_lifecycle_context(prices: dict[str, float] | None = None) -> str:
                 pass
 
         falsify_lbl = f"\n    ⛔반증: {falsify[:60]}" if falsify else ""
-        thesis_lbl  = f"\n    📝테제: {thesis[:60]}" if thesis else ""
+        thesis_lbl  = f"\n    📝보유근거: {thesis[:60]}" if thesis else ""
 
         lines.append(
             f"  {name}({code}): {stage_lbl} | {conv_lbl}{rr_lbl}{perf_lbl}{days_held}"

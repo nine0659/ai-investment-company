@@ -224,7 +224,7 @@ def _save_attribution(week_end: str, report: str) -> None:
     sector  = _parse_score(r"섹터[^\d]*(\d+(?:\.\d+)?)")
     stock   = _parse_score(r"종목[^\d]*(\d+(?:\.\d+)?)")
     timing  = _parse_score(r"타이밍[^\d]*(\d+(?:\.\d+)?)")
-    thesis_s= _parse_score(r"테제\s*정합[^\d]*(\d+(?:\.\d+)?)")
+    thesis_s= _parse_score(r"투자관\s*부합[^\d]*(\d+(?:\.\d+)?)")
 
     # 핵심 교훈 파싱
     m = re.search(r"다음\s*주[^\n]*반드시[^\n]*개선[^\n]*(.{20,300})", report, re.DOTALL)

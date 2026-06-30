@@ -344,7 +344,7 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         logger.warning("[텔레그램] 발송할 리포트 없음")
         return state
     try:
-        send_message(report + "\n\n🔍 자세한 시황·전문가시각·기술분석: /insight")
+        send_message(report)
         logger.info("[텔레그램] 발송 완료")
         errors = state.get("errors", [])
         if errors:
