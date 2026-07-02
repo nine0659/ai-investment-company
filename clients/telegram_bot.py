@@ -141,6 +141,7 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/cancel ORDER_NO CODE SIDE QTY` — 주문 취소\n"
         "`/history` — 최근 주문 이력\n\n"
         "🔍 *심층 분석*\n"
+        "`/discover` — 탑다운 종목 발굴 (시장 흐름→주도 산업→종목, 워치리스트 자동 등록)\n"
         "`/insight` — 글로벌 시장 서사·전문가/텔레그램 채널 시각·종목 기술/수급 분석\n"
         "  (메인 브리핑에서 압축돼 빠진 분석 원문)\n\n"
         "📜 *전략·투자관*\n"
@@ -991,6 +992,19 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
         _send(chat_id, f"❌ 버튼 처리 오류: {e}")
 
 
+def _cmd_discover(chat_id: str, _args: str) -> None:
+    """탑다운 종목 발굴 — 시장 흐름 → 주도 산업 → 종목 발굴 → 워치리스트 등록."""
+    _send(chat_id, "🔭 종목 발굴 시작... 시장 흐름·수급·컨센서스 검증 중 (1~2분 소요)")
+    _typing(chat_id)
+    try:
+        from agents.discovery_agent import run_discovery
+        report = run_discovery(send=False)
+        _send(chat_id, report)
+    except Exception as e:
+        logger.error("[Bot] /discover 오류: %s", e)
+        _send(chat_id, f"❌ 발굴 중 오류: {e}")
+
+
 def _cmd_profile(chat_id: str, args: str) -> None:
     """고객 투자자 프로필 조회/수정 — 모든 자문의 대상 정의."""
     from services.profile_service import PROFILE_FIELDS, get_profile, set_profile_field
@@ -1117,6 +1131,7 @@ _HANDLERS: dict = {
     "/holdings":  _cmd_holdings,
     "/portfolio": _cmd_portfolio,
     "/profile":   _cmd_profile,
+    "/discover":  _cmd_discover,
     "/watchlist": _cmd_watchlist,
     "/buy":       _cmd_buy,
     "/sell":      _cmd_sell,

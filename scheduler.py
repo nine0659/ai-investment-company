@@ -211,6 +211,21 @@ def job_weekly_strategy():
             pass
 
 
+def job_weekly_discovery():
+    """매주 화요일 19:00 — 탑다운 종목 발굴 (시장 흐름→주도 산업→종목→워치리스트 등록)."""
+    from agents.discovery_agent import run_discovery
+    try:
+        logger.info("종목 발굴 시작")
+        run_discovery()
+        logger.info("종목 발굴 완료")
+    except Exception as e:
+        logger.error("종목 발굴 실패: %s", e)
+        try:
+            send_error_alert(f"종목 발굴 실패: {str(e)[:200]}")
+        except Exception:
+            pass
+
+
 def job_weekly_attribution():
     """매주 일요일 19:00 — 주간 성과 귀인 분석 (매크로·섹터·종목·타이밍·투자관부합)."""
     from agents.attribution_agent import run_attribution
@@ -401,6 +416,16 @@ def setup_jobs():
     console.print("  [cyan]⏰ 매주 수요일 20:00[/cyan] 주간 종합 투자전략")
 
     # 주간 귀인 분석: 매주 일요일 19:00
+    scheduler.add_job(
+        job_weekly_discovery,
+        CronTrigger(day_of_week="tue", hour=19, minute=0, timezone=TIMEZONE_STR),
+        id="weekly_discovery",
+        name="[화 19:00] 종목 발굴 (탑다운 — 시장→산업→종목→워치리스트)",
+        misfire_grace_time=600,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 화 19:00[/cyan] 종목 발굴 (탑다운)")
+
     scheduler.add_job(
         job_weekly_attribution,
         CronTrigger(day_of_week="sun", hour=19, minute=0, timezone=TIMEZONE_STR),
