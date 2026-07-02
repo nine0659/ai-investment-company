@@ -328,7 +328,17 @@ def run_strategy():
         for w in watchlist[:10]
     ) or "없음"
 
+    # 고객 프로필 — 이 전략의 대상
+    try:
+        from services.profile_service import get_profile_context
+        profile_ctx = get_profile_context(kis)
+    except Exception as e:
+        logger.debug("[전략에이전트] 프로필 주입 실패: %s", e)
+        profile_ctx = ""
+
     context = f"""분석 기준일: {now.strftime('%Y년 %m월 %d일 (%A)')}
+
+{profile_ctx}
 
 [글로벌 매크로]
 {macro_text}

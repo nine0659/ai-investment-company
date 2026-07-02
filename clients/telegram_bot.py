@@ -130,7 +130,8 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/holdings add CODE QTY AVG_PRICE [회사명]` — 기존 보유종목 수동 등록 (매수 주문 아님)\n"
         "  예: `/holdings add 005930 91 233138 삼성전자`\n"
         "`/holdings remove CODE` — 등록된 보유종목 제거\n"
-        "`/portfolio` — 포트폴리오 손익 현황\n\n"
+        "`/portfolio` — 포트폴리오 손익 현황\n"
+        "`/profile` — 투자자 프로필 (목표·기간·리스크 감내) 조회/수정\n\n"
         "📋 *주문*\n"
         "`/buy CODE QTY [PRICE]` — 매수\n"
         "  예: `/buy 005930 10 80000` 또는 `/buy 005930 10` (시장가)\n"
@@ -990,17 +991,80 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
         _send(chat_id, f"❌ 버튼 처리 오류: {e}")
 
 
+def _cmd_profile(chat_id: str, args: str) -> None:
+    """고객 투자자 프로필 조회/수정 — 모든 자문의 대상 정의."""
+    from services.profile_service import PROFILE_FIELDS, get_profile, set_profile_field
+
+    parts = args.strip().split(maxsplit=2)
+    sub = parts[0].lower() if parts else ""
+
+    # ── /profile set FIELD VALUE ─────────────────────────────────
+    if sub == "set":
+        if len(parts) < 3:
+            field_list = "\n".join(f"  `{k}` — {label}" for k, label, _ in PROFILE_FIELDS)
+            _send(chat_id,
+                "❌ 사용법: `/profile set 필드 값`\n\n사용 가능한 필드:\n" + field_list +
+                "\n\n예: `/profile set risk 원금의 20%까지 감내 가능`")
+            return
+        field, value = parts[1], parts[2]
+        if set_profile_field(field, value):
+            _send(chat_id, f"✅ 프로필 갱신: *{field}*\n→ {value}")
+        else:
+            _send(chat_id, f"❌ 알 수 없는 필드: `{field}`\n`/profile set` 으로 필드 목록 확인")
+        return
+
+    # ── 기본: 프로필 조회 ────────────────────────────────────────
+    profile = get_profile()
+    lines = ["👤 *투자자 프로필* — 모든 조언이 이 기준으로 맞춰집니다\n"]
+    for key, label, _ in PROFILE_FIELDS:
+        v = profile.get(key, "")
+        mark = "⚠️ " if "미설정" in v else ""
+        lines.append(f"• *{label}*: {mark}{v}")
+    lines.append("\n수정: `/profile set 필드 값`  (필드 목록: `/profile set`)")
+    _send(chat_id, "\n".join(lines))
+
+
 def _cmd_ai_chat(chat_id: str, text: str) -> None:
-    """자유형식 텍스트 → AI 투자 어드바이저 응답."""
+    """자유형식 텍스트 → 고객을 아는 전속 투자 자문가 응답."""
     _typing(chat_id)
 
-    # 현재 투자관·전략 컨텍스트 수집
     context_parts = []
+
+    # 1. 고객 프로필 + 실보유 포트폴리오 (실시간 평가) — 자문의 대상
+    try:
+        from services.profile_service import get_profile_context
+        from clients.kis_client import KISClient
+        try:
+            kis = KISClient()
+        except Exception:
+            kis = None
+        pctx = get_profile_context(kis)
+        if pctx:
+            context_parts.append(pctx)
+    except Exception as e:
+        logger.debug("[Bot] 프로필 컨텍스트 실패: %s", e)
+
+    # 2. 시장 스냅샷 — 실시간 수치 (환각 방지)
+    try:
+        from clients.market_data_client import fetch_global_market_data
+        mkt = fetch_global_market_data()
+        rows = []
+        for label, key in [("KOSPI", "kospi"), ("S&P500", "sp500"), ("NASDAQ", "nasdaq"),
+                           ("미국반도체(SOX)", "sox"), ("원/달러", "usd_krw"), ("VIX", "vix")]:
+            d = mkt.get(key, {})
+            if d:
+                rows.append(f"  {label}: {d.get('close', 'N/A')} ({d.get('change_pct', 0):+.2f}%)")
+        if rows:
+            context_parts.append("[시장 실시간 수치 — 이 수치만 인용, 임의 수치 생성 금지]\n" + "\n".join(rows))
+    except Exception as e:
+        logger.debug("[Bot] 시장 스냅샷 실패: %s", e)
+
+    # 3. 현재 투자관·주간 전략
     try:
         from services.thesis_service import get_thesis_ceo_summary
         thesis = get_thesis_ceo_summary()
         if thesis:
-            context_parts.append(f"[현재 투자관]\n{thesis}")
+            context_parts.append(f"[현재 월간 투자관]\n{thesis}")
     except Exception:
         pass
 
@@ -1016,11 +1080,17 @@ def _cmd_ai_chat(chat_id: str, text: str) -> None:
     context = "\n\n".join(context_parts)
 
     system = (
-        "당신은 전문 AI 투자 어드바이저입니다.\n"
-        "Ray Dalio의 매크로 관점, Charlie Munger의 정성 분석, Warren Buffett의 가치투자 원칙을 바탕으로 "
-        "간결하고 실용적인 투자 조언을 한국어로 제공합니다.\n"
-        "수치와 근거를 포함하고, 확실하지 않은 사항은 솔직히 인정하세요.\n"
-        "답변은 3~5문장으로 핵심만 말하세요."
+        "당신은 한 명의 고객을 전담하는 전속 투자 자문가입니다.\n"
+        "Howard Marks(사이클·제2수준 사고), Warren Buffett(해자·가치), Charlie Munger(역발상), "
+        "Ray Dalio(매크로), Seth Klarman(안전마진)의 철학으로 중장기 가치 투자를 조언합니다.\n\n"
+        "[원칙]\n"
+        "- 아래 [고객 프로필]과 [고객 실보유 포트폴리오]의 주인이 지금 질문한 사람이다.\n"
+        "  일반론 금지 — 답변을 반드시 고객의 실제 보유·목표에 연결할 것.\n"
+        "- 수치는 컨텍스트에 제공된 실시간 값만 인용. 없는 수치를 지어내지 말 것.\n"
+        "- 모르는 것은 모른다고 말하고, 확인 방법을 제시할 것.\n"
+        "- 결론 먼저, 근거는 짧게. 불필요하게 길게 쓰지 말 것.\n"
+        "- '상황을 지켜보자'류 금지 — 조건부라도 방향을 제시할 것.\n"
+        "- 한국어, 전문용어는 풀어서."
     )
 
     if context:
@@ -1028,7 +1098,7 @@ def _cmd_ai_chat(chat_id: str, text: str) -> None:
 
     try:
         from clients.openai_client import chat
-        reply = chat(system, text, max_tokens=600)
+        reply = chat(system, text, max_tokens=800)
         _send(chat_id, f"🤖 {reply}")
     except Exception as e:
         logger.error("[Bot] AI 대화 오류: %s", e)
@@ -1046,6 +1116,7 @@ _HANDLERS: dict = {
     "/balance":   _cmd_balance,
     "/holdings":  _cmd_holdings,
     "/portfolio": _cmd_portfolio,
+    "/profile":   _cmd_profile,
     "/watchlist": _cmd_watchlist,
     "/buy":       _cmd_buy,
     "/sell":      _cmd_sell,

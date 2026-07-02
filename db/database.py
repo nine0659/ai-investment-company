@@ -60,9 +60,40 @@ def _make_engine() -> "Engine":
             logger.info("[DB] PostgreSQL 연결 성공")
             return engine
         except Exception as e:
-            logger.warning("[DB] PostgreSQL 연결 실패 → SQLite 자동 전환: %s", e)
+            # 조용한 폴백 금지 — 운영에서 SQLite로 넘어가면 재시작마다 데이터가 증발한다.
+            # (포트폴리오·투자관·성과 추적 전부 소실) 반드시 크게 알리고 넘어간다.
+            logger.critical(
+                "[DB] ⚠️ PostgreSQL 연결 실패 → 임시 SQLite로 전환. "
+                "저장 데이터는 재시작 시 소실됩니다. DATABASE_URL 즉시 점검 필요: %s", e
+            )
+            _alert_db_fallback(e)
             return _make_sqlite()
     return _make_sqlite()
+
+
+def _alert_db_fallback(err: Exception) -> None:
+    """PostgreSQL 폴백 발생을 텔레그램으로 즉시 통보 (실패해도 부팅은 계속)."""
+    try:
+        import requests
+        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        if not token or not chat_id:
+            return
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": (
+                    "🚨 [시스템] 운영 DB(PostgreSQL) 연결 실패 — 임시 SQLite로 동작 중\n\n"
+                    "포트폴리오·투자관·성과 기록이 재시작 시 소실됩니다.\n"
+                    "Supabase 프로젝트 상태와 Render의 DATABASE_URL을 즉시 확인하세요.\n\n"
+                    f"오류: {str(err)[:200]}"
+                ),
+            },
+            timeout=10,
+        )
+    except Exception:
+        pass  # 알림 실패가 부팅을 막으면 안 됨
 
 
 engine = _make_engine()
