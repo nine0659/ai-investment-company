@@ -83,7 +83,7 @@ def record_nav(kis=None) -> dict | None:
             "date": today, "total_value": total_value, "total_pnl_pct": total_pnl_pct,
             "kospi_pct_ytd": kospi_pct_ytd, "nav_pct_ytd": nav_pct_ytd, "alpha_ytd": alpha_ytd,
         }
-        logger.info("[NAV] 기록 완료: 총평가 %,.0f원 | 손익 %+.2f%% | 알파 %+.2f%%",
+        logger.info("[NAV] 기록 완료: 총평가 %.0f원 | 손익 %+.2f%% | 알파 %+.2f%%",
                     total_value, total_pnl_pct, alpha_ytd)
         return result
     except Exception as e:

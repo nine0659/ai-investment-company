@@ -262,7 +262,7 @@ def run_daily_tracker(kis=None) -> dict:
                 stats[status] += 1
 
             logger.info(
-                "[Tracker] %s(%s) %s | 진입 %,.0f → 현재 %,.0f (%+.2f%%) | %d일 | %s",
+                "[Tracker] %s(%s) %s | 진입 %.0f → 현재 %.0f (%+.2f%%) | %d일 | %s",
                 rec["name"], code, today,
                 entry_price, current_price, return_pct, days_held, status,
             )

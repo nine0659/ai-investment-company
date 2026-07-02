@@ -51,7 +51,7 @@ def add_position(code: str, name: str, quantity: int, avg_price: float,
                  "target": target_price, "stop": stop_price, "memo": memo, "code": code},
             )
             row_id = existing[0]
-            logger.info("포지션 추가매수: %s(%s) %d주 → 총 %d주 @평균 %,.0f원",
+            logger.info("포지션 추가매수: %s(%s) %d주 → 총 %d주 @평균 %.0f원",
                         name, code, quantity, new_qty, new_avg)
         else:
             result = conn.execute(
@@ -67,7 +67,7 @@ def add_position(code: str, name: str, quantity: int, avg_price: float,
                  "target": target_price, "stop": stop_price, "memo": memo},
             )
             row_id = result.scalar()
-            logger.info("신규 포지션 추가: %s(%s) %d주 @%,.0f원 [%s]",
+            logger.info("신규 포지션 추가: %s(%s) %d주 @%.0f원 [%s]",
                         name, code, quantity, avg_price, timeframe)
     return row_id
 
@@ -128,13 +128,13 @@ def close_position(code: str, exit_price: float = None, exit_date: str = None,
                 text("UPDATE portfolio_positions SET quantity=:qty, updated_at=:now WHERE code=:code AND status='holding'"),
                 {"qty": qty - partial_qty, "now": now, "code": code},
             )
-            logger.info("부분 매도: %s(%s) %d주 @%,.0f원 (%.2f%%)", name, code, sell_qty, exit_price, ret)
+            logger.info("부분 매도: %s(%s) %d주 @%.0f원 (%.2f%%)", name, code, sell_qty, exit_price, ret)
         else:
             conn.execute(
                 text("UPDATE portfolio_positions SET status='sold', updated_at=:now WHERE code=:code AND status='holding'"),
                 {"now": now, "code": code},
             )
-            logger.info("전량 매도: %s(%s) %d주 @%,.0f원 (%.2f%%)", name, code, qty, exit_price, ret)
+            logger.info("전량 매도: %s(%s) %d주 @%.0f원 (%.2f%%)", name, code, qty, exit_price, ret)
 
     return {"code": code, "name": name, "sell_qty": sell_qty,
             "avg_price": avg_price, "exit_price": exit_price, "return_pct": ret}
