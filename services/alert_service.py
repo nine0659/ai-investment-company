@@ -423,8 +423,74 @@ def check_market_opportunity_signals(market_data: dict, today: str) -> None:
             )
 
 
-def check_portfolio_risk(today: str) -> None:
-    """보유 종목 단일일 급락 감지."""
+# ── 핵심 비중 보유종목 급변동 분석 ──────────────────────────────────
+# RISK_STOCK_CRASH(-7%) 단일 임계값 알림은 "왜 움직였는지·지금 뭘 해야 하는지"를
+# 설명하지 못하는 통보문에 불과하다. 포트폴리오에서 비중이 큰 핵심 종목이
+# 상/하방으로 크게 흔들리는 날엔 원인 추정 + 명확한 대응(홀드/확대/축소)을
+# LLM으로 분석해 전달한다 (check_intraday_reversal과 동일한 접근).
+
+CORE_HOLDING_WEIGHT_MIN = 15.0   # 포트폴리오 내 "핵심 비중" 종목 기준 (%)
+CORE_HOLDING_MOVE_MIN   = 3.0    # 핵심 비중 종목 급변동 분석 트리거 임계값 (절대값, %)
+
+_HOLDING_MOVE_SYSTEM = """당신은 투자자의 실제 보유 종목 급변동을 분석하는 포트폴리오 어드바이저입니다.
+투자자가 보유한 핵심 비중 종목이 오늘 큰 폭으로 움직였습니다. 주어진 데이터만으로 원인을 추정하고,
+투자자가 지금 취해야 할 대응을 명확히 제시하세요.
+
+[출력 형식]
+🚨 [종목명] 급{방향} 분석
+오늘 등락: [수치]%  |  포트폴리오 비중: [수치]%  |  현재 손익: [수치]%
+추정 원인: [반도체 업황·수급·환율·뉴스 등 근거 기반 1~2가지 — 확인 안 된 추측은 "추정"이라고 명시]
+대응: [홀드 / 비중 확대 / 비중 축소(손절 포함) 중 하나를 명확히 선택하고 근거 제시]
+
+"상황을 지켜보자"류 표현 절대 금지 — 근거가 부족해도 반드시 조건부 방향을 제시할 것.
+매매 신호 자동 발생 아님 — 투자 판단을 위한 분석 정보 제공."""
+
+
+def _fmt_macro_snapshot(market_data: dict) -> str:
+    if not market_data:
+        return "N/A"
+    def g(k):
+        d = market_data.get(k, {})
+        return f"{d.get('change_pct', 0):+.2f}%" if d else "N/A"
+    vix = market_data.get("vix", {}).get("close", "N/A")
+    return (
+        f"KOSPI {g('kospi')} | 미국반도체(SOX) {g('sox')} | NASDAQ {g('nasdaq')} "
+        f"| 원/달러 {g('usd_krw')} | VIX {vix}"
+    )
+
+
+def _fmt_peer_holdings(holdings: list[dict], exclude_code: str) -> str:
+    lines = [
+        f"  {h['name']}({h['code']}): {h['change_pct']:+.2f}%"
+        for h in holdings if h["code"] != exclude_code and h.get("price")
+    ]
+    return "\n".join(lines) if lines else "없음"
+
+
+def _send_core_holding_analysis(
+    h: dict, weight: float, pnl: float, holdings: list[dict],
+    market_data: dict, news_data: dict,
+) -> bool:
+    direction = "등" if h["change_pct"] > 0 else "락"
+    context = (
+        f"종목: {h['name']}({h['code']})\n"
+        f"오늘 등락: {h['change_pct']:+.2f}%  |  현재가: {h['price']:,}원\n"
+        f"포트폴리오 비중: {weight}%  |  평균단가: {h['avg_price']:,.0f}원  |  현재 손익: {pnl:+.1f}%\n\n"
+        f"[다른 보유 종목 동반 동향]\n{_fmt_peer_holdings(holdings, h['code'])}\n\n"
+        f"[글로벌 매크로]\n{_fmt_macro_snapshot(market_data)}\n\n"
+        f"[최근 뉴스 헤드라인]\n{_fmt_reversal_news(news_data)}"
+    )
+    try:
+        from clients.openai_client import chat
+        analysis = chat(_HOLDING_MOVE_SYSTEM, context, max_tokens=500)
+    except Exception as e:
+        logger.warning("[위험] 핵심보유종목 분석 실패: %s", e)
+        return False
+    return _send_telegram(f"🚨 *핵심 보유종목 급{direction} 분석*\n\n{analysis}")
+
+
+def check_portfolio_risk(today: str, market_data: dict = None, news_data: dict = None) -> None:
+    """보유 종목 단일일 급락 감지 + 핵심 비중 종목 급변동 원인·대응 분석."""
     try:
         from clients.kis_client import KISClient
         from db.database import get_conn
@@ -433,7 +499,7 @@ def check_portfolio_risk(today: str) -> None:
         with get_conn() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT code, name, avg_price FROM portfolio_positions "
+                    "SELECT code, name, avg_price, quantity FROM portfolio_positions "
                     "WHERE status='holding' AND quantity > 0"
                 )
             ).fetchall()
@@ -441,30 +507,64 @@ def check_portfolio_risk(today: str) -> None:
             return
 
         kis = KISClient()
-        for code, name, avg_price in rows:
+
+        # 전 종목 현재가 조회 (비중 계산 + 동반 종목 동향 컨텍스트용)
+        holdings = []
+        for code, name, avg_price, quantity in rows:
+            try:
+                pd = kis.get_stock_price(code, market=None)
+                price = pd.get("price", 0)
+                chg_pct = pd.get("change_pct", 0) or 0
+            except Exception as e:
+                logger.debug("[위험] %s 현재가 조회 실패: %s", code, e)
+                price, chg_pct = 0, 0
+            holdings.append({
+                "code": code, "name": name, "avg_price": avg_price,
+                "quantity": quantity, "price": price, "change_pct": chg_pct,
+            })
+
+        total_val = sum(h["price"] * h["quantity"] for h in holdings if h["price"])
+
+        for h in holdings:
+            code, name, avg_price, price, chg_pct = (
+                h["code"], h["name"], h["avg_price"], h["price"], h["change_pct"]
+            )
+            if not price:
+                continue
+
+            weight = round(price * h["quantity"] / total_val * 100, 1) if total_val else 0
+            pnl = (price - avg_price) / avg_price * 100 if avg_price else 0
+
+            is_core    = weight >= CORE_HOLDING_WEIGHT_MIN
+            core_swing = is_core and abs(chg_pct) >= CORE_HOLDING_MOVE_MIN
+            crashed    = chg_pct <= RISK_STOCK_CRASH
+
+            if not (crashed or core_swing):
+                continue
+
+            # 핵심 비중 종목의 유의미한 변동 → LLM 원인·대응 분석 (우선)
+            if core_swing:
+                key = f"stock_swing_{code}"
+                if _already_sent(today, code, key):
+                    continue
+                if _send_core_holding_analysis(h, weight, pnl, holdings, market_data, news_data):
+                    _mark_sent(today, code, key)
+                continue
+
+            # 비핵심 종목의 단순 급락 → 기존 임계값 통보
             key = f"stock_crash_{code}"
             if _already_sent(today, code, key):
                 continue
-            try:
-                pd      = kis.get_stock_price(code, market=None)
-                price   = pd.get("price", 0)
-                chg_pct = pd.get("change_pct", 0) or 0
-                if not price or chg_pct > RISK_STOCK_CRASH:
-                    continue
-
-                _mark_sent(today, code, key)
-                pnl = (price - avg_price) / avg_price * 100 if avg_price else 0
-                send_alert(
-                    TYPE_RISK,
-                    f"[보유종목] {name} 급락 {chg_pct:+.1f}%",
-                    f"종목: {name}({code})\n"
-                    f"현재가: {price:,}원  |  당일: {chg_pct:+.1f}%\n"
-                    f"평균단가: {avg_price:,.0f}원  |  총 손익: {pnl:+.1f}%\n\n"
-                    f"손절 조건 즉시 확인. 원인 파악 후 대응 결정.",
-                    code=code, name=name,
-                )
-            except Exception as e:
-                logger.debug("[위험] %s 급락 체크 실패: %s", code, e)
+            _mark_sent(today, code, key)
+            send_alert(
+                TYPE_RISK,
+                f"[보유종목] {name} 급락 {chg_pct:+.1f}%",
+                f"종목: {name}({code})\n"
+                f"현재가: {price:,}원  |  당일: {chg_pct:+.1f}%\n"
+                f"평균단가: {avg_price:,.0f}원  |  총 손익: {pnl:+.1f}%\n\n"
+                f"손절 조건 즉시 확인. 원인 파악 후 대응 결정.",
+                code=code, name=name,
+            )
 
     except Exception as e:
         logger.error("[위험] 포트폴리오 점검 실패: %s", e)
@@ -645,7 +745,7 @@ def run_full_alert_check(market_data: dict, news_data: dict = None) -> None:
         logger.error("[알림] 위험 체크 실패: %s", e)
 
     try:
-        check_portfolio_risk(today)
+        check_portfolio_risk(today, market_data, news_data)
     except Exception as e:
         logger.error("[알림] 포트폴리오 위험 체크 실패: %s", e)
 

@@ -8,6 +8,8 @@
   /price [종목코드]                 — 현재가·밸류에이션 조회
   /balance                          — 계좌 잔고·보유종목 조회
   /holdings                         — 보유 종목 현황
+  /holdings add CODE QTY AVG_PRICE [회사명] — 기존 보유종목 수동 등록 (매수 주문 아님)
+  /holdings remove CODE             — 등록된 보유종목 제거
   /portfolio                        — 포트폴리오 손익 현황
   /watchlist                        — 관심종목 목록
   /watchlist add CODE 회사명 [목표가] — 관심종목 추가
@@ -125,6 +127,9 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "💼 *계좌·포트폴리오*\n"
         "`/balance` — 예수금 + 보유종목\n"
         "`/holdings` — 보유종목 수익률\n"
+        "`/holdings add CODE QTY AVG_PRICE [회사명]` — 기존 보유종목 수동 등록 (매수 주문 아님)\n"
+        "  예: `/holdings add 005930 91 233138 삼성전자`\n"
+        "`/holdings remove CODE` — 등록된 보유종목 제거\n"
         "`/portfolio` — 포트폴리오 손익 현황\n\n"
         "📋 *주문*\n"
         "`/buy CODE QTY [PRICE]` — 매수\n"
@@ -290,7 +295,54 @@ def _cmd_balance(chat_id: str, _args: str) -> None:
         _send(chat_id, f"❌ 잔고 조회 오류: {e}\nKIS API 연결을 확인해 주세요.")
 
 
-def _cmd_holdings(chat_id: str, _args: str) -> None:
+def _cmd_holdings(chat_id: str, args: str) -> None:
+    parts = args.strip().split()
+    sub = parts[0].lower() if parts else ""
+
+    # ── /holdings add CODE QTY AVG_PRICE [회사명] ──────────────────
+    # 이미 보유 중인 종목을 시스템 DB(portfolio_positions)에 수동 등록.
+    # KIS 계좌 API와 무관 — 신규 매수 주문을 내지 않는다 (/buy 와 다름).
+    if sub == "add":
+        if len(parts) < 4:
+            _send(chat_id,
+                "❌ 사용법: `/holdings add CODE QTY AVG_PRICE [회사명]`\n"
+                "예: `/holdings add 005930 91 233138 삼성전자`")
+            return
+        code = parts[1].zfill(6)
+        try:
+            qty = int(parts[2])
+            avg_price = float(parts[3].replace(",", ""))
+        except ValueError:
+            _send(chat_id, "❌ 수량·평균단가는 숫자로 입력하세요.")
+            return
+        name = parts[4] if len(parts) > 4 else code
+        try:
+            from services.portfolio_service import add_position
+            add_position(code, name, qty, avg_price, timeframe="mid")
+            _send(chat_id,
+                f"✅ 보유종목 등록: *{name}*({code})\n"
+                f"{qty:,}주 | 평균단가 {avg_price:,.0f}원 | 매입금액 {qty * avg_price:,.0f}원")
+        except Exception as e:
+            logger.error("[Bot] /holdings add 오류: %s", e)
+            _send(chat_id, f"❌ 등록 실패: {e}")
+        return
+
+    # ── /holdings remove CODE ───────────────────────────────────────
+    if sub == "remove":
+        if len(parts) < 2:
+            _send(chat_id, "❌ 사용법: `/holdings remove CODE`\n예: `/holdings remove 005930`")
+            return
+        code = parts[1].zfill(6)
+        try:
+            from services.portfolio_service import close_position
+            result = close_position(code)
+            _send(chat_id, f"{'✅ 보유종목 제거 완료' if result else '❌ 해당 종목 없음'}: `{code}`")
+        except Exception as e:
+            logger.error("[Bot] /holdings remove 오류: %s", e)
+            _send(chat_id, f"❌ 제거 실패: {e}")
+        return
+
+    # ── 기본: 잔고 조회 ──────────────────────────────────────────
     _cmd_balance(chat_id, "")  # 잔고에 보유종목 포함
 
 

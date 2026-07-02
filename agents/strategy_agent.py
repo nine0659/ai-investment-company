@@ -46,12 +46,15 @@ _SYSTEM = """당신은 20년 경력의 포트폴리오 전략가입니다.
 5. 외국인/기관 연속 순매수 → 중장기 수급 주도주 발굴
 
 [목표주가 산출 방식]
-- 중기: EPS × PER 밴드 상단 (3~6개월)
+- 컨센서스 목표주가가 제공된 종목: 애널리스트 평균 목표가를 우선 사용
+- 컨센서스가 없는 종목: 제공된 실제 EPS × PER 밴드 상단으로 직접 계산하고 계산식을 명시 (예: EPS 5,000원 × PER 12 = 60,000원)
 - 장기: DCF·PBR 적정 밴드 상단 (12개월)
 
 [출력 규칙]
 - 확률 수치 필수, 구체적 수치 기반
 - "OO가 좋아 보인다" 금지 → "OO 상승확률 70% — 근거: EPS +15%, 외국인 3일 연속 순매수"
+- 절대 금지: 아래 컨텍스트에 없는 현재가·EPS·목표주가·컨센서스·확률 수치를 임의로 만들어내는 것.
+  추천하고 싶은 종목의 실제 데이터가 컨텍스트에 없으면 그 종목은 후보에서 제외한다. 예외 없음.
 - 한국어 텔레그램 텍스트"""
 
 # 주요 관심 미국 섹터 리더 종목
@@ -59,7 +62,7 @@ _US_SECTOR_LEADERS = [
     ("NVDA", "엔비디아", "AI반도체"),
     ("SMCI", "슈퍼마이크로", "AI서버"),
     ("AMD", "AMD", "반도체"),
-    ("TSMC", "TSMC", "파운드리"),
+    ("TSM", "TSMC", "파운드리"),
     ("META", "메타", "소셜AI"),
     ("AMZN", "아마존", "클라우드"),
     ("MSFT", "마이크로소프트", "클라우드AI"),
@@ -96,6 +99,45 @@ def _fetch_us_leaders_data() -> str:
         return "\n".join(lines) if lines else "미국 데이터 조회 실패"
     except ImportError:
         return "yfinance 없음"
+
+
+def _fetch_top30_snapshot(kis: KISClient) -> str:
+    """KOSPI 시총 상위 30개 종목 실제 현재가·PER·PBR·EPS·52주 밴드 데이터 수집."""
+    lines = []
+    for code, name in KOSPI_TOP30:
+        try:
+            d = kis.get_stock_price(code, market="J")
+            if not d or not d.get("price"):
+                continue
+            lines.append(
+                f"{name}({code}): 현재가 {d['price']:,}원 (전일대비 {d['change_pct']:+.2f}%) "
+                f"| PER {d['per']:.1f} PBR {d['pbr']:.1f} EPS {d['eps']:,}원 "
+                f"| 52주 {d['52w_low']:,}~{d['52w_high']:,}원"
+            )
+        except Exception:
+            continue
+    return "\n".join(lines) if lines else "데이터 없음"
+
+
+def _fetch_consensus_text(codes: list[str]) -> str:
+    """KOSPI 상위 30개 종목 애널리스트 컨센서스 목표주가 수집."""
+    try:
+        from clients.consensus_client import fetch_consensus_batch
+        data = fetch_consensus_batch(codes)
+        code_name = dict(KOSPI_TOP30)
+        lines = []
+        for code, c in data.items():
+            name = code_name.get(code, code)
+            flag = " (저신뢰: 애널리스트 수 부족)" if c.get("low_confidence") else ""
+            lines.append(
+                f"{name}({code}): 평균목표 {c['avg_target']:,}원 "
+                f"(범위 {c['min_target']:,}~{c['max_target']:,}원, 애널 {c['analyst_count']}명, "
+                f"의견 {c['consensus_opinion']}){flag}"
+            )
+        return "\n".join(lines) if lines else "컨센서스 데이터 없음"
+    except Exception as e:
+        logger.warning("[전략에이전트] 컨센서스 수집 실패: %s", e)
+        return "컨센서스 데이터 없음"
 
 
 def _fetch_kr_volume_surge(kis: KISClient) -> str:
@@ -196,6 +238,12 @@ def run_strategy():
         foreign_kospi = foreign_kosdaq = inst_kospi = []
         logger.warning("[전략에이전트] KIS 실패: %s", e)
 
+    # 5b. KOSPI 상위 30개 실제 가격/밸류에이션 스냅샷 (목표주가 산출 근거용)
+    top30_snapshot_text = _fetch_top30_snapshot(kis) if kis else "데이터 없음"
+
+    # 5c. 애널리스트 컨센서스 목표주가 (있으면 목표가 산출에 우선 활용)
+    consensus_text = _fetch_consensus_text([code for code, _ in KOSPI_TOP30])
+
     # 6. 보유 포트폴리오
     try:
         portfolio = calculate_pnl(kis)
@@ -228,7 +276,7 @@ def run_strategy():
 
     macro_text = (
         f"S&P500: {_mkt('sp500')} | NASDAQ: {_mkt('nasdaq')} | SOX: {_mkt('sox')}\n"
-        f"KOSPI: {_mkt('kospi')} | 원/달러: {_mkt('usdkrw')} | 미국10년금리: {_mkt('us10y')}\n"
+        f"KOSPI: {_mkt('kospi')} | 원/달러: {_mkt('usd_krw')} | 미국10년금리: {_mkt('us10y')}\n"
         f"VIX: {_mkt('vix')} | 금: {_mkt('gold')} | WTI: {_mkt('wti')}"
     )
 
@@ -299,6 +347,12 @@ def run_strategy():
 
 [외국인 순매수 상위]
 {foreign_text}
+
+[KOSPI 시총 상위 30개 실시간 데이터 — 목표주가·EPS 근거는 반드시 여기서만 인용]
+{top30_snapshot_text}
+
+[애널리스트 컨센서스 목표주가 (KOSPI 상위 30개)]
+{consensus_text}
 
 [현재 포트폴리오]
 {portfolio_text}
