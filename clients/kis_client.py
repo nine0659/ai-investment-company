@@ -18,6 +18,13 @@ _RANK_END   = time(20, 0)
 # 토큰 만료 전 갱신 버퍼 (만료 15분 전 미리 갱신)
 _TOKEN_BUFFER_MINUTES = 15
 
+# 서킷 브레이커: 토큰 발급이 전 재시도 실패하면 이 시간 동안 모든 KIS 호출을
+# 즉시 실패시킨다. KIS 접속 불가 시 호출마다 3회×15초 재시도가 반복되면
+# 파이프라인 전체가 15분을 넘겨 GitHub Actions 타임아웃으로 브리핑이 통째로
+# 유실된다 (2026-07-02~03 장전브리핑 미발송 원인).
+_CIRCUIT_COOLDOWN = timedelta(minutes=10)
+_circuit_open_until: datetime | None = None
+
 
 def _rank_api_available() -> bool:
     now = datetime.now(_KST)
@@ -43,11 +50,18 @@ class KISClient:
     # ── 인증 ─────────────────────────────────────────────────
 
     def _get_token(self) -> str:
+        global _circuit_open_until
         # 만료 15분 전 버퍼를 두고 갱신 판단
         buffer = timedelta(minutes=_TOKEN_BUFFER_MINUTES)
         now_local = datetime.now(_KST)
         if self._token and self._token_expires and now_local < self._token_expires - buffer:
             return self._token
+
+        if _circuit_open_until and now_local < _circuit_open_until:
+            raise RuntimeError(
+                f"KIS 서킷 브레이커 열림 — {_circuit_open_until.strftime('%H:%M')}까지 호출 차단 "
+                "(직전 토큰 발급 전체 실패)"
+            )
 
         last_exc: Exception | None = None
         for attempt in range(3):
@@ -80,6 +94,7 @@ class KISClient:
                     logger.warning("KIS expires_in 비정상(%ds) — 기본값 86400s 사용", expires_in)
                     expires_in = 86400
                 self._token_expires = datetime.now(_KST) + timedelta(seconds=expires_in)
+                _circuit_open_until = None
                 logger.info(
                     "KIS 토큰 갱신 완료 (유효 %dh, 만료 %s)",
                     expires_in // 3600,
@@ -94,6 +109,11 @@ class KISClient:
                 last_exc = e
                 logger.warning("KIS 토큰 발급 실패 (시도 %d/3): %s", attempt + 1, e)
 
+        _circuit_open_until = datetime.now(_KST) + _CIRCUIT_COOLDOWN
+        logger.error(
+            "KIS 토큰 발급 3회 모두 실패 — 서킷 브레이커 %d분 가동 (이후 KIS 호출 즉시 실패)",
+            int(_CIRCUIT_COOLDOWN.total_seconds() // 60),
+        )
         raise RuntimeError(f"KIS 토큰 발급 3회 모두 실패: {last_exc}")
 
     def _headers(self, tr_id: str) -> dict:
