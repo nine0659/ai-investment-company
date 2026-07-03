@@ -2,7 +2,7 @@
 db/database.py — 중앙 데이터베이스 레이어
 
 DATABASE_URL 환경변수:
-  설정 시  → Supabase PostgreSQL (운영)
+  설정 시  → Neon PostgreSQL (운영)
   미설정 시 → SQLite 로컬 (개발)
 
 사용법:
@@ -43,7 +43,7 @@ def _make_sqlite() -> "Engine":
 
 def _make_engine() -> "Engine":
     if _DATABASE_URL:
-        # Supabase / Heroku: postgres:// → postgresql://
+        # Neon / Heroku: postgres:// → postgresql://
         url = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
         logger.info("[DB] PostgreSQL 연결 시도: %s", url[:40] + "...")
         try:
@@ -86,7 +86,7 @@ def _alert_db_fallback(err: Exception) -> None:
                 "text": (
                     "🚨 [시스템] 운영 DB(PostgreSQL) 연결 실패 — 임시 SQLite로 동작 중\n\n"
                     "포트폴리오·투자관·성과 기록이 재시작 시 소실됩니다.\n"
-                    "Supabase 프로젝트 상태와 Render의 DATABASE_URL을 즉시 확인하세요.\n\n"
+                    "Neon 프로젝트 상태와 Render/GitHub Actions의 DATABASE_URL을 즉시 확인하세요.\n\n"
                     f"오류: {str(err)[:200]}"
                 ),
             },
