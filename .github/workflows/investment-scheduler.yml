@@ -65,7 +65,7 @@ jobs:
   briefing:
     name: Investment Briefing
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     # 동일 run_type의 동시 실행 방지 — 중복 발송 차단 (DB 체크와 이중 보호)
     concurrency:
       group: briefing-${{ github.event.action || github.event.schedule || inputs.run_type || 'manual' }}
@@ -118,6 +118,7 @@ jobs:
           TELEGRAM_API_ID:        ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH:      ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
+          DATABASE_URL:           ${{ secrets.DATABASE_URL }}
           PYTHONUTF8:             "1"
         run: python main.py --type ${{ steps.run_type.outputs.type }}
 
@@ -145,6 +146,7 @@ jobs:
           KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
           KIS_ACCOUNT_NO:     ${{ secrets.KIS_ACCOUNT_NO }}
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
           PYTHONUTF8:         "1"
         run: python main.py --type price-alert
 
@@ -171,6 +173,7 @@ jobs:
           OPENAI_MODEL:       ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
           PYTHONUTF8:         "1"
         run: python main.py --type trend
 
@@ -197,6 +200,7 @@ jobs:
           OPENAI_MODEL:       ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
           PYTHONUTF8:         "1"
         run: python main.py --type weekly
 
@@ -223,6 +227,7 @@ jobs:
           OPENAI_MODEL_CEO:   ${{ secrets.OPENAI_MODEL_CEO }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
           PYTHONUTF8:         "1"
         run: python main.py --type us-invest
 
@@ -249,5 +254,6 @@ jobs:
           OPENAI_MODEL:       ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
           PYTHONUTF8:         "1"
         run: python main.py --type monthly
