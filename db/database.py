@@ -109,7 +109,7 @@ reports = Table("reports", metadata,
     Column("candidates",       Text),
     Column("sector_scores",    Text),
     Column("market_direction", Text),
-    Column("created_at",       Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",       Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # 브리핑 파이프라인 중복 실행 방지용 원자적 선점 테이블.
@@ -120,7 +120,7 @@ reports = Table("reports", metadata,
 report_claims = Table("report_claims", metadata,
     Column("date",       Text, nullable=False),
     Column("run_type",   Text, nullable=False),
-    Column("claimed_at", Text, server_default="CURRENT_TIMESTAMP"),
+    Column("claimed_at", Text, server_default=text("CURRENT_TIMESTAMP")),
     UniqueConstraint("date", "run_type", name="uq_report_claims_date_run_type"),
 )
 
@@ -132,28 +132,28 @@ deep_reports = Table("deep_reports", metadata,
     Column("date",       Text,    nullable=False),
     Column("run_type",   Text,    nullable=False),
     Column("content",    Text),
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 reviews = Table("reviews", metadata,
     Column("id",             Integer, primary_key=True, autoincrement=True),
     Column("date",           Text,    nullable=False),
     Column("review_content", Text),
-    Column("created_at",     Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",     Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 midterm_reports = Table("midterm_reports", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
     Column("date",       Text,    nullable=False),
     Column("report",     Text),
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 longterm_reports = Table("longterm_reports", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
     Column("date",       Text,    nullable=False),
     Column("report",     Text),
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 stock_recommendations = Table("stock_recommendations", metadata,
@@ -168,7 +168,7 @@ stock_recommendations = Table("stock_recommendations", metadata,
     Column("close_price",  Float),
     Column("return_pct",   Float),
     Column("result",       Text),
-    Column("created_at",   Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",   Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 foreign_buy_history = Table("foreign_buy_history", metadata,
@@ -191,8 +191,8 @@ portfolio_positions = Table("portfolio_positions", metadata,
     Column("stop_price",   Float),
     Column("memo",         Text),
     Column("status",       Text,    default="holding"),
-    Column("created_at",   Text,    server_default="CURRENT_TIMESTAMP"),
-    Column("updated_at",   Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",   Text,    server_default=text("CURRENT_TIMESTAMP")),
+    Column("updated_at",   Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 portfolio_history = Table("portfolio_history", metadata,
@@ -206,7 +206,7 @@ portfolio_history = Table("portfolio_history", metadata,
     Column("return_pct", Float),
     Column("timeframe",  Text),
     Column("memo",       Text),
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 watchlist_items = Table("watchlist_items", metadata,
@@ -221,7 +221,7 @@ watchlist_items = Table("watchlist_items", metadata,
     Column("priority",      Text,    default="normal"),
     Column("status",        Text,    default="active"),
     Column("added_date",    Text),
-    Column("created_at",    Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",    Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 dart_sent_alerts = Table("dart_sent_alerts", metadata,
@@ -229,19 +229,19 @@ dart_sent_alerts = Table("dart_sent_alerts", metadata,
     Column("corp_name", Text),
     Column("report_nm", Text),
     Column("date",      Text),
-    Column("sent_at",   Text, server_default="CURRENT_TIMESTAMP"),
+    Column("sent_at",   Text, server_default=text("CURRENT_TIMESTAMP")),
 )
 
 bigfigure_alert_log = Table("bigfigure_alert_log", metadata,
     Column("date",    Text, primary_key=True),
-    Column("sent_at", Text, server_default="CURRENT_TIMESTAMP"),
+    Column("sent_at", Text, server_default=text("CURRENT_TIMESTAMP")),
 )
 
 price_alert_log = Table("price_alert_log", metadata,
     Column("date",    Text, primary_key=True),
     Column("code",    Text, primary_key=True),
     Column("type",    Text, primary_key=True),
-    Column("sent_at", Text, server_default="CURRENT_TIMESTAMP"),
+    Column("sent_at", Text, server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # 장중 KOSPI 등락률 변동 추적 — 급반전(트렌드 역전) 감지용 (긴급모니터 5분마다 갱신)
@@ -250,7 +250,7 @@ intraday_extremes = Table("intraday_extremes", metadata,
     Column("min_kospi_chg",    Float),
     Column("max_kospi_chg",    Float),
     Column("reversal_alerted", Integer, default=0),
-    Column("updated_at",       Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("updated_at",       Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 alert_notifications = Table("alert_notifications", metadata,
@@ -260,7 +260,7 @@ alert_notifications = Table("alert_notifications", metadata,
     Column("code",       Text,    nullable=False),
     Column("name",       Text),
     Column("message",    Text),
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 us_invest_recommendations = Table("us_invest_recommendations", metadata,
@@ -274,7 +274,7 @@ us_invest_recommendations = Table("us_invest_recommendations", metadata,
     Column("change_1m",  Float),
     Column("score",      Float),
     Column("rationale",  Text),
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # ── 데이터 축적 테이블 ──────────────────────────────────────────────
@@ -296,7 +296,7 @@ market_snapshots = Table("market_snapshots", metadata,
     Column("sp500_chg",   Float),
     Column("nasdaq_fut",  Float),
     Column("nasdaq_chg",  Float),
-    Column("created_at",  Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",  Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 investment_thesis = Table("investment_thesis", metadata,
@@ -315,7 +315,7 @@ investment_thesis = Table("investment_thesis", metadata,
     Column("invalidation",    Text),   # 투자 근거 무효 조건
     Column("full_report",     Text),   # 전체 리포트 원문
     Column("ceo_summary",     Text),   # CEO 일일 주입용 압축 요약 (~600자)
-    Column("created_at",      Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",      Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 strategy_reports = Table("strategy_reports", metadata,
@@ -324,7 +324,7 @@ strategy_reports = Table("strategy_reports", metadata,
     Column("report_type",  Text,    default="weekly"), # weekly / longterm
     Column("report",       Text),                      # 전체 전략 리포트
     Column("ceo_summary",  Text),                      # CEO 일일 브리핑 주입용 압축 요약 (~500자)
-    Column("created_at",   Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",   Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 intelligence_archive = Table("intelligence_archive", metadata,
@@ -335,7 +335,7 @@ intelligence_archive = Table("intelligence_archive", metadata,
     Column("summary",     Text),   # 핵심 인사이트 요약 텍스트
     Column("sentiment",   Text),   # 강세 / 약세 / 중립
     Column("key_themes",  Text),   # 쉼표 구분 키워드
-    Column("created_at",  Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",  Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 attribution_log = Table("attribution_log", metadata,
@@ -349,7 +349,7 @@ attribution_log = Table("attribution_log", metadata,
     Column("total_score",   Float),  # 종합 점수
     Column("key_learnings", Text),   # 핵심 교훈 (다음 투자에 반영할 내용)
     Column("full_report",   Text),   # 전체 귀인 분석 리포트
-    Column("created_at",    Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",    Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 portfolio_nav = Table("portfolio_nav", metadata,
@@ -364,12 +364,12 @@ portfolio_nav = Table("portfolio_nav", metadata,
     Column("nav_pct_ytd",   Float),   # 포트폴리오 연초 대비 등락률 (%)
     Column("alpha_ytd",     Float),   # 초과수익률 = nav_pct_ytd - kospi_pct_ytd
     Column("position_count",Integer), # 보유 종목 수
-    Column("created_at",    Text,     server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",    Text,     server_default=text("CURRENT_TIMESTAMP")),
 )
 
 order_history = Table("order_history", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
     Column("code",       Text,    nullable=False),
     Column("name",       Text),
     Column("side",       Text,    nullable=False),   # buy | sell
@@ -388,7 +388,7 @@ order_history = Table("order_history", metadata,
 system_settings = Table("system_settings", metadata,
     Column("key",        Text, primary_key=True),   # 설정 키
     Column("value",      Text, nullable=False),     # 설정 값
-    Column("updated_at", Text, server_default="CURRENT_TIMESTAMP"),
+    Column("updated_at", Text, server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # ── 자동 실행 일시 중단 플래그 ─────────────────────────────────────
@@ -396,7 +396,7 @@ auto_execute_pause = Table("auto_execute_pause", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
     Column("reason",     Text),
     Column("pause_until",Text),   # YYYY-MM-DD HH:MM:SS
-    Column("created_at", Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # ── AI 성과 추적 테이블 ────────────────────────────────────────────
@@ -417,7 +417,7 @@ recommendation_tracking = Table("recommendation_tracking", metadata,
     Column("min_return",   Float),                     # 추적 기간 최저 수익률
     Column("days_held",    Integer),                   # 추천일로부터 경과 영업일
     Column("status",       Text,    default="tracking"),  # tracking / target_hit / stop_hit / expired
-    Column("created_at",   Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",   Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 market_predictions = Table("market_predictions", metadata,
@@ -430,7 +430,7 @@ market_predictions = Table("market_predictions", metadata,
     Column("actual_dir",      Text),                      # 실제 방향 (상승/하락/중립)
     Column("correct",         Integer),                   # 1=적중, 0=실패, NULL=미검증
     Column("sector_pred",     Text),                      # 예측 주도 섹터
-    Column("created_at",      Text,    server_default="CURRENT_TIMESTAMP"),
+    Column("created_at",      Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # ── 초기화 ─────────────────────────────────────────────────────────
