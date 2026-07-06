@@ -73,6 +73,14 @@ def _fetch_stock_data(ticker: str) -> dict:
         chg_1m = (cur - m1_ago) / m1_ago * 100 if m1_ago else 0
         vol_ratio = vol_cur / vol_avg if vol_avg else 1.0
 
+        # yfinance dividendYield는 버전에 따라 소수(0.0291)로도, 퍼센트(2.91)로도
+        # 온다. 여기서 항상 퍼센트 단위로 정규화한다 — 정규화 없이 ×100 하면
+        # "배당수익률 291%" 같은 오표기가 발생 (2026-07-05 브리핑 오류).
+        dy_raw = info.get("dividendYield")
+        dividend_yield_pct = None
+        if dy_raw:
+            dividend_yield_pct = round(dy_raw if dy_raw >= 1 else dy_raw * 100, 2)
+
         return {
             "ticker": ticker,
             "price": cur,
@@ -81,7 +89,7 @@ def _fetch_stock_data(ticker: str) -> dict:
             "vol_ratio": round(vol_ratio, 2),
             "market_cap": info.get("marketCap", 0),
             "pe_ratio": info.get("trailingPE"),
-            "dividend_yield": info.get("dividendYield"),
+            "dividend_yield": dividend_yield_pct,
             "sector": info.get("sector", ""),
         }
     except Exception as e:
@@ -108,7 +116,7 @@ def _score_growth(d: dict) -> float:
 
 def _score_dividend(d: dict) -> float:
     score = 0.0
-    dy = (d.get("dividend_yield") or 0) * 100
+    dy = d.get("dividend_yield") or 0  # 이미 퍼센트 단위
     score += min(dy * 10, 40)
     score += min(d.get("change_1m", 0) * 2, 30)
     score += min(d.get("change_1w", 0) * 2, 20)
@@ -168,7 +176,7 @@ def _format_candidates(candidates: dict) -> str:
     for cat, label in [("growth", "성장주"), ("dividend", "배당ETF"), ("sector", "섹터ETF")]:
         lines.append(f"\n[{label} 후보]")
         for d in candidates.get(cat, []):
-            dy_str = f" | 배당수익률 {d['dividend_yield']*100:.1f}%" if d.get("dividend_yield") else ""
+            dy_str = f" | 배당수익률 {d['dividend_yield']:.1f}%" if d.get("dividend_yield") else ""
             pe_str = f" | PER {d['pe_ratio']:.1f}" if d.get("pe_ratio") else ""
             lines.append(
                 f"  {d['ticker']} ({d['name']}) | 현재가 ${d['price']:.2f}"
@@ -180,6 +188,7 @@ def _format_candidates(candidates: dict) -> str:
 
 _SYSTEM = """당신은 미국 주식 투자 전문 애널리스트입니다.
 제공된 데이터를 바탕으로 이번 주 최적 투자 종목을 선정하세요.
+수치는 제공된 데이터에 있는 것만 인용하고, 없는 수치는 절대 만들지 마세요.
 
 선정 기준:
 - 성장주: 기술적 모멘텀(주간/월간 상승), 거래량 증가, 밸류에이션 적정성
@@ -219,9 +228,16 @@ _SYSTEM = """당신은 미국 주식 투자 전문 애널리스트입니다.
 
 
 def run() -> str:
-    logger.info("[US투자] 주간 추천 생성 시작")
     now = datetime.now(_KST)
     date = now.strftime("%Y-%m-%d")
+
+    # Render 스케줄러와 GitHub Actions가 같은 날 각각 실행해도 1회만 발송
+    from services.report_service import claim_report_slot, release_report_slot
+    if not claim_report_slot(date, "us_invest"):
+        logger.info("[US투자] 오늘 이미 실행됨 — 스킵 (중복 발송 방지)")
+        return ""
+
+    logger.info("[US투자] 주간 추천 생성 시작")
 
     try:
         candidates = collect_candidates()
@@ -229,10 +245,15 @@ def run() -> str:
                     len(candidates["growth"]), len(candidates["dividend"]), len(candidates["sector"]))
     except Exception as e:
         logger.error("[US투자] 후보 수집 실패: %s", e)
+        release_report_slot(date, "us_invest")
         return ""
 
     candidate_text = _format_candidates(candidates)
-    report = chat_ceo(_SYSTEM, f"오늘 날짜: {date}\n\n{candidate_text}", max_tokens=2000)
+    try:
+        report = chat_ceo(_SYSTEM, f"오늘 날짜: {date}\n\n{candidate_text}", max_tokens=2000)
+    except Exception:
+        release_report_slot(date, "us_invest")  # 같은 날 재시도 가능하도록
+        raise
 
     # DB 저장
     try:

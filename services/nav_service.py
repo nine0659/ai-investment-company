@@ -51,12 +51,25 @@ def record_nav(kis=None) -> dict | None:
         except Exception as e:
             logger.debug("[NAV] KOSPI 조회 실패: %s", e)
 
-        # 포트폴리오 연초 대비 등락률
-        nav_pct_ytd = _calc_ytd_pnl_pct()
-        if nav_pct_ytd is None:
-            nav_pct_ytd = round(total_pnl_pct, 2)
+        # 포트폴리오 추적 시작(올해 첫 기록) 대비 등락률.
+        # 과거엔 첫 기록의 손익률을 그대로 nav_pct_ytd에 넣어 값이 영원히
+        # 고정되고(주간 변화 항상 0.00%), KOSPI는 1월 기준이라 알파가
+        # -71% 같은 무의미한 수치로 나왔다 (2026-07-05 리포트 오류).
+        # 알파는 반드시 같은 시작점(추적 시작일)끼리 비교한다.
+        baseline = _get_year_baseline()
+        if baseline:
+            nav_pct_ytd = round(total_pnl_pct - baseline["pnl_pct"], 2)
+            if baseline["kospi_close"] > 0 and kospi_close > 0:
+                kospi_since_start = round(
+                    (kospi_close - baseline["kospi_close"]) / baseline["kospi_close"] * 100, 2
+                )
+            else:
+                kospi_since_start = kospi_pct_ytd
+        else:
+            nav_pct_ytd = 0.0  # 오늘이 추적 시작일
+            kospi_since_start = 0.0
 
-        alpha_ytd = round(nav_pct_ytd - kospi_pct_ytd, 2)
+        alpha_ytd = round(nav_pct_ytd - kospi_since_start, 2)
 
         with get_conn() as conn:
             conn.execute(
@@ -91,21 +104,27 @@ def record_nav(kis=None) -> dict | None:
         return None
 
 
-def _calc_ytd_pnl_pct() -> float | None:
-    """올해 1월 1일 이후 포트폴리오 손익률 계산 (연초 기준 NAV가 있으면 사용)."""
+def _get_year_baseline() -> dict | None:
+    """올해 첫 NAV 기록(추적 시작점) 반환 — 수익률·알파의 공통 기준점."""
     try:
         year_start = f"{datetime.now(_KST).year}-01-01"
         with get_conn() as conn:
             row = conn.execute(
                 text("""
-                    SELECT total_pnl_pct FROM portfolio_nav
+                    SELECT date, total_pnl_pct, kospi_close FROM portfolio_nav
                     WHERE date >= :ys ORDER BY date ASC LIMIT 1
                 """),
                 {"ys": year_start},
             ).fetchone()
-        return float(row[0]) if row else None
+        if row:
+            return {
+                "date": row[0],
+                "pnl_pct": float(row[1] or 0),
+                "kospi_close": float(row[2] or 0),
+            }
     except Exception:
-        return None
+        pass
+    return None
 
 
 def get_nav_history(days: int = 30) -> list[dict]:
@@ -115,14 +134,16 @@ def get_nav_history(days: int = 30) -> list[dict]:
         with get_conn() as conn:
             rows = conn.execute(
                 text("""
-                    SELECT date, total_value, total_pnl_pct, kospi_pct_ytd, nav_pct_ytd, alpha_ytd
+                    SELECT date, total_value, total_pnl_pct, kospi_pct_ytd,
+                           nav_pct_ytd, alpha_ytd, kospi_close
                     FROM portfolio_nav WHERE date >= :cutoff ORDER BY date
                 """),
                 {"cutoff": cutoff},
             ).fetchall()
         return [
             {"date": r[0], "total_value": r[1], "total_pnl_pct": r[2],
-             "kospi_pct_ytd": r[3], "nav_pct_ytd": r[4], "alpha_ytd": r[5]}
+             "kospi_pct_ytd": r[3], "nav_pct_ytd": r[4], "alpha_ytd": r[5],
+             "kospi_close": r[6]}
             for r in rows
         ]
     except Exception as e:
@@ -131,7 +152,12 @@ def get_nav_history(days: int = 30) -> list[dict]:
 
 
 def generate_nav_report(days: int = 7) -> str:
-    """주간 자산 성장 리포트 생성."""
+    """주간 자산 현황 리포트 생성.
+
+    포트폴리오와 KOSPI를 반드시 같은 기간(리포트 윈도우)끼리 비교한다.
+    과거처럼 '포트폴리오 추적 시작 대비'와 'KOSPI 연초 대비'를 섞어서
+    빼면 -71% 같은 무의미한 알파가 나온다.
+    """
     history = get_nav_history(days)
     if not history:
         return ""
@@ -139,39 +165,26 @@ def generate_nav_report(days: int = 7) -> str:
     latest = history[-1]
     oldest = history[0]
 
-    # 기간 내 NAV 변화
-    period_nav_chg = round(latest["nav_pct_ytd"] - oldest["nav_pct_ytd"], 2)
-    period_kospi_chg = round(latest["kospi_pct_ytd"] - oldest["kospi_pct_ytd"], 2)
+    # 기간 내 변화 (같은 윈도우끼리 비교)
+    period_nav_chg = round(
+        (latest.get("total_pnl_pct") or 0) - (oldest.get("total_pnl_pct") or 0), 2
+    )
+    k_old, k_new = oldest.get("kospi_close") or 0, latest.get("kospi_close") or 0
+    period_kospi_chg = round((k_new - k_old) / k_old * 100, 2) if k_old > 0 else 0.0
     period_alpha = round(period_nav_chg - period_kospi_chg, 2)
-
-    alpha_emoji = "✅" if latest["alpha_ytd"] >= 0 else "⚠️"
-    alpha_label = "초과수익" if latest["alpha_ytd"] >= 0 else "시장 하회"
+    alpha_emoji = "✅" if period_alpha >= 0 else "⚠️"
 
     lines = [
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"📈 포트폴리오 자산 성장 현황",
+        f"📈 포트폴리오 현황 ({latest['date']} 기준)",
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"📅 기준: {latest['date']}",
+        f"💼 보유 손익(매수 후 누적): {latest.get('total_pnl_pct') or 0:+.2f}%",
         f"",
-        f"💼 포트폴리오  연초대비 {latest['nav_pct_ytd']:+.2f}%",
-        f"📊 KOSPI       연초대비 {latest['kospi_pct_ytd']:+.2f}%",
-        f"{'━'*20}",
-        f"{alpha_emoji} {alpha_label}(Alpha)  {latest['alpha_ytd']:+.2f}%",
-        f"",
-        f"[이번 주 변화 ({days}일)]",
+        f"[최근 {days}일: {oldest['date']} → {latest['date']}]",
         f"  포트폴리오: {period_nav_chg:+.2f}%",
         f"  KOSPI:      {period_kospi_chg:+.2f}%",
-        f"  주간 Alpha: {period_alpha:+.2f}%",
+        f"  {alpha_emoji} 시장 대비: {period_alpha:+.2f}%p",
     ]
-
-    if len(history) >= 2:
-        best_day = max(history, key=lambda x: x["alpha_ytd"])
-        worst_day = min(history, key=lambda x: x["alpha_ytd"])
-        lines += [
-            f"",
-            f"  최고 Alpha일: {best_day['date']} ({best_day['alpha_ytd']:+.2f}%)",
-            f"  최저 Alpha일: {worst_day['date']} ({worst_day['alpha_ytd']:+.2f}%)",
-        ]
 
     return "\n".join(lines)
 

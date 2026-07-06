@@ -778,8 +778,8 @@ def run(state: InvestmentState) -> InvestmentState:
                     alpha_signal = "✅초과수익 중" if nav["alpha_ytd"] >= 0 else "⚠️시장 하회 중"
                     context_parts.append(
                         f"\n[포트폴리오 자산 성장 현황]\n"
-                        f"연초대비: {nav['nav_pct_ytd']:+.2f}%  "
-                        f"Alpha: {nav['alpha_ytd']:+.2f}%  {alpha_signal}\n"
+                        f"추적시작 대비: {nav['nav_pct_ytd']:+.2f}%  "
+                        f"Alpha(동일기간 KOSPI 대비): {nav['alpha_ytd']:+.2f}%  {alpha_signal}\n"
                         f"오늘 총 손익: {nav['total_pnl_pct']:+.2f}%\n"
                         f"→ Alpha가 음수이면 전략 재검토 신호"
                     )

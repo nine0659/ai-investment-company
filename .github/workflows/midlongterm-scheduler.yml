@@ -3,6 +3,11 @@ name: Mid/Long Term Investment Analysis
 # KST = UTC+9
 # 중기: 매주 일요일 20:00 KST = 11:00 UTC Sunday  → cron: '0 11 * * 0'
 # 장기: 매월 첫째 일요일 20:30 KST = 11:30 UTC    → cron: '30 11 * * 0' + day <= 7 조건
+#
+# ※ 주 실행자는 Render 스케줄러(scheduler.py, 일 20:05/20:30). 이 워크플로는
+#   Render 다운 시 백업이다. GH cron은 수십 분 지연되므로 정상일 때는 늦게
+#   실행되며, 에이전트 내부 claim_report_slot 가드가 중복 발송을 차단한다.
+#   (2026-07-05 장기분석 2회 발송 원인 — 양쪽 모두 가드 없이 실행)
 
 on:
   schedule:

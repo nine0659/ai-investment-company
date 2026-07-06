@@ -256,6 +256,41 @@ def job_weekly_stats():
             pass
 
 
+def job_weekly_midterm():
+    """매주 일요일 20:05 — 중기 투자 분석 (1~6개월 관점).
+
+    GitHub Actions에도 같은 스케줄이 있으나 GH cron은 상시 수십 분 지연된다.
+    Render가 정시에 먼저 실행하고, 늦게 도착한 GH 실행은 에이전트 내부의
+    claim_report_slot 가드가 중복 발송을 차단한다.
+    """
+    from agents.midterm_agent import run_analysis
+    try:
+        logger.info("주간 중기분석 시작")
+        run_analysis()
+        logger.info("주간 중기분석 완료")
+    except Exception as e:
+        logger.error("주간 중기분석 실패: %s", e)
+        try:
+            send_error_alert(f"주간 중기분석 실패: {str(e)[:200]}")
+        except Exception:
+            pass
+
+
+def job_weekly_us_invest():
+    """매주 일요일 20:40 — 미국 주식 주간 추천."""
+    from agents.us_invest_agent import run as us_run
+    try:
+        logger.info("미국 주식 추천 시작")
+        us_run()
+        logger.info("미국 주식 추천 완료")
+    except Exception as e:
+        logger.error("미국 주식 추천 실패: %s", e)
+        try:
+            send_error_alert(f"미국 주식 추천 실패: {str(e)[:200]}")
+        except Exception:
+            pass
+
+
 def job_monthly_longterm():
     """매월 첫째 주 일요일 20:30 — 장기 가치투자 분석 (1년+ 관점).
     APScheduler CronTrigger는 첫째 주 일요일을 직접 표현하기 어려워
@@ -446,6 +481,28 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 매주 일요일 20:00[/cyan] 주간 적중률 통계")
+
+    # 주간 중기 분석: 매주 일요일 20:05 (적중률 통계 직후)
+    scheduler.add_job(
+        job_weekly_midterm,
+        CronTrigger(day_of_week="sun", hour=20, minute=5, timezone=TIMEZONE_STR),
+        id="weekly_midterm",
+        name="[일 20:05] 중기 투자 분석 (1~6개월)",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 매주 일요일 20:05[/cyan] 중기 투자 분석")
+
+    # 미국 주식 주간 추천: 매주 일요일 20:40
+    scheduler.add_job(
+        job_weekly_us_invest,
+        CronTrigger(day_of_week="sun", hour=20, minute=40, timezone=TIMEZONE_STR),
+        id="weekly_us_invest",
+        name="[일 20:40] 미국 주식 주간 추천",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 매주 일요일 20:40[/cyan] 미국 주식 주간 추천")
 
     # 월간 장기 분석: 매월 첫째 주 일요일 20:30 (job 내부에서 날짜 재확인)
     scheduler.add_job(

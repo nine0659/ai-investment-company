@@ -51,32 +51,44 @@ KOSPI_TOP30 = [
     ("003550", "LG"),
 ]
 
-_SYSTEM = """당신은 중기 투자(1~6개월 보유) 전문 포트폴리오 매니저입니다.
-제공된 KOSPI 시총 상위 30개 종목의 재무 데이터와 밸류에이션 지표를 분석하여
-중기 투자 추천 종목 5개를 선정하세요.
+_SYSTEM = """당신은 1~6개월 보유 관점의 투자 자문가입니다.
+바쁜 개인 투자자가 30초 안에 읽을 수 있도록, 어려운 전문용어 없이 짧게 씁니다.
 
-N/A 항목은 해당 데이터가 없는 것이므로 가용한 데이터로 판단하세요.
+제공된 KOSPI 시총 상위 종목 데이터에서 중기 추천 종목 3개만 선정하세요.
 
-선정 기준:
-1. 밸류에이션: PER·PBR이 업종 평균 대비 합리적인 수준
-2. 성장성: 매출·영업이익 증가 추세
-3. 수익성: ROE 10% 이상, 영업이익률 개선
-4. 재무 안정성: 부채비율 200% 이하
-5. 모멘텀: 52주 저점 대비 상승 여력
+원칙:
+- 수치는 제공된 데이터에 있는 것만 인용하세요. 없는 수치는 절대 만들지 마세요.
+- N/A 항목은 무시하고 가용한 데이터로 판단하세요.
+- [직전 추천]과 같은 종목을 다시 추천하면 종목명 옆에 "(지난 추천 유지)"만 붙이고,
+  근거를 다시 쓰지 마세요. 지난번과 달라진 점이 있을 때만 1줄 추가하세요.
+- 선정 기준(내부 판단용, 출력 금지): 밸류에이션 합리성, 연간 매출·이익 성장,
+  ROE·영업이익률, 부채비율 200% 이하, 52주 저점 대비 위치.
 
-각 추천 종목 출력 형식:
-- 종목명 (코드)
-- 현재가 / 목표가 (3~6개월, 상승여력 %)
-- 매수 근거 3가지 (재무 데이터 수치 인용)
-- 핵심 리스크 2가지
-- 매수 전략 (분할매수 여부, 비중 제안)
+출력 형식 (전체 25줄 이내, 아래 형식 외 다른 텍스트 금지):
 
-마지막에 전체 시장 환경과 중기 투자 전략 총평을 작성하세요."""
+💡 한 줄 결론: (이번 주 중기 투자자가 기억할 것 1문장)
+
+1. 종목명 (코드) — 현재가 X원 → 목표가 Y원 (상승여력 +Z%)
+   왜: (쉬운 말로 1줄)
+   조심할 것: (1줄)
+
+2. (같은 형식)
+3. (같은 형식)
+
+📌 시장 한 줄 평: (1문장)"""
 
 
 def run_analysis():
     """중기 분석 실행 및 텔레그램 발송"""
     now = datetime.now(TZ)
+    today = now.strftime("%Y-%m-%d")
+
+    # Render 스케줄러와 GitHub Actions가 같은 날 각각 실행해도 1회만 발송
+    from services.report_service import claim_report_slot, release_report_slot
+    if not claim_report_slot(today, "midterm"):
+        logger.info("[중기에이전트] 오늘 이미 실행됨 — 스킵 (중복 발송 방지)")
+        return
+
     logger.info("[중기에이전트] 분석 시작: %s", now.strftime("%Y-%m-%d %H:%M"))
 
     kis = KISClient()
@@ -98,10 +110,23 @@ def run_analysis():
     # DART 재무 데이터가 하나라도 있으면 분석 진행
     valid = [d for d in stock_data_list if d.get("financials") or d.get("price")]
     if not valid:
+        release_report_slot(today, "midterm")
         send_error_alert("중기 분석 실패: 유효한 종목 데이터 없음")
         return
 
     logger.info("[중기에이전트] 유효 종목 %d개 / 전체 %d개", len(valid), len(KOSPI_TOP30))
+
+    # 직전 추천 리포트 — 같은 종목 반복 서술 방지용
+    prev_section = ""
+    try:
+        from services.review_service import get_last_midterm_report
+        prev = get_last_midterm_report(today)
+        if prev:
+            prev_section = (
+                f"\n\n=== 직전 추천 ({prev['date']}) ===\n{prev['report'][:900]}"
+            )
+    except Exception as e:
+        logger.debug("[중기에이전트] 직전 리포트 조회 실패: %s", e)
 
     stock_text = "\n\n".join(format_for_prompt(d) for d in valid)
     context = (
@@ -109,12 +134,14 @@ def run_analysis():
         f"분석 대상: KOSPI 시가총액 상위 30개 종목 중 데이터 수집 완료 {len(valid)}개\n\n"
         f"=== 종목별 재무 데이터 ===\n\n"
         f"{stock_text}"
+        f"{prev_section}"
     )
 
     try:
-        report = chat(_SYSTEM, context, max_tokens=4000)
+        report = chat(_SYSTEM, context, max_tokens=1200)
     except Exception as e:
         logger.error("[중기에이전트] OpenAI 호출 실패: %s", e)
+        release_report_slot(today, "midterm")
         send_error_alert(f"중기 분석 OpenAI 오류: {e}")
         return
 

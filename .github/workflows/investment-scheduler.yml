@@ -11,7 +11,9 @@ name: AI Investment Research Scheduler
 # 21:00 KST (1st Mon)  = 12:00 UTC (Mon)   ← 월간 학습 (매월 1일 UTC)
 #
 # ※ 일간 브리핑 트리거: cron-job.org → repository_dispatch 전담 (GitHub schedule 백업 제거 — 수 시간 지연으로 저녁 오발송 문제)
-# ※ 주간·월간 트리거: GitHub Actions schedule (cron-job.org 미설정)
+# ※ 주간·월간 트리거: 주 실행자는 Render 스케줄러(scheduler.py). 여기의 schedule은
+#   Render 다운 시 백업이며, 각 잡 내부의 claim_report_slot 가드가 중복 발송을 차단한다.
+#   (2026-07-05 주간 적중률 2회 발송 원인 — 양쪽 모두 가드 없이 실행)
 #
 # DART 공시 알림은 별도 job을 제거하고 장전·장중·장마감 브리핑에 통합됩니다.
 # cron-job.org에서 호출할 event_type 목록:

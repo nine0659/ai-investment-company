@@ -123,12 +123,13 @@ def _get_latest_tracking(days: int) -> list[dict]:
         return []
 
 
-def generate_weekly_report(days: int = 7) -> str:
+def generate_weekly_report(days: int = 7) -> str | None:
+    """주간 적중률 리포트 생성. 추천 데이터가 없으면 None (발송할 내용 없음)."""
     now  = datetime.now(_KST)
     recs = get_recent_recommendations(days)
 
     if not recs:
-        return f"📊 주간 적중률 리포트 ({now.strftime('%Y-%m-%d')})\n\n이번 주 추천 종목 데이터 없음"
+        return None
 
     total    = len(recs)
     success  = sum(1 for r in recs if r.get("result") == "성공")
@@ -256,9 +257,22 @@ MDD 해석: 낮을수록 손실 관리 우수
 
 def send_weekly_report():
     logger.info("[통계] 주간 리포트 생성 시작")
+
+    # Render 스케줄러와 GitHub Actions가 같은 날 각각 실행해도 1회만 발송
+    from services.report_service import claim_report_slot, release_report_slot
+    today = datetime.now(_KST).strftime("%Y-%m-%d")
+    if not claim_report_slot(today, "weekly_stats"):
+        logger.info("[통계] 오늘 이미 발송됨 — 스킵 (중복 발송 방지)")
+        return
+
     try:
         report = generate_weekly_report(7)
+        if not report:
+            # 추천 데이터가 없는 주 — "데이터 없음" 문자 발송은 소음이므로 생략
+            logger.info("[통계] 이번 주 추천 데이터 없음 — 발송 생략")
+            return
         send_message(report)
         logger.info("[통계] 주간 리포트 발송 완료")
     except Exception as e:
         logger.error("[통계] 주간 리포트 실패: %s", e)
+        release_report_slot(today, "weekly_stats")

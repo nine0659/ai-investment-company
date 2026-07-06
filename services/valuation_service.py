@@ -32,29 +32,46 @@ def get_stock_valuation(kis: KISClient, stock_code: str, stock_name: str,
     history = dart_client.get_multi_year_financials(stock_code, years)
     result["financials"] = history
 
-    # ── 최근 연도 기준 지표 계산 ──────────────────────────────
+    # ── 지표 계산 ─────────────────────────────────────────────
+    # history[0]는 당해 최신 분기 보고서일 수 있다. 분기 손익(3~9개월 누적)을
+    # 직전 연간(12개월)과 그대로 비교하면 매출성장률이 전 종목 -60~-75%로
+    # 찍히는 왜곡이 생기므로(2026-07-05 브리핑 오류), 손익 지표는 반드시
+    # 연간 보고서끼리만 비교하고 분기 실적은 별도 필드로 분리한다.
     if history:
-        latest = history[0]
-        equity      = latest.get("자본총계", 0)
-        net_income  = latest.get("당기순이익", 0)
-        total_debt  = latest.get("부채총계", 0)
-        revenue     = latest.get("매출액", 0)
-        op_income   = latest.get("영업이익", 0)
+        annuals   = [h for h in history if h.get("period") == "연간"]
+        quarterly = history[0] if history[0].get("period") != "연간" else None
 
-        if equity > 0:
-            result["roe"] = round(net_income / equity * 100, 2)
-            result["debt_ratio"] = round(total_debt / equity * 100, 2)
-        if revenue > 0:
-            result["op_margin"] = round(op_income / revenue * 100, 2)
-        if len(history) >= 2 and history[1].get("매출액", 0) > 0:
-            prev_rev = history[1]["매출액"]
-            result["revenue_growth"] = round((revenue - prev_rev) / prev_rev * 100, 2)
+        if annuals:
+            latest = annuals[0]
+            equity      = latest.get("자본총계", 0)
+            net_income  = latest.get("당기순이익", 0)
+            total_debt  = latest.get("부채총계", 0)
+            revenue     = latest.get("매출액", 0)
+            op_income   = latest.get("영업이익", 0)
 
-        result["revenue_억"]    = revenue    // 100_000_000
-        result["op_income_억"]  = op_income  // 100_000_000
-        result["net_income_억"] = net_income // 100_000_000
-        result["equity_억"]     = equity     // 100_000_000
-        result["latest_period"] = f"{latest.get('year', '')} {latest.get('period', '')}"
+            if equity > 0:
+                result["roe"] = round(net_income / equity * 100, 2)
+                result["debt_ratio"] = round(total_debt / equity * 100, 2)
+            if revenue > 0:
+                result["op_margin"] = round(op_income / revenue * 100, 2)
+            if len(annuals) >= 2 and annuals[1].get("매출액", 0) > 0:
+                prev_rev = annuals[1]["매출액"]
+                result["revenue_growth"] = round((revenue - prev_rev) / prev_rev * 100, 2)
+
+            result["revenue_억"]    = revenue    // 100_000_000
+            result["op_income_억"]  = op_income  // 100_000_000
+            result["net_income_억"] = net_income // 100_000_000
+            result["equity_억"]     = equity     // 100_000_000
+            result["latest_period"] = f"{latest.get('year', '')} {latest.get('period', '')}"
+
+        if quarterly:
+            q_rev = quarterly.get("매출액", 0)
+            q_op  = quarterly.get("영업이익", 0)
+            result["q_label"]        = f"{quarterly.get('year', '')} {quarterly.get('period', '')}"
+            result["q_revenue_억"]   = q_rev // 100_000_000
+            result["q_op_income_억"] = q_op  // 100_000_000
+            if q_rev > 0:
+                result["q_op_margin"] = round(q_op / q_rev * 100, 2)
 
     return result
 
@@ -77,13 +94,20 @@ def format_for_prompt(stock_data: dict) -> str:
 
     lines = [
         f"【{f.get('name', '')} ({f.get('code', '')})】",
-        f"  최신실적기준: {f.get('latest_period', 'N/A')}",
         f"  현재가: {_fmt(price, '원')}  시가총액: {_fmt(cap, '억원')}",
-        f"  PER: {_fmt(f.get('per'))}  PBR: {_fmt(f.get('pbr'))}  ROE: {_fmt(f.get('roe'), '%')}",
-        f"  부채비율: {_fmt(f.get('debt_ratio'), '%')}  영업이익률: {_fmt(f.get('op_margin'), '%')}",
-        f"  매출: {_fmt(f.get('revenue_억'), '억')}  영업이익: {_fmt(f.get('op_income_억'), '억')}  순이익: {_fmt(f.get('net_income_억'), '억')}",
-        f"  매출성장률: {_fmt(f.get('revenue_growth'), '%')}  배당수익률: {_fmt(f.get('dividend_yield'), '%')}",
+        f"  PER: {_fmt(f.get('per'))}  PBR: {_fmt(f.get('pbr'))}  ROE(연간): {_fmt(f.get('roe'), '%')}",
+        f"  부채비율: {_fmt(f.get('debt_ratio'), '%')}  영업이익률(연간): {_fmt(f.get('op_margin'), '%')}",
+        f"  연간실적({f.get('latest_period', 'N/A')}): 매출 {_fmt(f.get('revenue_억'), '억')}"
+        f"  영업이익 {_fmt(f.get('op_income_억'), '억')}  순이익 {_fmt(f.get('net_income_억'), '억')}",
+        f"  매출성장률(연간, 전년 대비): {_fmt(f.get('revenue_growth'), '%')}"
+        f"  배당수익률: {_fmt(f.get('dividend_yield'), '%')}",
     ]
+    if f.get("q_label"):
+        lines.append(
+            f"  최근분기({f['q_label']}): 매출 {_fmt(f.get('q_revenue_억'), '억')}"
+            f"  영업이익 {_fmt(f.get('q_op_income_억'), '억')}"
+            f"  영업이익률 {_fmt(f.get('q_op_margin'), '%')}"
+        )
     if price:
         lines.append(
             f"  52주 고/저: {_fmt(f.get('52w_high'), '원')} / {_fmt(f.get('52w_low'), '원')}"

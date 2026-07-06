@@ -30,6 +30,32 @@ def save_longterm_report(date: str, report: str):
         )
 
 
+def _get_last_report(table: str, before_date: str) -> dict | None:
+    """midterm_reports/longterm_reports에서 특정 날짜 이전의 최신 리포트 조회."""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT date, report FROM {table} "
+                    "WHERE date < :d ORDER BY date DESC LIMIT 1"
+                ),
+                {"d": before_date},
+            ).fetchone()
+        if row:
+            return {"date": row[0], "report": row[1]}
+    except Exception as e:
+        logger.warning("직전 리포트 조회 실패 (%s): %s", table, e)
+    return None
+
+
+def get_last_midterm_report(before_date: str) -> dict | None:
+    return _get_last_report("midterm_reports", before_date)
+
+
+def get_last_longterm_report(before_date: str) -> dict | None:
+    return _get_last_report("longterm_reports", before_date)
+
+
 def get_last_close_report() -> dict | None:
     try:
         with get_conn() as conn:
