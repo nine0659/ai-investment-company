@@ -70,6 +70,103 @@ def recs_from_cio_decisions(
     return results
 
 
+# "1. 종목명 (005930) — 현재가 175,100원 → 목표가 210,000원" 패턴 — 주간 추천 포맷
+_PICK_RE = re.compile(
+    r"^\s*\d+\.\s*(?P<name>[^\n(]+?)\s*\((?P<code>\d{6})\)\s*"
+    r"[—–\-]+\s*현재가\s*(?P<entry>[\d,]+)\s*원\s*"
+    r"(?:→|->)\s*(?:목표가|적정가치[^\d]*)\s*(?P<target>[\d,]+)\s*원",
+    re.MULTILINE,
+)
+
+
+def recs_from_weekly_picks(
+    report: str,
+    price_lookup: dict[str, float],
+    rationale_prefix: str = "주간 추천(중기)",
+) -> list[dict]:
+    """주간 추천 브리핑 텍스트 → stock_recommendations 레코드 (환각 교차검증 포함).
+
+    이 함수가 있어야 추천→추적→적중률→개선의 학습 루프가 돈다. 과거엔
+    주간 추천이 어디에도 기록되지 않아 적중률 리포트가 만년 '데이터 없음'이었다.
+
+    환각 차단 규칙:
+      1) 종목코드가 실제 분석에 쓰인 데이터(price_lookup)에 없으면 폐기
+      2) 진입가는 브리핑 텍스트가 아니라 항상 실데이터 가격을 쓴다
+         (텍스트 가격이 실데이터와 5% 이상 어긋나면 경고 로그)
+      3) 목표가가 진입가의 0.7~3.0배 범위 밖이면 폐기 (비현실 목표)
+      4) "(지난 추천 유지)" 종목은 저장하지 않는다 — 최초 추천일 기준으로
+         이미 추적 중이므로, 다시 저장하면 성과 측정 기준일이 오염된다
+    """
+    results: list[dict] = []
+    seen: set[str] = set()
+
+    for m in _PICK_RE.finditer(report):
+        code = m.group("code")
+        name = m.group("name").strip()
+        if code in seen:
+            continue
+
+        line_block = report[m.start(): m.start() + 300]
+        if "지난 추천 유지" in line_block.split("\n")[0]:
+            logger.info("[추천파싱] %s(%s) 지난 추천 유지 — 기존 추적 계속", name, code)
+            continue
+
+        actual_price = price_lookup.get(code)
+        if not actual_price:
+            logger.warning("[추천파싱] %s(%s) 분석 데이터에 없는 종목 — 환각 의심, 폐기", name, code)
+            continue
+
+        try:
+            text_entry = float(m.group("entry").replace(",", ""))
+            target     = float(m.group("target").replace(",", ""))
+        except ValueError:
+            continue
+
+        if abs(text_entry - actual_price) / actual_price > 0.05:
+            logger.warning(
+                "[추천파싱] %s(%s) 브리핑 현재가 %s원 ≠ 실데이터 %s원 — 실데이터 사용",
+                name, code, f"{text_entry:,.0f}", f"{actual_price:,.0f}",
+            )
+
+        if not (0.7 <= target / actual_price <= 3.0):
+            logger.warning("[추천파싱] %s(%s) 목표가 %s원 비현실적 (현재가 대비 %.1f배) — 폐기",
+                           name, code, f"{target:,.0f}", target / actual_price)
+            continue
+
+        # "왜:" 한 줄을 근거로 첨부
+        rationale = rationale_prefix
+        why = re.search(r"왜[^:：]*[:：]\s*(.+)", line_block)
+        if why:
+            rationale = f"{rationale_prefix} — {why.group(1).strip()[:150]}"
+
+        seen.add(code)
+        results.append({
+            "name":         name,
+            "code":         code,
+            "entry_price":  int(actual_price),
+            "stop_price":   0,
+            "target_price": int(target),
+            "rationale":    rationale,
+        })
+
+    return results
+
+
+def has_open_recommendation(code: str, days: int = 30) -> bool:
+    """최근 N일 내 같은 종목의 미결(추적 가능) 추천이 있는지 — 중복 추적 방지."""
+    try:
+        cutoff = (datetime.now(_TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT 1 FROM stock_recommendations "
+                     "WHERE code=:code AND date >= :cutoff LIMIT 1"),
+                {"code": code, "cutoff": cutoff},
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
 # ── 저장 / 조회 ──────────────────────────────────────────────────
 
 def save_recommendations(date: str, recs: list[dict]) -> int:

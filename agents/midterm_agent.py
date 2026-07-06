@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from clients.openai_client import chat
+from clients.openai_client import chat_ceo
 from clients.kis_client import KISClient
 from clients.telegram_client import send_message, send_error_alert
 from services.valuation_service import get_stock_valuation, format_for_prompt
@@ -146,7 +146,8 @@ def run_analysis(send: bool = True) -> str | None:
     )
 
     try:
-        report = chat(_SYSTEM, context, max_tokens=1200)
+        # 주간 1회 호출 — 사용자 의사결정에 직결되는 추천이므로 CEO급 모델 사용
+        report = chat_ceo(_SYSTEM, context, max_tokens=1200)
     except Exception as e:
         logger.error("[중기에이전트] OpenAI 호출 실패: %s", e)
         release_report_slot(today, "midterm")
@@ -164,6 +165,23 @@ def run_analysis(send: bool = True) -> str | None:
         save_midterm_report(now.strftime("%Y-%m-%d"), report)
     except Exception as e:
         logger.warning("[중기에이전트] DB 저장 실패: %s", e)
+
+    # 추천 → 추적 루프 연결: 파싱·교차검증 후 stock_recommendations에 저장.
+    # 이 저장이 있어야 성과추적기가 주간 추천을 따라가고, 적중률·귀인분석이
+    # '데이터 없음'이 아닌 실측 기반으로 동작한다 (2026-07-06 루프 복원).
+    try:
+        from services.recommendation_service import (
+            recs_from_weekly_picks, has_open_recommendation, save_recommendations,
+        )
+        price_lookup = {d["code"]: d["price"] for d in valid if d.get("price")}
+        recs = recs_from_weekly_picks(report, price_lookup)
+        recs = [r for r in recs if not has_open_recommendation(r["code"])]
+        if recs:
+            save_recommendations(today, recs)
+            logger.info("[중기에이전트] 추천 %d건 추적 등록: %s",
+                        len(recs), ", ".join(r["name"] for r in recs))
+    except Exception as e:
+        logger.warning("[중기에이전트] 추천 추적 등록 실패 (브리핑은 정상 발송): %s", e)
 
     logger.info("[중기에이전트] 완료")
     return report

@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from clients.openai_client import chat
+from clients.openai_client import chat_ceo
 from clients.kis_client import KISClient
 from clients.telegram_client import send_message, send_error_alert
 from services.valuation_service import get_stock_valuation, format_for_prompt
@@ -122,7 +122,8 @@ def run_analysis():
     )
 
     try:
-        report = chat(_SYSTEM, context, max_tokens=1200)
+        # 월 1회(현재 일시 중단, 수동 실행) — 추천 품질 우선으로 CEO급 모델 사용
+        report = chat_ceo(_SYSTEM, context, max_tokens=1200)
     except Exception as e:
         logger.error("[장기에이전트] OpenAI 호출 실패: %s", e)
         release_report_slot(today, "longterm")
