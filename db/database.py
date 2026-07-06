@@ -384,6 +384,17 @@ order_history = Table("order_history", metadata,
     Column("rec_id",     Integer),                   # stock_recommendations.id 참조 (자동실행 추적)
 )
 
+# 스케줄 잡 실행 대장 — "조용한 실패"(잡이 아예 안 돌았는데 아무도 모름) 감지용.
+# 매일 아침 헬스체크가 전날 예정 잡의 기록 유무를 대조해 누락·실패를 경보한다.
+job_runs = Table("job_runs", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("date",       Text,    nullable=False),   # YYYY-MM-DD (KST)
+    Column("job_name",   Text,    nullable=False),   # daily_nav, weekly_strategy ...
+    Column("status",     Text,    nullable=False),   # success | fail | skipped
+    Column("detail",     Text),                      # 실패 사유·스킵 사유
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
+)
+
 # ── 시스템 설정 (DB 기반, 프로세스 간 공유) ───────────────────────
 system_settings = Table("system_settings", metadata,
     Column("key",        Text, primary_key=True),   # 설정 키

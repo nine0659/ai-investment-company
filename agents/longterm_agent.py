@@ -92,6 +92,13 @@ def run_analysis():
         send_error_alert("장기 분석 실패: 종목 데이터 수집 불가")
         return
 
+    # 이상치가 광범위하면 데이터 소스 장애 가능성 — 관리자 경보
+    from services.data_guard import alert_if_widespread
+    alert_if_widespread(
+        [w for d in stock_data_list for w in d.get("_data_warnings", [])],
+        "장기분석(KIS/DART)",
+    )
+
     # 직전 추천 리포트 — 같은 종목 반복 서술 방지용
     prev_section = ""
     try:

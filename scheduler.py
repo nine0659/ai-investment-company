@@ -107,6 +107,12 @@ def _run_safe(run_type: str):
         holiday = get_holiday_name()
         label = f" ({holiday})" if holiday else ""
         logger.info("📅 [공휴일 스킵] 오늘은 KRX 비거래일%s — %s 브리핑 발송 차단", label, run_type)
+        # 헬스체크가 '누락'으로 오인하지 않도록 스킵 사유를 대장에 남긴다
+        try:
+            from services.job_ledger import record_job
+            record_job(run_type, "skipped", f"KRX 비거래일{label}")
+        except Exception:
+            pass
         return
 
     # ② 시간 윈도우 검증 — 예상 시간대가 아니면 경고만 하고 중단
@@ -199,12 +205,15 @@ def job_monthly_thesis():
 def job_weekly_strategy():
     """매주 수요일 20:00 — 주간 종합 투자전략 (단기·중기·장기 통합)."""
     from agents.strategy_agent import run_strategy
+    from services.job_ledger import record_job
     try:
         logger.info("주간 전략 시작")
         run_strategy()
         logger.info("주간 전략 완료")
+        record_job("weekly_strategy", "success")
     except Exception as e:
         logger.error("주간 전략 실패: %s", e)
+        record_job("weekly_strategy", "fail", str(e))
         try:
             send_error_alert(f"주간 전략 실패: {str(e)[:200]}")
         except Exception:
@@ -214,12 +223,15 @@ def job_weekly_strategy():
 def job_weekly_discovery():
     """매주 화요일 19:00 — 탑다운 종목 발굴 (시장 흐름→주도 산업→종목→워치리스트 등록)."""
     from agents.discovery_agent import run_discovery
+    from services.job_ledger import record_job
     try:
         logger.info("종목 발굴 시작")
         run_discovery()
         logger.info("종목 발굴 완료")
+        record_job("weekly_discovery", "success")
     except Exception as e:
         logger.error("종목 발굴 실패: %s", e)
+        record_job("weekly_discovery", "fail", str(e))
         try:
             send_error_alert(f"종목 발굴 실패: {str(e)[:200]}")
         except Exception:
@@ -332,15 +344,19 @@ def _get_kis() -> object | None:
 
 def job_daily_nav():
     """평일 16:10 — 장마감 후 포트폴리오 NAV 자동 기록 + 드로다운 방어 체크."""
+    from services.job_ledger import record_job
     if not is_krx_trading_day():
+        record_job("daily_nav", "skipped", "KRX 비거래일")
         return
     try:
         from services.nav_service import record_nav
         nav = record_nav(_get_kis())
         if nav:
             logger.info("NAV 기록 완료: 총자산 %s원", f"{nav.get('total_value', 0):,}")
+        record_job("daily_nav", "success")
     except Exception as e:
         logger.warning("NAV 기록 실패 (무시): %s", e)
+        record_job("daily_nav", "fail", str(e))
 
     # P4-2: 드로다운 방어 체크
     try:
@@ -359,7 +375,9 @@ def job_daily_nav():
 
 def job_daily_tracker():
     """평일 16:20 — AI 추천 종목 일별 성과 추적 + 시장 예측 검증."""
+    from services.job_ledger import record_job
     if not is_krx_trading_day():
+        record_job("daily_tracker", "skipped", "KRX 비거래일")
         return
     try:
         from services.recommendation_tracker_service import run_daily_tracker
@@ -371,8 +389,19 @@ def job_daily_tracker():
             stats.get("processed", 0), stats.get("target_hit", 0),
             stats.get("stop_hit", 0), stats.get("expired", 0), verified,
         )
+        record_job("daily_tracker", "success")
     except Exception as e:
         logger.warning("성과 추적 실패 (무시): %s", e)
+        record_job("daily_tracker", "fail", str(e))
+
+
+def job_daily_health():
+    """매일 08:05 — 어제 예정 잡의 누락·실패 점검. 문제 있을 때만 경보."""
+    from services.job_ledger import run_daily_health_check
+    try:
+        run_daily_health_check()
+    except Exception as e:
+        logger.error("헬스체크 실패: %s", e)
 
 
 def _parse_time(time_str: str) -> tuple[int, int]:
@@ -536,6 +565,17 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 평일 16:20[/cyan] AI 추천 성과 추적 + 예측 검증")
+
+    # 일일 헬스체크: 매일 08:05 — 어제 예정 잡 누락·실패 감지 (문제 있을 때만 경보)
+    scheduler.add_job(
+        job_daily_health,
+        CronTrigger(hour=8, minute=5, timezone=TIMEZONE_STR),
+        id="daily_health",
+        name="[08:05] 일일 헬스체크 — 어제 잡 누락·실패 감지",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 매일 08:05[/cyan] 일일 헬스체크 (조용한 실패 감지)")
 
 
 def shutdown(signum, frame):

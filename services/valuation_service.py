@@ -73,6 +73,11 @@ def get_stock_valuation(kis: KISClient, stock_code: str, stock_name: str,
             if q_rev > 0:
                 result["q_op_margin"] = round(q_op / q_rev * 100, 2)
 
+    # ── 이상치 차단 — LLM 주입 전 마지막 관문 ─────────────────
+    from services.data_guard import sanitize_stock_data
+    result, guard_warnings = sanitize_stock_data(result)
+    result["_data_warnings"] = guard_warnings
+
     return result
 
 

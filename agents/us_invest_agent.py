@@ -56,6 +56,21 @@ _SECTOR_ETFS = [
 ]
 
 
+def _normalize_dividend_yield(raw) -> float | None:
+    """yfinance dividendYield를 퍼센트 단위로 정규화.
+
+    버전에 따라 소수(0.0291)로도, 퍼센트(2.91)로도 오므로 1 이상이면 이미
+    퍼센트로 간주한다. 정규화 후에도 25%를 넘으면 오염 데이터로 보고 버린다
+    (2026-07-05 '배당수익률 291%' 오표기 재발 방지).
+    """
+    if not raw or raw < 0:
+        return None
+    pct = raw if raw >= 1 else raw * 100
+    if pct > 25:
+        return None
+    return round(pct, 2)
+
+
 def _fetch_stock_data(ticker: str) -> dict:
     try:
         t = yf.Ticker(ticker)
@@ -73,13 +88,7 @@ def _fetch_stock_data(ticker: str) -> dict:
         chg_1m = (cur - m1_ago) / m1_ago * 100 if m1_ago else 0
         vol_ratio = vol_cur / vol_avg if vol_avg else 1.0
 
-        # yfinance dividendYield는 버전에 따라 소수(0.0291)로도, 퍼센트(2.91)로도
-        # 온다. 여기서 항상 퍼센트 단위로 정규화한다 — 정규화 없이 ×100 하면
-        # "배당수익률 291%" 같은 오표기가 발생 (2026-07-05 브리핑 오류).
-        dy_raw = info.get("dividendYield")
-        dividend_yield_pct = None
-        if dy_raw:
-            dividend_yield_pct = round(dy_raw if dy_raw >= 1 else dy_raw * 100, 2)
+        dividend_yield_pct = _normalize_dividend_yield(info.get("dividendYield"))
 
         return {
             "ticker": ticker,
