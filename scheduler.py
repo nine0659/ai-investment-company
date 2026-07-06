@@ -5,19 +5,23 @@ APScheduler 기반 자동 스케줄 실행
 실행:
   python scheduler.py
 
-정기 브리핑 스케줄:
-  월·수·금 08:20 → 장전 브리핑 (주 3회 — 한 주의 시작·중간·끝 매크로·보유 근거 점검)
-  금     16:30 → 주간 마감 브리핑 (주 1회 — 한 주 정리 + 다음 주 보유 근거 점검)
+정기 스케줄 (2026-07-06 축소 후 — 사용자에게 가는 메시지는 주 5통 + 예외 경보만):
+  월·수·금 08:20 → 장전 브리핑 (주 3회)
+  금     16:30 → 주간 마감 브리핑 (주 1회)
+  일     20:00 → 주간 추천 브리핑 (국내 중기 + 미국 통합 1통)
+  장중 15분    → 시장 모니터 (이상 신호 시에만 발송)
+  매일 08:05   → 헬스체크 (문제 있을 때만 경보)
+  매월 첫째 월 19:00 → 월간 투자관 (브리핑 근거 주입용)
+  평일 16:10/16:20  → NAV 기록·성과 추적 (무발송 데이터 수집)
 
-장기 투자자 관점에서 매일 브리핑은 정보 과잉이다.
-투자 근거 훼손·이상 신호는 15분 모니터(조건부)가 실시간 처리한다.
-화·목 장전과 월~목 장마감은 자동 발송하지 않는다.
+일시 중단 (데이터 축적 전 공허한 리포트 방지, 수동 실행은 main.py로 가능):
+  귀인분석·적중률통계·주간전략·종목발굴·장기분석(월간)
 
 * GLOBAL(새벽 시황)은 PRE로 통합됨 (2026-06-22).
 * INTRA1·INTRA2(장중)는 자동 스케줄에서 제외됨 (2026-06-23).
-  python main.py --type intra1/intra2 로 수동 실행 가능.
 * 실시간·긴급 모니터는 단일 15분 주기로 통합됨 (2026-06-23).
 * PRE 주 5회→3회(월·수·금), CLOSE 주 5회→1회(금) 로 축소 (2026-06-26).
+* 일요일 5통 → 추천 1통 통합, 저가치 잡 중단 (2026-07-06).
 """
 import logging
 import os
@@ -202,128 +206,57 @@ def job_monthly_thesis():
             pass
 
 
-def job_weekly_strategy():
-    """매주 수요일 20:00 — 주간 종합 투자전략 (단기·중기·장기 통합)."""
-    from agents.strategy_agent import run_strategy
-    from services.job_ledger import record_job
-    try:
-        logger.info("주간 전략 시작")
-        run_strategy()
-        logger.info("주간 전략 완료")
-        record_job("weekly_strategy", "success")
-    except Exception as e:
-        logger.error("주간 전략 실패: %s", e)
-        record_job("weekly_strategy", "fail", str(e))
-        try:
-            send_error_alert(f"주간 전략 실패: {str(e)[:200]}")
-        except Exception:
-            pass
+# ── 일시 중단된 잡 (2026-07-06 축소 결정) ────────────────────────────
+# 귀인분석·적중률통계·주간전략·종목발굴·장기분석(월간)은 추천/거래 데이터가
+# 충분히 쌓일 때까지 자동 스케줄에서 제외한다 — "추천 데이터 없음" 리포트가
+# 반복 발송된 것이 중단 근거. 수동 실행은 계속 가능:
+#   python main.py --type attribution / weekly / strategy / longterm
+# 재개 시 이 파일에 잡을 다시 등록하고 job_ledger의 기대 목록도 갱신할 것.
 
 
-def job_weekly_discovery():
-    """매주 화요일 19:00 — 탑다운 종목 발굴 (시장 흐름→주도 산업→종목→워치리스트 등록)."""
-    from agents.discovery_agent import run_discovery
-    from services.job_ledger import record_job
-    try:
-        logger.info("종목 발굴 시작")
-        run_discovery()
-        logger.info("종목 발굴 완료")
-        record_job("weekly_discovery", "success")
-    except Exception as e:
-        logger.error("종목 발굴 실패: %s", e)
-        record_job("weekly_discovery", "fail", str(e))
-        try:
-            send_error_alert(f"종목 발굴 실패: {str(e)[:200]}")
-        except Exception:
-            pass
+def job_weekly_picks():
+    """매주 일요일 20:00 — 주간 추천 브리핑 1통 (국내 중기 + 미국 통합).
 
-
-def job_weekly_attribution():
-    """매주 일요일 19:00 — 주간 성과 귀인 분석 (매크로·섹터·종목·타이밍·투자관부합)."""
-    from agents.attribution_agent import run_attribution
-    try:
-        logger.info("주간 귀인 분석 시작")
-        run_attribution()
-        logger.info("주간 귀인 분석 완료")
-    except Exception as e:
-        logger.error("주간 귀인 분석 실패: %s", e)
-        try:
-            send_error_alert(f"주간 귀인 분석 실패: {str(e)[:200]}")
-        except Exception:
-            pass
-
-
-def job_weekly_stats():
-    """매주 일요일 20:00 — 주간 적중률 통계 (샤프비율·MDD·섹터 성과)."""
-    from services.stats_service import send_weekly_report
-    try:
-        logger.info("주간 적중률 통계 시작")
-        send_weekly_report()
-        logger.info("주간 적중률 통계 완료")
-    except Exception as e:
-        logger.error("주간 통계 실패: %s", e)
-        try:
-            send_error_alert(f"주간 통계 실패: {str(e)[:200]}")
-        except Exception:
-            pass
-
-
-def job_weekly_midterm():
-    """매주 일요일 20:05 — 중기 투자 분석 (1~6개월 관점).
-
-    GitHub Actions에도 같은 스케줄이 있으나 GH cron은 상시 수십 분 지연된다.
-    Render가 정시에 먼저 실행하고, 늦게 도착한 GH 실행은 에이전트 내부의
-    claim_report_slot 가드가 중복 발송을 차단한다.
+    과거 일요일 저녁에 귀인·적중률·중기·장기·미국 5통이 쏟아지던 것을
+    한 통으로 통합 (2026-07-06). 각 에이전트는 send=False로 리포트만
+    생성하고, 여기서 합쳐 한 번에 발송한다. 내부 claim 가드 덕에 GH
+    Actions 백업이 늦게 돌아도 중복 발송되지 않는다.
     """
-    from agents.midterm_agent import run_analysis
+    from services.job_ledger import record_job
+    from clients.telegram_client import send_message
+
+    now = datetime.now(_KST)
+    parts: list[str] = []
+
     try:
-        logger.info("주간 중기분석 시작")
-        run_analysis()
-        logger.info("주간 중기분석 완료")
+        from agents.midterm_agent import run_analysis as midterm_run
+        kr = midterm_run(send=False)
+        if kr:
+            parts.append("🇰🇷 *국내 추천* (1~6개월 관점)\n\n" + kr)
     except Exception as e:
-        logger.error("주간 중기분석 실패: %s", e)
+        logger.error("주간 추천 — 국내 분석 실패: %s", e)
+
+    try:
+        from agents.us_invest_agent import run as us_run
+        us = us_run(send=False)
+        if us:
+            parts.append("🇺🇸 *미국 추천*\n\n" + us)
+    except Exception as e:
+        logger.error("주간 추천 — 미국 분석 실패: %s", e)
+
+    if not parts:
+        record_job("weekly_picks", "fail", "국내·미국 모두 생성 실패 또는 중복 스킵")
         try:
-            send_error_alert(f"주간 중기분석 실패: {str(e)[:200]}")
+            send_error_alert("주간 추천 브리핑 실패: 국내·미국 리포트 모두 생성되지 않음")
         except Exception:
             pass
-
-
-def job_weekly_us_invest():
-    """매주 일요일 20:40 — 미국 주식 주간 추천."""
-    from agents.us_invest_agent import run as us_run
-    try:
-        logger.info("미국 주식 추천 시작")
-        us_run()
-        logger.info("미국 주식 추천 완료")
-    except Exception as e:
-        logger.error("미국 주식 추천 실패: %s", e)
-        try:
-            send_error_alert(f"미국 주식 추천 실패: {str(e)[:200]}")
-        except Exception:
-            pass
-
-
-def job_monthly_longterm():
-    """매월 첫째 주 일요일 20:30 — 장기 가치투자 분석 (1년+ 관점).
-    APScheduler CronTrigger는 첫째 주 일요일을 직접 표현하기 어려워
-    job 내부에서 날짜를 확인한다.
-    """
-    today = datetime.now(_KST)
-    # 첫째 주 일요일 = 당월 1~7일 중 일요일
-    if not (1 <= today.day <= 7 and today.weekday() == 6):
-        logger.debug("월간 장기분석 스킵 — 첫째 주 일요일 아님 (%s)", today.strftime("%Y-%m-%d"))
         return
-    from agents.longterm_agent import run as longterm_run
-    try:
-        logger.info("월간 장기분석 시작")
-        longterm_run({})
-        logger.info("월간 장기분석 완료")
-    except Exception as e:
-        logger.error("월간 장기분석 실패: %s", e)
-        try:
-            send_error_alert(f"월간 장기분석 실패: {str(e)[:200]}")
-        except Exception:
-            pass
+
+    header = f"📮 *주간 추천 브리핑* ({now.strftime('%Y.%m.%d')})\n\n"
+    divider = "\n\n" + "━" * 20 + "\n\n"
+    send_message(header + divider.join(parts))
+    record_job("weekly_picks", "success", f"섹션 {len(parts)}개")
+    logger.info("주간 추천 브리핑 발송 완료 (%d개 섹션)", len(parts))
 
 
 _kis_client_cache: object | None = None
@@ -468,81 +401,17 @@ def setup_jobs():
     )
     console.print("  [cyan]⏰ 매월 첫째 월요일 19:00[/cyan] 월간 투자관 수립")
 
-    # 주간 종합 투자전략: 매주 수요일 20:00
+    # 주간 추천 브리핑: 매주 일요일 20:00 — 국내 중기 + 미국 통합 1통
+    # (귀인·적중률·전략·발굴·장기분석은 데이터 축적 전까지 일시 중단 — 상단 주석 참조)
     scheduler.add_job(
-        job_weekly_strategy,
-        CronTrigger(day_of_week="wed", hour=20, minute=0, timezone=TIMEZONE_STR),
-        id="weekly_strategy",
-        name="[수 20:00] 주간 종합 투자전략 — 단기·중기·장기 통합",
-        misfire_grace_time=1800,  # 30분 내 재실행 허용
-        coalesce=True,
-    )
-    console.print("  [cyan]⏰ 매주 수요일 20:00[/cyan] 주간 종합 투자전략")
-
-    # 주간 귀인 분석: 매주 일요일 19:00
-    scheduler.add_job(
-        job_weekly_discovery,
-        CronTrigger(day_of_week="tue", hour=19, minute=0, timezone=TIMEZONE_STR),
-        id="weekly_discovery",
-        name="[화 19:00] 종목 발굴 (탑다운 — 시장→산업→종목→워치리스트)",
-        misfire_grace_time=600,
-        coalesce=True,
-    )
-    console.print("  [cyan]⏰ 화 19:00[/cyan] 종목 발굴 (탑다운)")
-
-    scheduler.add_job(
-        job_weekly_attribution,
-        CronTrigger(day_of_week="sun", hour=19, minute=0, timezone=TIMEZONE_STR),
-        id="weekly_attribution",
-        name="[일 19:00] 주간 성과 귀인 분석",
-        misfire_grace_time=1800,
-        coalesce=True,
-    )
-    console.print("  [cyan]⏰ 매주 일요일 19:00[/cyan] 주간 성과 귀인 분석")
-
-    # 주간 적중률 통계: 매주 일요일 20:00 (귀인분석 후)
-    scheduler.add_job(
-        job_weekly_stats,
+        job_weekly_picks,
         CronTrigger(day_of_week="sun", hour=20, minute=0, timezone=TIMEZONE_STR),
-        id="weekly_stats",
-        name="[일 20:00] 주간 적중률 통계 — 샤프비율·MDD·섹터 성과",
+        id="weekly_picks",
+        name="[일 20:00] 주간 추천 브리핑 (국내 중기 + 미국 통합)",
         misfire_grace_time=1800,
         coalesce=True,
     )
-    console.print("  [cyan]⏰ 매주 일요일 20:00[/cyan] 주간 적중률 통계")
-
-    # 주간 중기 분석: 매주 일요일 20:05 (적중률 통계 직후)
-    scheduler.add_job(
-        job_weekly_midterm,
-        CronTrigger(day_of_week="sun", hour=20, minute=5, timezone=TIMEZONE_STR),
-        id="weekly_midterm",
-        name="[일 20:05] 중기 투자 분석 (1~6개월)",
-        misfire_grace_time=1800,
-        coalesce=True,
-    )
-    console.print("  [cyan]⏰ 매주 일요일 20:05[/cyan] 중기 투자 분석")
-
-    # 미국 주식 주간 추천: 매주 일요일 20:40
-    scheduler.add_job(
-        job_weekly_us_invest,
-        CronTrigger(day_of_week="sun", hour=20, minute=40, timezone=TIMEZONE_STR),
-        id="weekly_us_invest",
-        name="[일 20:40] 미국 주식 주간 추천",
-        misfire_grace_time=1800,
-        coalesce=True,
-    )
-    console.print("  [cyan]⏰ 매주 일요일 20:40[/cyan] 미국 주식 주간 추천")
-
-    # 월간 장기 분석: 매월 첫째 주 일요일 20:30 (job 내부에서 날짜 재확인)
-    scheduler.add_job(
-        job_monthly_longterm,
-        CronTrigger(day_of_week="sun", hour=20, minute=30, timezone=TIMEZONE_STR),
-        id="monthly_longterm",
-        name="[월1일요 20:30] 월간 장기 가치투자 분석",
-        misfire_grace_time=3600,  # 1시간 내 재실행 허용
-        coalesce=True,
-    )
-    console.print("  [cyan]⏰ 매월 첫째 일요일 20:30[/cyan] 월간 장기 가치투자 분석")
+    console.print("  [cyan]⏰ 매주 일요일 20:00[/cyan] 주간 추천 브리핑 (국내+미국 1통)")
 
     # NAV 기록: 평일 16:10 (장마감 후 10분)
     scheduler.add_job(

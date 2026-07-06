@@ -236,7 +236,9 @@ _SYSTEM = """당신은 미국 주식 투자 전문 애널리스트입니다.
 (2줄 이내)"""
 
 
-def run() -> str:
+def run(send: bool = True) -> str:
+    """미국 주간 추천 생성. send=True면 단독 텔레그램 발송, False면 리포트만
+    반환 (일요일 주간 추천 통합 1통에서 사용)."""
     now = datetime.now(_KST)
     date = now.strftime("%Y-%m-%d")
 
@@ -285,12 +287,13 @@ def run() -> str:
         logger.warning("[US투자] DB 저장 실패: %s", e)
 
     # 텔레그램 발송
-    try:
-        header = f"🇺🇸 *미국 주식 주간 추천* ({now.strftime('%Y.%m.%d')})\n\n"
-        send_message(header + report)
-        logger.info("[US투자] 텔레그램 발송 완료")
-    except Exception as e:
-        logger.error("[US투자] 텔레그램 발송 실패: %s", e)
+    if send:
+        try:
+            header = f"🇺🇸 *미국 주식 주간 추천* ({now.strftime('%Y.%m.%d')})\n\n"
+            send_message(header + report)
+            logger.info("[US투자] 텔레그램 발송 완료")
+        except Exception as e:
+            logger.error("[US투자] 텔레그램 발송 실패: %s", e)
 
     return report
 

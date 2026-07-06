@@ -10,9 +10,10 @@ name: Mid/Long Term Investment Analysis
 #   (2026-07-05 장기분석 2회 발송 원인 — 양쪽 모두 가드 없이 실행)
 
 on:
+  # 2026-07-06 축소: 장기분석 cron 제거 (일시 중단, 수동 실행만 가능).
+  # 중기 cron은 Render 통합 브리핑(일 20:00)의 백업으로만 유지.
   schedule:
-    - cron: '0 11 * * 0'    # 매주 일요일 20:00 KST — 중기 분석
-    - cron: '30 11 * * 0'   # 매주 일요일 20:30 KST — 장기 (첫째 주만 실행)
+    - cron: '0 11 * * 0'    # 매주 일요일 20:00 KST — 중기 분석 백업
 
   workflow_dispatch:
     inputs:
@@ -69,8 +70,8 @@ jobs:
     name: 장기 분석 (1년+)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 일시 중단 (2026-07-06) — 수동 실행만 가능
     if: |
-      (github.event_name == 'schedule' && github.event.schedule == '30 11 * * 0') ||
       (github.event_name == 'workflow_dispatch' && inputs.analysis_type == 'longterm')
 
     steps:

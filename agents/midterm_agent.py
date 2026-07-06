@@ -78,8 +78,9 @@ _SYSTEM = """당신은 1~6개월 보유 관점의 투자 자문가입니다.
 📌 시장 한 줄 평: (1문장)"""
 
 
-def run_analysis():
-    """중기 분석 실행 및 텔레그램 발송"""
+def run_analysis(send: bool = True) -> str | None:
+    """중기 분석 실행. send=True면 단독 텔레그램 발송, False면 리포트만 반환
+    (일요일 주간 추천 통합 1통에서 사용). 실패·중복 시 None 반환."""
     now = datetime.now(TZ)
     today = now.strftime("%Y-%m-%d")
 
@@ -87,7 +88,7 @@ def run_analysis():
     from services.report_service import claim_report_slot, release_report_slot
     if not claim_report_slot(today, "midterm"):
         logger.info("[중기에이전트] 오늘 이미 실행됨 — 스킵 (중복 발송 방지)")
-        return
+        return None
 
     logger.info("[중기에이전트] 분석 시작: %s", now.strftime("%Y-%m-%d %H:%M"))
 
@@ -112,7 +113,7 @@ def run_analysis():
     if not valid:
         release_report_slot(today, "midterm")
         send_error_alert("중기 분석 실패: 유효한 종목 데이터 없음")
-        return
+        return None
 
     logger.info("[중기에이전트] 유효 종목 %d개 / 전체 %d개", len(valid), len(KOSPI_TOP30))
 
@@ -150,13 +151,14 @@ def run_analysis():
         logger.error("[중기에이전트] OpenAI 호출 실패: %s", e)
         release_report_slot(today, "midterm")
         send_error_alert(f"중기 분석 OpenAI 오류: {e}")
-        return
+        return None
 
-    header = (
-        f"📊 *AI 중기 투자 분석* ({now.strftime('%Y.%m.%d')})\n"
-        f"KOSPI 시총 상위 30개 종목 분석 | 1~6개월 보유 관점\n\n"
-    )
-    send_message(header + report)
+    if send:
+        header = (
+            f"📊 *AI 중기 투자 분석* ({now.strftime('%Y.%m.%d')})\n"
+            f"KOSPI 시총 상위 30개 종목 분석 | 1~6개월 보유 관점\n\n"
+        )
+        send_message(header + report)
 
     try:
         save_midterm_report(now.strftime("%Y-%m-%d"), report)
@@ -164,6 +166,7 @@ def run_analysis():
         logger.warning("[중기에이전트] DB 저장 실패: %s", e)
 
     logger.info("[중기에이전트] 완료")
+    return report
 
 
 def run(state: dict) -> dict:

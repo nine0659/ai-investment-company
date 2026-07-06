@@ -21,23 +21,25 @@ logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
 # 요일별(0=월 … 6=일) 반드시 실행 흔적이 있어야 하는 잡.
-# 월간 잡(투자관·장기분석)은 실행일 판정이 복잡해 v1에서는 제외.
+# 월간 잡(투자관)은 실행일 판정이 복잡해 v1에서는 제외.
+# 2026-07-06 축소: 귀인·적중률·전략·발굴·장기분석 일시 중단 → 기대 목록에서 제거,
+# 일요일은 통합 추천 1통(weekly_midterm + weekly_us_invest 클레임으로 검증).
 _EXPECTED_BY_WEEKDAY: dict[int, list[str]] = {
     0: ["pre_market", "daily_nav", "daily_tracker"],
-    1: ["daily_nav", "daily_tracker", "weekly_discovery"],
-    2: ["pre_market", "daily_nav", "daily_tracker", "weekly_strategy"],
+    1: ["daily_nav", "daily_tracker"],
+    2: ["pre_market", "daily_nav", "daily_tracker"],
     3: ["daily_nav", "daily_tracker"],
     4: ["pre_market", "close_market", "daily_nav", "daily_tracker"],
     5: [],
-    6: ["weekly_attribution", "weekly_stats", "weekly_midterm", "weekly_us_invest"],
+    6: ["weekly_midterm", "weekly_us_invest"],
 }
 
-# 잡 이름 → report_claims.run_type 매핑 (선점 가드를 쓰는 잡들)
+# 잡 이름 → report_claims.run_type 매핑 (선점 가드를 쓰는 잡들).
+# 통합 추천 1통은 내부적으로 midterm·us_invest 클레임을 만들므로
+# Render(통합) 경로든 GH Actions(개별 백업) 경로든 같은 흔적이 남는다.
 _CLAIM_ALIAS = {
     "pre_market":         "pre_market",
     "close_market":       "close_market",
-    "weekly_attribution": "attribution",
-    "weekly_stats":       "weekly_stats",
     "weekly_midterm":     "midterm",
     "weekly_us_invest":   "us_invest",
 }

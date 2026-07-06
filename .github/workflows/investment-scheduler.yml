@@ -34,11 +34,11 @@ on:
       - us_invest
       - trend_analysis
 
+  # 2026-07-06 축소: 주간 적중률·KOSPI 추세·월간 자기학습 cron 제거 (일시 중단).
+  # 미국 추천만 백업 cron 유지 — Render(일 20:00 통합 1통)가 주 실행자이며,
+  # 정상일 땐 claim 가드가 이 백업 실행을 스킵시킨다.
   schedule:
-    - cron: '0 9 * * 0'      # KOSPI 주간 추세 18:00 KST (Sun)
-    - cron: '0 11 * * 0'     # 주간 적중률 20:00 KST (Sun)
-    - cron: '30 11 * * 0'    # 미국 주식 추천 20:30 KST (Sun)
-    - cron: '0 12 1 * *'     # 월간 자기학습 21:00 KST (1st Mon)
+    - cron: '30 11 * * 0'    # 미국 주식 추천 백업 20:30 KST (Sun)
 
   # ── 수동 실행 ──────────────────────────────────────────────────
   workflow_dispatch:
@@ -157,9 +157,9 @@ jobs:
     name: KOSPI Weekly Trend Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # 일시 중단 (2026-07-06) — 수동 실행만 가능
     if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'trend_analysis') ||
-      (github.event_name == 'schedule' && github.event.schedule == '0 9 * * 0') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'trend')
 
     steps:
@@ -184,9 +184,9 @@ jobs:
     name: Weekly Stats Report
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # 일시 중단 (2026-07-06) — 수동 실행만 가능
     if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'weekly_stats') ||
-      (github.event_name == 'schedule' && github.event.schedule == '0 11 * * 0') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'weekly')
 
     steps:
@@ -238,9 +238,9 @@ jobs:
     name: Monthly Self-Learning
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # 일시 중단 (2026-07-06) — 수동 실행만 가능
     if: >-
       (github.event_name == 'repository_dispatch' && github.event.action == 'monthly_learning') ||
-      (github.event_name == 'schedule' && github.event.schedule == '0 12 1 * *') ||
       (github.event_name == 'workflow_dispatch' && inputs.run_type == 'monthly')
 
     steps:
