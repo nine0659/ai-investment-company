@@ -27,6 +27,23 @@ logger = logging.getLogger(__name__)
 
 # ── 엔진 ──────────────────────────────────────────────────────────
 
+def _load_project_env(env_path: Path = None) -> None:
+    """프로젝트 루트 .env를 DB 레이어가 직접 로드한다 (이미 설정된 환경변수 우선).
+
+    진입점(main.py 등)의 load_dotenv()에 의존하면 ad-hoc 스크립트·다른 CWD에서
+    실행 시 DATABASE_URL을 못 읽고 조용히 SQLite로 폴백한다 — 2026-07-03,
+    2026-07-06 포트폴리오 데이터 유실의 근본 원인. 여기서 자체 로드해 차단한다.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    env_path = env_path or Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+
+
+_load_project_env()
 _DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
@@ -41,10 +58,17 @@ def _make_sqlite() -> "Engine":
     )
 
 
-def _make_engine() -> "Engine":
-    if _DATABASE_URL:
+def _make_engine(database_url: str = None) -> "Engine":
+    url = _DATABASE_URL if database_url is None else database_url
+
+    # 테스트·오프라인 개발용 명시적 SQLite (조용한 폴백과 달리 의도된 선택)
+    if os.getenv("DB_FORCE_SQLITE") == "1":
+        logger.info("[DB] DB_FORCE_SQLITE=1 — 의도적 SQLite 사용 (테스트/오프라인)")
+        return _make_sqlite()
+
+    if url:
         # Neon / Heroku: postgres:// → postgresql://
-        url = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        url = url.replace("postgres://", "postgresql://", 1)
         logger.info("[DB] PostgreSQL 연결 시도: %s", url[:40] + "...")
         try:
             engine = create_engine(
@@ -66,12 +90,20 @@ def _make_engine() -> "Engine":
                 "[DB] ⚠️ PostgreSQL 연결 실패 → 임시 SQLite로 전환. "
                 "저장 데이터는 재시작 시 소실됩니다. DATABASE_URL 즉시 점검 필요: %s", e
             )
-            _alert_db_fallback(e)
+            _alert_db_fallback(f"PostgreSQL 연결 실패: {str(e)[:200]}")
             return _make_sqlite()
+
+    # DATABASE_URL 자체가 없는 경우 — 과거엔 무경고 폴백이라 유실을 아무도 몰랐다.
+    # (.env 자동 로드 후에도 없다면 배포 환경의 시크릿 주입 누락 가능성이 크다)
+    logger.critical(
+        "[DB] ⚠️ DATABASE_URL 미설정 → SQLite 폴백. 운영 경로라면 데이터가 유실된다. "
+        "테스트/오프라인 개발은 DB_FORCE_SQLITE=1로 명시하라."
+    )
+    _alert_db_fallback("DATABASE_URL 미설정 (환경변수·시크릿 주입 누락 가능성)")
     return _make_sqlite()
 
 
-def _alert_db_fallback(err: Exception) -> None:
+def _alert_db_fallback(detail: str) -> None:
     """PostgreSQL 폴백 발생을 텔레그램으로 즉시 통보 (실패해도 부팅은 계속)."""
     try:
         import requests
@@ -84,10 +116,10 @@ def _alert_db_fallback(err: Exception) -> None:
             json={
                 "chat_id": chat_id,
                 "text": (
-                    "🚨 [시스템] 운영 DB(PostgreSQL) 연결 실패 — 임시 SQLite로 동작 중\n\n"
+                    "🚨 [시스템] 운영 DB(PostgreSQL) 미연결 — 임시 SQLite로 동작 중\n\n"
                     "포트폴리오·투자관·성과 기록이 재시작 시 소실됩니다.\n"
                     "Neon 프로젝트 상태와 Render/GitHub Actions의 DATABASE_URL을 즉시 확인하세요.\n\n"
-                    f"오류: {str(err)[:200]}"
+                    f"원인: {detail}"
                 ),
             },
             timeout=10,
@@ -98,6 +130,11 @@ def _alert_db_fallback(err: Exception) -> None:
 
 engine = _make_engine()
 metadata = MetaData()
+
+
+def is_postgres() -> bool:
+    """현재 엔진이 운영 PostgreSQL인지. 수동 반영 스크립트는 쓰기 전 이걸로 확인하라."""
+    return engine.dialect.name == "postgresql"
 
 # ── 테이블 정의 ────────────────────────────────────────────────────
 
