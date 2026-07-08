@@ -11,6 +11,10 @@ name: AI Investment Research Scheduler
 # 21:00 KST (1st Mon)  = 12:00 UTC (Mon)   ← 월간 학습 (매월 1일 UTC)
 #
 # ※ 일간 브리핑 트리거: cron-job.org → repository_dispatch 전담 (GitHub schedule 백업 제거 — 수 시간 지연으로 저녁 오발송 문제)
+# ※ 2026-07-09 헌장 요일 가드 추가: cron-job.org가 매일 4종(pre/intra1/intra2/close)을
+#   호출하더라도 2026-07-06 축소안(주 5통: 장전 월수금, 마감 금, 장중 없음)을 벗어난
+#   repository_dispatch는 발송 전에 스킵된다. workflow_dispatch(수동)는 가드를 우회한다.
+#   → cron-job.org에서 intra1·intra2 잡은 삭제 권장 (GH 분량만 소모).
 # ※ 주간·월간 트리거: 주 실행자는 Render 스케줄러(scheduler.py). 여기의 schedule은
 #   Render 다운 시 백업이며, 각 잡 내부의 claim_report_slot 가드가 중복 발송을 차단한다.
 #   (2026-07-05 주간 적중률 2회 발송 원인 — 양쪽 모두 가드 없이 실행)
@@ -105,7 +109,37 @@ jobs:
             esac
           fi
 
+      # 헌장 요일 가드 — 2026-07-06 축소안(주 5통) 밖의 자동 트리거는 발송 스킵.
+      # pre=월·수·금, close=금요일만, intra1/intra2=자동 발송 없음. 수동 실행은 통과.
+      - name: Charter schedule gate
+        id: gate
+        run: |
+          TYPE="${{ steps.run_type.outputs.type }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          DOW=$(TZ=Asia/Seoul date +%u)   # 1=월 … 7=일 (KST)
+          PROCEED=false
+          case "$TYPE" in
+            pre)
+              case "$DOW" in
+                1|3|5) PROCEED=true ;;
+              esac
+              ;;
+            close)
+              case "$DOW" in
+                5) PROCEED=true ;;
+              esac
+              ;;
+          esac
+          echo "proceed=$PROCEED" >> $GITHUB_OUTPUT
+          if [ "$PROCEED" = "false" ]; then
+            echo "::notice::헌장 스케줄 외 트리거(type=$TYPE, KST 요일=$DOW) — 발송 스킵 (주 5통 축소, 2026-07-06)"
+          fi
+
       - name: Run briefing — ${{ steps.run_type.outputs.type }}
+        if: steps.gate.outputs.proceed == 'true'
         env:
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL:        ${{ secrets.OPENAI_MODEL }}

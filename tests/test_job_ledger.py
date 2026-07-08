@@ -29,3 +29,19 @@ def test_paused_jobs_not_expected():
 
 def test_saturday_expects_nothing():
     assert job_ledger._EXPECTED_BY_WEEKDAY[5] == []
+
+
+def test_has_trace_today_roundtrip():
+    """GH 백업 실행기의 중복 방지 가드 — 기록 전 False, 기록 후 True."""
+    import uuid
+    from db.database import init_db
+    init_db()
+
+    name = f"testjob_{uuid.uuid4().hex[:8]}"
+    assert job_ledger.has_trace_today(name) is False
+    job_ledger.record_job(name, "success")
+    assert job_ledger.has_trace_today(name) is True
+    # 실패 기록은 흔적으로 치지 않는다 (백업이 대신 돌아야 함)
+    fail_name = f"testjob_{uuid.uuid4().hex[:8]}"
+    job_ledger.record_job(fail_name, "fail", "의도된 테스트 실패")
+    assert job_ledger.has_trace_today(fail_name) is False

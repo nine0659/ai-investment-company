@@ -59,6 +59,22 @@ def record_job(job_name: str, status: str, detail: str = "") -> None:
         logger.warning("[잡대장] 기록 실패 (%s/%s): %s", job_name, status, e)
 
 
+def has_trace_today(job_name: str) -> bool:
+    """오늘(KST) 해당 잡의 실행 흔적이 있는가 — GH Actions 백업 실행기의 중복 방지 가드.
+
+    조회 실패 시 False(=백업 실행)를 반환한다: 백업 잡들은 record_job 가드가
+    있어 중복 실행이 데이터를 깨뜨리지 않지만, 누락은 하루치 데이터 손실이다.
+    (2026-07-08 daily_tracker 누락 사고 — Render 재시작으로 16:20 실행 증발)
+    """
+    today = datetime.now(_KST).strftime("%Y-%m-%d")
+    try:
+        with get_conn() as conn:
+            return _has_trace(conn, today, job_name)
+    except Exception as e:
+        logger.warning("[잡대장] 오늘 흔적 조회 실패 (%s): %s", job_name, e)
+        return False
+
+
 def _has_trace(conn, date_str: str, job_name: str) -> bool:
     """해당 날짜에 잡 실행 흔적(job_runs 성공/스킵 또는 report_claims)이 있는가."""
     row = conn.execute(
