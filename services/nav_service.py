@@ -39,7 +39,11 @@ def record_nav(kis=None) -> dict | None:
         # 집계되면 총평가가 통째로 무너진다. 오염된 한 행이 90일 드로다운 계산을
         # 지배해 전량청산 오판까지 갔다. 이상치는 수정이 아니라 저장 거부.
         prev = get_latest_nav()
-        suspicion = _nav_data_suspicious(pnl_data, (prev or {}).get("total_value"))
+        suspicion = _nav_data_suspicious(
+            pnl_data,
+            (prev or {}).get("total_value"),
+            (prev or {}).get("total_cost"),
+        )
         if suspicion:
             logger.warning("[NAV][데이터가드] 오염 의심 — 저장 안 함: %s", suspicion)
             try:
@@ -121,12 +125,20 @@ def record_nav(kis=None) -> dict | None:
         return None
 
 
-def _nav_data_suspicious(pnl_data: list[dict], prev_total: float | None) -> str:
+def _nav_data_suspicious(
+    pnl_data: list[dict],
+    prev_total: float | None,
+    prev_cost: float | None = None,
+) -> str:
     """NAV 오염 신호 감지. 문제 없으면 빈 문자열, 있으면 사유 반환.
 
     - 시세 누락: 매입금액은 있는데 평가금액이 0 이하인 종목 존재
-    - 총평가 급변: 직전 기록 대비 하루 ±30% 초과 (시장 변동으로는 불가능,
-      시세 부분 누락·이중 집계·대규모 입출금 신호)
+    - 평가배율 급변: 매입금 대비 평가배율(value/cost)이 직전 기록 대비 하루
+      ±30% 초과. 총평가 원값을 비교하면 안 된다 — 매매·입출금으로 원금이
+      바뀌면 총평가도 정당하게 크게 움직인다 (2026-07-09 오탐: 전날 SK하이닉스
+      전량매도로 총평가 51.3M→30.5M이 정상인데 가드가 기록을 막았고, 같은
+      비교식을 쓰던 드로다운 체크는 7/8에 -44.4%로 오판해 전량청산까지 갔다).
+      시세 오염은 원금 변화 없이 배율만 무너뜨리므로 배율로 구분한다.
     """
     broken = [
         p for p in pnl_data
@@ -138,10 +150,21 @@ def _nav_data_suspicious(pnl_data: list[dict], prev_total: float | None) -> str:
 
     if prev_total and prev_total > 0:
         total_value = sum(p.get("current_val", 0) for p in pnl_data)
-        chg = abs(total_value - prev_total) / prev_total
-        if chg > 0.30:
-            return (f"총평가 급변 {chg * 100:.0f}% "
-                    f"(직전 {prev_total:,.0f}원 → 오늘 {total_value:,.0f}원)")
+        total_cost = sum(p.get("invested", 0) for p in pnl_data)
+        if prev_cost and prev_cost > 0 and total_cost > 0:
+            prev_ratio = prev_total / prev_cost
+            today_ratio = total_value / total_cost
+            chg = abs(today_ratio - prev_ratio) / prev_ratio
+            if chg > 0.30:
+                return (f"평가배율 급변 {chg * 100:.0f}% "
+                        f"(직전 {prev_ratio:.3f} → 오늘 {today_ratio:.3f}, "
+                        f"총평가 {prev_total:,.0f}원 → {total_value:,.0f}원)")
+        else:
+            # 직전 기록에 매입금이 없으면 원값 비교로 폴백
+            chg = abs(total_value - prev_total) / prev_total
+            if chg > 0.30:
+                return (f"총평가 급변 {chg * 100:.0f}% "
+                        f"(직전 {prev_total:,.0f}원 → 오늘 {total_value:,.0f}원)")
     return ""
 
 
@@ -230,8 +253,28 @@ def generate_nav_report(days: int = 7) -> str:
     return "\n".join(lines)
 
 
+def _ratio_drawdown_pct(rows) -> float | None:
+    """(date, total_value, total_cost) 시계열에서 평가배율 기준 낙폭(%) 계산.
+
+    유효 행(평가·매입 모두 양수)이 2개 미만이면 None. 배율 고점 대비 최신
+    배율의 낙폭을 %로 반환한다.
+    """
+    ratios = [
+        (r[1] or 0) / r[2] for r in rows
+        if (r[2] or 0) > 0 and (r[1] or 0) > 0
+    ]
+    if len(ratios) < 2:
+        return None
+    peak = max(ratios)
+    return (peak - ratios[-1]) / peak * 100
+
+
 def check_drawdown_defense() -> dict:
     """NAV 고점 대비 현재 낙폭을 계산해 방어 행동 지시.
+
+    낙폭은 총평가 원값이 아니라 매입금 대비 평가배율(value/cost)로 계산한다.
+    원값으로 재면 매매·입출금(예: 2026-07-07 SK하이닉스 전량매도 2,176만원)이
+    낙폭으로 둔갑한다 — 2026-07-08 드로다운 -44.4% 오판·전량청산 사고의 실원인.
 
     Returns:
         {"action": "none"|"half"|"all", "message": str, "drawdown_pct": float}
@@ -242,21 +285,15 @@ def check_drawdown_defense() -> dict:
             cutoff = (datetime.now(_KST) - timedelta(days=90)).strftime("%Y-%m-%d")
             rows = conn.execute(
                 text("""
-                    SELECT date, total_value FROM portfolio_nav
+                    SELECT date, total_value, total_cost FROM portfolio_nav
                     WHERE date >= :cutoff ORDER BY date ASC
                 """),
                 {"cutoff": cutoff},
             ).fetchall()
 
-        if not rows or len(rows) < 2:
+        drawdown_pct = _ratio_drawdown_pct(rows)
+        if drawdown_pct is None:
             return {"action": "none", "message": "NAV 데이터 부족", "drawdown_pct": 0.0}
-
-        peak = max(r[1] for r in rows)
-        latest_value = rows[-1][1]
-        if peak <= 0:
-            return {"action": "none", "message": "고점 NAV 이상", "drawdown_pct": 0.0}
-
-        drawdown_pct = (peak - latest_value) / peak * 100
 
         if drawdown_pct >= 15.0:
             return {
@@ -283,14 +320,16 @@ def get_latest_nav() -> dict | None:
         with get_conn() as conn:
             row = conn.execute(
                 text("""
-                    SELECT date, total_value, total_pnl_pct, kospi_pct_ytd, nav_pct_ytd, alpha_ytd
+                    SELECT date, total_value, total_pnl_pct, kospi_pct_ytd, nav_pct_ytd, alpha_ytd,
+                           total_cost
                     FROM portfolio_nav ORDER BY date DESC LIMIT 1
                 """)
             ).fetchone()
         if row:
             return {"date": row[0], "total_value": row[1],
                     "total_pnl_pct": row[2], "kospi_pct_ytd": row[3],
-                    "nav_pct_ytd": row[4], "alpha_ytd": row[5]}
+                    "nav_pct_ytd": row[4], "alpha_ytd": row[5],
+                    "total_cost": row[6]}
     except Exception:
         pass
     return None
