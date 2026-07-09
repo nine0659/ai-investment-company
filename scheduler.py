@@ -291,19 +291,26 @@ def job_daily_nav():
         logger.warning("NAV 기록 실패 (무시): %s", e)
         record_job("daily_nav", "fail", str(e))
 
-    # P4-2: 드로다운 방어 체크
+    # P4-2: 드로다운 체크 — 경보만 발송, 자동매도 금지 (2026-07-09 정책 변경)
+    # 2026-07-08 사고: KIS 시세 부분 누락으로 NAV -40% 왜곡 → 드로다운 -44.4% 오판
+    # → 실계좌 전량 청산 시도 (보유목록이 우연히 빈 값으로 와서 주문 0건에 그침).
+    # 매도 결정은 사용자 몫이다 — 시스템은 감지·경보까지만. 자동매도 재도입 금지
+    # (tests/test_drawdown_policy.py가 강제).
     try:
         from services.nav_service import check_drawdown_defense
-        from services.auto_execute_service import execute_drawdown_defense
         dd = check_drawdown_defense()
         action = dd.get("action", "none")
         if action in ("half", "all"):
-            logger.warning("드로다운 방어 발동: %s — %s", action, dd.get("message", ""))
-            execute_drawdown_defense(action, _get_kis())
+            logger.warning("드로다운 경보: %s", dd.get("message", ""))
+            send_error_alert(
+                f"[드로다운 경보] {dd.get('message', '')}\n"
+                f"자동매도는 실행하지 않습니다. 데이터 오류 가능성부터 확인하세요\n"
+                f"(portfolio_nav 이력 vs 증권사 앱 실잔고 대조)."
+            )
         else:
             logger.info("드로다운 정상: %s", dd.get("message", ""))
     except Exception as e:
-        logger.warning("드로다운 방어 체크 실패 (무시): %s", e)
+        logger.warning("드로다운 체크 실패 (무시): %s", e)
 
 
 def job_daily_tracker():

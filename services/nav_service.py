@@ -34,6 +34,23 @@ def record_nav(kis=None) -> dict | None:
         # calculate_pnl 반환 필드: current_val(평가금액), invested(매입금액)
         total_value = sum(p.get("current_val", 0) for p in pnl_data)
         total_cost  = sum(p.get("invested", 0) for p in pnl_data)
+
+        # 데이터 가드 (2026-07-08 사고): 시세 조회 실패 종목이 current_val=0으로
+        # 집계되면 총평가가 통째로 무너진다. 오염된 한 행이 90일 드로다운 계산을
+        # 지배해 전량청산 오판까지 갔다. 이상치는 수정이 아니라 저장 거부.
+        prev = get_latest_nav()
+        suspicion = _nav_data_suspicious(pnl_data, (prev or {}).get("total_value"))
+        if suspicion:
+            logger.warning("[NAV][데이터가드] 오염 의심 — 저장 안 함: %s", suspicion)
+            try:
+                from clients.telegram_client import send_error_alert
+                send_error_alert(
+                    f"[NAV 데이터가드] 오늘 NAV 기록을 건너뜀\n{suspicion}\n"
+                    f"KIS 시세/잔고 응답 이상 가능성 — 내일 자동 재시도됩니다."
+                )
+            except Exception:
+                pass
+            return None
         total_pnl   = total_value - total_cost
         total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
 
@@ -102,6 +119,30 @@ def record_nav(kis=None) -> dict | None:
     except Exception as e:
         logger.warning("[NAV] 기록 실패: %s", e)
         return None
+
+
+def _nav_data_suspicious(pnl_data: list[dict], prev_total: float | None) -> str:
+    """NAV 오염 신호 감지. 문제 없으면 빈 문자열, 있으면 사유 반환.
+
+    - 시세 누락: 매입금액은 있는데 평가금액이 0 이하인 종목 존재
+    - 총평가 급변: 직전 기록 대비 하루 ±30% 초과 (시장 변동으로는 불가능,
+      시세 부분 누락·이중 집계·대규모 입출금 신호)
+    """
+    broken = [
+        p for p in pnl_data
+        if (p.get("invested") or 0) > 0 and (p.get("current_val") or 0) <= 0
+    ]
+    if broken:
+        names = ", ".join(str(p.get("name") or p.get("code") or "?") for p in broken[:5])
+        return f"시세 누락 종목 {len(broken)}건: {names}"
+
+    if prev_total and prev_total > 0:
+        total_value = sum(p.get("current_val", 0) for p in pnl_data)
+        chg = abs(total_value - prev_total) / prev_total
+        if chg > 0.30:
+            return (f"총평가 급변 {chg * 100:.0f}% "
+                    f"(직전 {prev_total:,.0f}원 → 오늘 {total_value:,.0f}원)")
+    return ""
 
 
 def _get_year_baseline() -> dict | None:
