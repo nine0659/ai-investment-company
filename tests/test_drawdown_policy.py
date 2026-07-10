@@ -102,3 +102,41 @@ def test_drawdown_still_catches_real_crash():
 def test_drawdown_insufficient_data():
     assert _ratio_drawdown_pct([("2026-07-01", 50_000_000, 40_000_000)]) is None
     assert _ratio_drawdown_pct([]) is None
+
+
+def _history_row(date, value, cost, pnl_pct, kospi):
+    return {"date": date, "total_value": value, "total_cost": cost,
+            "total_pnl_pct": pnl_pct, "kospi_close": kospi,
+            "kospi_pct_ytd": 0, "nav_pct_ytd": 0, "alpha_ytd": 0}
+
+
+def test_weekly_report_composition_and_zero_kospi(monkeypatch):
+    """2026-07-10 실수치: 기간 중 하이닉스 매도(pnl% 20.13→10.91)와 KOSPI
+    수집 실패일(close=0)이 겹친 주. pnl% 차이 방식은 -9.22%, 마지막 종가 0을
+    그대로 쓰면 KOSPI -100%가 나왔다. 배율 기준 -7.68%와 유효 종가 비교
+    (8051.33→7246.79 = -9.99%)가 나와야 한다."""
+    import services.nav_service as nav
+    history = [
+        _history_row("2026-07-06", 54_878_000, 45_681_558, 20.13, 8051.33),
+        _history_row("2026-07-07", 51_343_500, 45_681_558, 12.39, 7656.31),
+        _history_row("2026-07-08", 30_523_000, 27_510_558, 10.95, 7246.79),
+        _history_row("2026-07-09", 30_511_500, 27_510_558, 10.91, 0.0),
+    ]
+    monkeypatch.setattr(nav, "get_nav_history", lambda days=7: history)
+    report = nav.generate_nav_report(7)
+    assert "-7.68%" in report, report          # 배율 기준 기간 수익률
+    assert "-9.99%" in report, report          # 유효 종가끼리 KOSPI 비교
+    assert "-100" not in report, report        # 종가 0 오염 차단
+    assert "-9.22" not in report, report       # pnl% 차이 방식 잔재 차단
+
+
+def test_weekly_report_omits_kospi_without_valid_closes(monkeypatch):
+    import services.nav_service as nav
+    history = [
+        _history_row("2026-07-08", 30_523_000, 27_510_558, 10.95, 0.0),
+        _history_row("2026-07-09", 30_511_500, 27_510_558, 10.91, 0.0),
+    ]
+    monkeypatch.setattr(nav, "get_nav_history", lambda days=7: history)
+    report = nav.generate_nav_report(7)
+    assert "비교 생략" in report
+    assert "-100" not in report

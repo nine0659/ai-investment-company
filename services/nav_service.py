@@ -199,7 +199,7 @@ def get_nav_history(days: int = 30) -> list[dict]:
             rows = conn.execute(
                 text("""
                     SELECT date, total_value, total_pnl_pct, kospi_pct_ytd,
-                           nav_pct_ytd, alpha_ytd, kospi_close
+                           nav_pct_ytd, alpha_ytd, kospi_close, total_cost
                     FROM portfolio_nav WHERE date >= :cutoff ORDER BY date
                 """),
                 {"cutoff": cutoff},
@@ -207,7 +207,7 @@ def get_nav_history(days: int = 30) -> list[dict]:
         return [
             {"date": r[0], "total_value": r[1], "total_pnl_pct": r[2],
              "kospi_pct_ytd": r[3], "nav_pct_ytd": r[4], "alpha_ytd": r[5],
-             "kospi_close": r[6]}
+             "kospi_close": r[6], "total_cost": r[7]}
             for r in rows
         ]
     except Exception as e:
@@ -221,6 +221,11 @@ def generate_nav_report(days: int = 7) -> str:
     포트폴리오와 KOSPI를 반드시 같은 기간(리포트 윈도우)끼리 비교한다.
     과거처럼 '포트폴리오 추적 시작 대비'와 'KOSPI 연초 대비'를 섞어서
     빼면 -71% 같은 무의미한 알파가 나온다.
+
+    기간 수익률은 total_pnl_pct 차이가 아니라 평가배율(value/cost) 변화로
+    계산한다 — pnl% 차이는 기간 중 매매로 구성이 바뀌면 (하이닉스 매도 후
+    +20.13%→+10.91%처럼) 실현·제외분이 주간 손실로 둔갑한다 (2026-07-10).
+    KOSPI는 수집 실패일(kospi_close=0)을 제외한 유효 종가끼리 비교한다.
     """
     history = get_nav_history(days)
     if not history:
@@ -229,15 +234,17 @@ def generate_nav_report(days: int = 7) -> str:
     latest = history[-1]
     oldest = history[0]
 
-    # 기간 내 변화 (같은 윈도우끼리 비교)
-    period_nav_chg = round(
-        (latest.get("total_pnl_pct") or 0) - (oldest.get("total_pnl_pct") or 0), 2
-    )
-    k_old, k_new = oldest.get("kospi_close") or 0, latest.get("kospi_close") or 0
-    period_kospi_chg = round((k_new - k_old) / k_old * 100, 2) if k_old > 0 else 0.0
-    period_alpha = round(period_nav_chg - period_kospi_chg, 2)
-    alpha_emoji = "✅" if period_alpha >= 0 else "⚠️"
+    # 기간 내 변화 — 배율 시계열의 양끝 (같은 윈도우끼리 비교)
+    ratios = [
+        (h["total_value"] or 0) / h["total_cost"] for h in history
+        if (h.get("total_cost") or 0) > 0 and (h.get("total_value") or 0) > 0
+    ]
+    if len(ratios) >= 2:
+        period_nav_chg = round((ratios[-1] / ratios[0] - 1) * 100, 2)
+    else:
+        period_nav_chg = 0.0
 
+    kospi_closes = [h["kospi_close"] for h in history if (h.get("kospi_close") or 0) > 0]
     lines = [
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"📈 포트폴리오 현황 ({latest['date']} 기준)",
@@ -246,9 +253,17 @@ def generate_nav_report(days: int = 7) -> str:
         f"",
         f"[최근 {days}일: {oldest['date']} → {latest['date']}]",
         f"  포트폴리오: {period_nav_chg:+.2f}%",
-        f"  KOSPI:      {period_kospi_chg:+.2f}%",
-        f"  {alpha_emoji} 시장 대비: {period_alpha:+.2f}%p",
     ]
+    if len(kospi_closes) >= 2:
+        period_kospi_chg = round((kospi_closes[-1] - kospi_closes[0]) / kospi_closes[0] * 100, 2)
+        period_alpha = round(period_nav_chg - period_kospi_chg, 2)
+        alpha_emoji = "✅" if period_alpha >= 0 else "⚠️"
+        lines += [
+            f"  KOSPI:      {period_kospi_chg:+.2f}%",
+            f"  {alpha_emoji} 시장 대비: {period_alpha:+.2f}%p",
+        ]
+    else:
+        lines.append(f"  KOSPI: 기간 내 지수 데이터 부족 — 비교 생략")
 
     return "\n".join(lines)
 
