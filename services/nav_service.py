@@ -271,17 +271,29 @@ def generate_nav_report(days: int = 7) -> str:
 def _ratio_drawdown_pct(rows) -> float | None:
     """(date, total_value, total_cost) 시계열에서 평가배율 기준 낙폭(%) 계산.
 
-    유효 행(평가·매입 모두 양수)이 2개 미만이면 None. 배율 고점 대비 최신
-    배율의 낙폭을 %로 반환한다.
+    유효 행(평가·매입 모두 양수)이 2개 미만이면 None.
+
+    배율 원값의 고점/최신 비교는 구성 변경을 낙폭으로 오인한다: 고점이 매도 전
+    구성(2026-07-06 하이닉스 포함 1.201)에 찍힌 뒤 이익 난 종목을 팔면, 실현되어
+    빠져나간 이익이 낙폭으로 둔갑한다 (2026-07-13 -15.4% 경보 — 체인 기준 실낙폭은
+    -14.3%로 '전량' 아닌 '절반' 단계였다). 매입금이 같은(=매매 없는) 인접일의
+    배율 변화만 곱해 성과지수를 만들고, 그 지수의 고점 대비 낙폭을 잰다.
+    매입금이 바뀐 날은 성과와 매매를 분리할 수 없으므로 그날 변화는 0으로 둔다.
     """
-    ratios = [
-        (r[1] or 0) / r[2] for r in rows
+    valid = [
+        (r[1], r[2]) for r in rows
         if (r[2] or 0) > 0 and (r[1] or 0) > 0
     ]
-    if len(ratios) < 2:
+    if len(valid) < 2:
         return None
-    peak = max(ratios)
-    return (peak - ratios[-1]) / peak * 100
+    index = peak = 1.0
+    prev_value, prev_cost = valid[0]
+    for value, cost in valid[1:]:
+        if abs(cost - prev_cost) / prev_cost <= 0.001:
+            index *= (value / cost) / (prev_value / prev_cost)
+            peak = max(peak, index)
+        prev_value, prev_cost = value, cost
+    return (peak - index) / peak * 100
 
 
 def check_drawdown_defense() -> dict:
@@ -310,16 +322,20 @@ def check_drawdown_defense() -> dict:
         if drawdown_pct is None:
             return {"action": "none", "message": "NAV 데이터 부족", "drawdown_pct": 0.0}
 
+        # 문구 주의: 자동매도는 2026-07-09 정책으로 영구 제거됐다. "청산"을
+        # 단정하는 문구는 시스템이 매도한 것처럼 읽혀 혼란을 준다 — 권고형으로.
         if drawdown_pct >= 15.0:
             return {
                 "action": "all",
-                "message": f"드로다운 -{drawdown_pct:.1f}% — 전량 청산 + 1주일 차단",
+                "message": (f"드로다운 -{drawdown_pct:.1f}% — 위험 단계(-15% 초과): "
+                            f"포지션 전면 축소 검토 권고 (자동 매수 차단 중)"),
                 "drawdown_pct": drawdown_pct,
             }
         elif drawdown_pct >= 10.0:
             return {
                 "action": "half",
-                "message": f"드로다운 -{drawdown_pct:.1f}% — 전 포지션 50% 강제 청산",
+                "message": (f"드로다운 -{drawdown_pct:.1f}% — 경계 단계(-10% 초과): "
+                            f"부분 축소 검토 권고 (자동 매수 차단 중)"),
                 "drawdown_pct": drawdown_pct,
             }
         else:
