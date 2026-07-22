@@ -510,9 +510,9 @@ def run(state: InvestmentState) -> InvestmentState:
 
         # 실시간 선물
         for label, key in [
-            ("S&P500선물(오버나잇)", "sp500_futures"),
-            ("나스닥선물(오버나잇)", "nasdaq_futures"),
-            ("KOSPI200선물",        "kospi200_futures"),
+            ("S&P500선물(오버나잇)",     "sp500_futures"),
+            ("나스닥선물(오버나잇)",     "nasdaq_futures"),
+            ("KOSPI200(전일 종가 등락)", "kospi200_futures"),  # 실제론 야간선물 아닌 지수 종가 — 오늘 갭 선행지표 아님
         ]:
             d = raw_mkt.get(key, {})
             if d:
@@ -522,12 +522,23 @@ def run(state: InvestmentState) -> InvestmentState:
                 else:
                     fact_rows.append(f"  {label}: {d.get('close','')} ({d.get('change_pct',0):+.2f}%)")
 
-        # 실시간 한국 지수
+        # 한국 지수 — 장전(RUN_TYPE_PRE)엔 KRX 미개장이라 "실시간"이 아니라
+        # 직전 완결 세션(전일)의 등락률이다. 2026-07-22: 이걸 "실시간"으로
+        # 라벨링해 CEO가 이미 지난 등락을 "지금 시장 분위기"로 서술하고,
+        # 실제 진행 중인 오버나잇 반등(예: 반도체 급등)을 놓치는 사고 발생.
         kr_rt = state.get("kr_index_realtime", {})
-        for key, label in [("kospi", "KOSPI(실시간)"), ("kosdaq", "KOSDAQ(실시간)")]:
+        _kr_idx_suffix = "(전일 마감)" if run_type == RUN_TYPE_PRE else "(실시간)"
+        for key, label in [("kospi", f"KOSPI{_kr_idx_suffix}"), ("kosdaq", f"KOSDAQ{_kr_idx_suffix}")]:
             d = kr_rt.get(key)
             if d:
                 fact_rows.append(f"  {label}: {d['current']:,.2f} ({d['change_pct']:+.2f}%)")
+        if run_type == RUN_TYPE_PRE and kr_rt:
+            fact_rows.append(
+                "  ⚠️ 위 KOSPI/KOSDAQ는 장 시작 전 수치라 '전일 마감' 등락이며 오늘"
+                " 방향이 아닙니다. 오늘 갭 방향은 야간 선물·SOX·NVDA 등 실제 오버나잇"
+                " 신호로 판단하고, 두 신호가 어긋나면 그 모순을 그대로 서술하세요"
+                " (한쪽만 골라 단정하지 말 것)."
+            )
 
         # 외국인·기관 수급 방향 (종목 순위 기반 — 합계 억원은 미제공)
         raw_kis = state.get("raw_kis_data", {})

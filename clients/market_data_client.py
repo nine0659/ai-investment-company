@@ -10,12 +10,21 @@ logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
 
+# 2026-07-22: 무검증으로 yfinance 이상치(예: 1080.36/-7.18%처럼 인접 두 봉이
+# 어긋난 값)가 그대로 "KOSPI200선물"로 표시돼 브리핑을 오염시킨 사고 이후 추가.
+# 단일세션 20% 초과 변동은 2026-07 최악의 크래시(-8%대)도 넘는 수준이라 데이터
+# 오류로 간주해 제외한다 (실제 크래시를 오탐 차단하려는 게 아니라 명백한 이상치만 컷).
+_KS200_MAX_DAILY_CHANGE = 20.0
+
+
 def fetch_kospi200_futures() -> dict:
     """KOSPI200 지수(전일종가)를 야간선물 방향 판단 기준값으로 반환.
 
     야간선물(KRX 18:00~05:00 세션)은 무료 공개 API로 직접 수집 불가.
     KOSPI200 지수 전일종가(^KS200)를 기준값으로 사용하며,
     실제 야간선물 방향은 미국 선물(ES=F, NQ=F) 오버나잇 변화로 추정.
+    이름과 달리 "선물"이 아니라 지수 종가 기준이므로 오늘 갭 방향의 선행
+    지표는 아니다 — 호출부에서 "전일 종가 등락"으로 라벨링할 것.
     반환: {close, change, change_pct, high, low, symbol, name, is_index}
     """
     try:
@@ -24,8 +33,17 @@ def fetch_kospi200_futures() -> dict:
             return {}
         close      = float(hist.iloc[-1]["Close"])
         prev_close = float(hist.iloc[-2]["Close"])
+        if close <= 0 or prev_close <= 0:
+            logger.warning("KOSPI200 지수 값 비정상(0 이하) — 수집 제외")
+            return {}
         change     = close - prev_close
         change_pct = (change / prev_close * 100) if prev_close else 0
+        if abs(change_pct) > _KS200_MAX_DAILY_CHANGE:
+            logger.warning(
+                "KOSPI200 지수 변동률 비정상: %.2f%% (close=%.2f, prev=%.2f) — 수집 제외",
+                change_pct, close, prev_close,
+            )
+            return {}
         return {
             "close":      round(close, 2),
             "change":     round(change, 2),
@@ -123,9 +141,13 @@ def fetch_kr_index_realtime() -> dict:
     반환: {"kospi": {current, prev_close, change_pct}, "kosdaq": {...}}
     """
     # yfinance가 간헐적으로 오염된 값을 반환함 — 유효 범위로 필터
+    # 2026-07-22: KOSPI 상단을 6,000으로 두면 2026-07 실제 지수(6,500~9,000대,
+    # 6월 고점 9,114)가 매번 "비정상"으로 걸려 실시간 값이 항상 일봉 종가로
+    # 대체됐다 — "실시간" 라벨을 달고 사실상 매번 지난 종가만 나간 원인.
+    # 범위는 이상치(0, 음수, 자릿수 오류) 컷용이지 역사적 상한 고정용이 아니다.
     _VALID_RANGE = {
-        "^KS11": (1_000, 6_000),   # KOSPI 역사적 범위
-        "^KQ11": (300,   3_000),   # KOSDAQ 역사적 범위
+        "^KS11": (1_000, 15_000),  # KOSPI — 이상치 컷 (상한을 지수 성장 여유 있게)
+        "^KQ11": (300,   5_000),   # KOSDAQ — 이상치 컷
     }
     # 한국 서킷브레이커 ±8% → 그 이상은 yfinance 오류 데이터
     _MAX_DAILY_CHANGE = 10.0

@@ -297,16 +297,20 @@ def job_daily_nav():
     # 매도 결정은 사용자 몫이다 — 시스템은 감지·경보까지만. 자동매도 재도입 금지
     # (tests/test_drawdown_policy.py가 강제).
     try:
-        from services.nav_service import check_drawdown_defense
+        from services.nav_service import check_drawdown_defense, should_send_drawdown_alert
         dd = check_drawdown_defense()
         action = dd.get("action", "none")
-        if action in ("half", "all"):
+        # dedup 상태 갱신은 매번 호출 (action="none" 복귀 시 이력 정리 포함)
+        do_alert = should_send_drawdown_alert(action)
+        if action in ("half", "all") and do_alert:
             logger.warning("드로다운 경보: %s", dd.get("message", ""))
             send_error_alert(
                 f"[드로다운 경보] {dd.get('message', '')}\n"
                 f"자동매도는 실행하지 않습니다. 데이터 오류 가능성부터 확인하세요\n"
                 f"(portfolio_nav 이력 vs 증권사 앱 실잔고 대조)."
             )
+        elif action in ("half", "all"):
+            logger.info("드로다운 유지 (재발송 억제, %d일 간격): %s", 3, dd.get("message", ""))
         else:
             logger.info("드로다운 정상: %s", dd.get("message", ""))
     except Exception as e:

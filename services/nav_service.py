@@ -345,6 +345,67 @@ def check_drawdown_defense() -> dict:
         return {"action": "none", "message": f"계산 오류: {e}", "drawdown_pct": 0.0}
 
 
+_REALERT_DAYS = 3  # 같은 드로다운 단계가 지속될 때 재발송 간격(일)
+
+
+def _drawdown_alert_state() -> tuple[str, str]:
+    """마지막으로 발송한 드로다운 경보의 단계·날짜. 기록 없으면 ("none", "")."""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT value FROM system_settings WHERE key = 'drawdown.last_alert'")
+            ).fetchone()
+        if row and row[0]:
+            action, _, d = str(row[0]).partition("|")
+            return action, d
+    except Exception as e:
+        logger.debug("[드로다운] 경보 상태 조회 실패: %s", e)
+    return "none", ""
+
+
+def _set_drawdown_alert_state(action: str, today: str) -> None:
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO system_settings (key, value) VALUES ('drawdown.last_alert', :v) "
+                    "ON CONFLICT (key) DO UPDATE SET value=:v, updated_at=CURRENT_TIMESTAMP"
+                ),
+                {"v": f"{action}|{today}"},
+            )
+    except Exception as e:
+        logger.warning("[드로다운] 경보 상태 저장 실패: %s", e)
+
+
+def should_send_drawdown_alert(action: str, today: str | None = None) -> bool:
+    """드로다운 경보 발송 여부 — 동일 단계 매일 재발송 스팸 방지.
+
+    2026-07-22: job_daily_nav가 dedup 없이 매 거래일 같은 경보를 재발송해
+    사용자가 "지속적으로 오류 알림"을 받는 문제가 확인됨. 정책: 단계가
+    변할 때(none↔half↔all)는 즉시 발송, 같은 단계가 이어지면
+    _REALERT_DAYS 간격으로만 재발송. 호출할 때마다 상태를 갱신하므로
+    action="none"이어도 항상 호출해 이전 경보 이력을 정리해야 한다.
+    """
+    today = today or datetime.now(_KST).strftime("%Y-%m-%d")
+    last_action, last_date = _drawdown_alert_state()
+    if action != last_action:
+        _set_drawdown_alert_state(action, today)
+        return action != "none"
+    if action == "none":
+        return False
+    if not last_date:
+        _set_drawdown_alert_state(action, today)
+        return True
+    try:
+        days_since = (date.fromisoformat(today) - date.fromisoformat(last_date)).days
+    except ValueError:
+        days_since = _REALERT_DAYS
+    if days_since >= _REALERT_DAYS:
+        _set_drawdown_alert_state(action, today)
+        return True
+    return False
+
+
 def get_latest_nav() -> dict | None:
     """가장 최근 NAV 기록 반환."""
     try:
