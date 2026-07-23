@@ -73,3 +73,20 @@ def test_format_report_shows_no_signal_message_when_empty():
     report = _format_report({"추세적 반등": [], "기술적 반등": []})
     assert "해당 없음" in report
     assert "LLM 서술 없음" in report
+
+
+def test_empty_raw_pool_reported_as_data_failure_not_no_candidates(monkeypatch):
+    """2026-07-23 실사고 재현: KIS 하락률 순위가 원본부터 비면 '해당없음'이 아니라
+    데이터 수집 실패로 알려야 한다 — 실제로 후보가 없는 상황은 극히 드물다."""
+    import agents.rebound_screener_agent as mod
+
+    monkeypatch.setattr(mod, "_decliner_pool", lambda kis: [])
+
+    sent = []
+    monkeypatch.setattr("clients.telegram_client.send_message", lambda text: sent.append(text))
+
+    report = mod.run_rebound_screen(send=True)
+
+    assert "데이터 수집" in report
+    assert "해당 없음" not in report
+    assert sent and "데이터 수집" in sent[0]

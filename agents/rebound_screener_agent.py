@@ -126,6 +126,23 @@ def run_rebound_screen(send: bool = True) -> str:
     kis = KISClient()
     pool = _decliner_pool(kis)
     logger.info("[반등스크리너] 하락률 상위 후보 %d개", len(pool))
+
+    # KOSPI·KOSDAQ 하락률 상위가 원본부터 비어있으면 "반등 후보 없음"이 아니라
+    # KIS 데이터 수집 자체가 실패한 것으로 본다 — 거의 항상 하락 종목은 존재하므로
+    # 0건은 API 장애·시간외·서킷브레이커일 가능성이 훨씬 크다 (2026-07-23 확인:
+    # 장마감 후 상승·하락 순위 조회가 둘 다 빈 값을 반환한 사례).
+    if not pool:
+        report = (
+            "📈 *기술적·추세적 반등 스크리너*\n\n"
+            "⚠️ KIS 하락률 상위 데이터 수집 결과가 비어있습니다 — 실제로 후보가 없는 게 "
+            "아니라 데이터 수집 실패(시간외·API 장애·서킷브레이커 등) 가능성이 높습니다.\n"
+            "장중(09:00~15:30)에 다시 시도해주세요."
+        )
+        if send:
+            send_message(report)
+        logger.warning("[반등스크리너] 후보 풀이 비어있음 — 데이터 수집 실패로 판단, 결과 미신뢰 표시")
+        return report
+
     pool = _filter_by_market_cap(kis, pool)
     logger.info("[반등스크리너] 시총 필터 통과 %d개", len(pool))
 
