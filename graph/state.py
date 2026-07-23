@@ -57,3 +57,4 @@ class InvestmentState(TypedDict):
     errors:         Annotated[list[str], operator.add]  # 병렬 브랜치 오류 자동 병합
     nav_recorded:   Annotated[dict,      _last]
     ceo_decisions:  Annotated[dict,      _last]
+    deep_report_content: Annotated[str,  _last]

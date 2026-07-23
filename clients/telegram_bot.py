@@ -142,8 +142,9 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/history` — 최근 주문 이력\n\n"
         "🔍 *심층 분석*\n"
         "`/discover` — 탑다운 종목 발굴 (시장 흐름→주도 산업→종목, 워치리스트 자동 등록)\n"
+        "`/rebound` — 기술적·추세적 반등 스크리너 (하락률 상위 종목군 차트 분석, LLM 미사용)\n"
         "`/insight` — 글로벌 시장 서사·전문가/텔레그램 채널 시각·종목 기술/수급 분석\n"
-        "  (메인 브리핑에서 압축돼 빠진 분석 원문)\n\n"
+        "  (메인 브리핑에서 압축돼 빠진 분석 원문 — 이제 장전/마감 브리핑 뒤에 자동 첨부됨)\n\n"
         "📜 *전략·투자관*\n"
         "`/thesis` — 현재 월간 투자관\n"
         "`/strategy` — 현재 주간 전략\n"
@@ -1005,6 +1006,19 @@ def _cmd_discover(chat_id: str, _args: str) -> None:
         _send(chat_id, f"❌ 발굴 중 오류: {e}")
 
 
+def _cmd_rebound(chat_id: str, _args: str) -> None:
+    """기술적·추세적 반등 스크리너 — 하락률 상위 종목군에서 차트 반등 신호 탐지 (LLM 미사용)."""
+    _send(chat_id, "📈 반등 스크리닝 시작... 하락률 상위 종목 차트 분석 중 (약 1분 소요)")
+    _typing(chat_id)
+    try:
+        from agents.rebound_screener_agent import run_rebound_screen
+        report = run_rebound_screen(send=False)
+        _send(chat_id, report)
+    except Exception as e:
+        logger.error("[Bot] /rebound 오류: %s", e)
+        _send(chat_id, f"❌ 반등 스크리닝 중 오류: {e}")
+
+
 def _cmd_profile(chat_id: str, args: str) -> None:
     """고객 투자자 프로필 조회/수정 — 모든 자문의 대상 정의."""
     from services.profile_service import PROFILE_FIELDS, get_profile, set_profile_field
@@ -1132,6 +1146,7 @@ _HANDLERS: dict = {
     "/portfolio": _cmd_portfolio,
     "/profile":   _cmd_profile,
     "/discover":  _cmd_discover,
+    "/rebound":   _cmd_rebound,
     "/watchlist": _cmd_watchlist,
     "/buy":       _cmd_buy,
     "/sell":      _cmd_sell,

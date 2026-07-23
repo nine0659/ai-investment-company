@@ -37,6 +37,10 @@ def build_deep_report(state: dict) -> str:
     """state에 이미 계산된 분석 리포트들 + 종목별 차트 지표를 모아 심층 리포트 텍스트 생성."""
     sections: list[str] = []
 
+    macro = state.get("macro_report", "")
+    if macro:
+        sections.append("🌍 *매크로 분석*\n" + macro)
+
     intel = state.get("market_intelligence_report", "")
     if intel:
         sections.append("🌐 *글로벌 시장 서사 · 전문가/텔레그램 채널 시각*\n" + intel)

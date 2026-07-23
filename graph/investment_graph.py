@@ -318,6 +318,7 @@ def node_deep_report(state: InvestmentState) -> InvestmentState:
         from services.report_service import save_deep_report
         content = build_deep_report(state)
         save_deep_report(state["date"], state["run_type"], content)
+        state["deep_report_content"] = content
     except Exception as e:
         logger.warning("[심층리포트] 생성 실패 (무시): %s", e)
     return state
@@ -381,6 +382,19 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
                 logger.warning("[텔레그램] DB 연결 오류 %d건 — 로그 확인 요망", db_errs)
     except Exception as e:
         logger.error("[텔레그램] 발송 실패: %s", e)
+        return state
+
+    # 메인 브리핑은 압축된 결론만 담는다 — 압축 과정에서 잘려나가는 원본 분석
+    # (매크로·글로벌서사·이슈종목·수급·종목별 실측 기술지표)을 자동으로 뒤이어 보낸다.
+    # 2026-07-23: 그동안 /insight로 직접 조회해야만 보이던 것을 매번 자동 첨부로 전환.
+    deep_content = state.get("deep_report_content", "")
+    if deep_content:
+        try:
+            send_message("🔍 *심층 분석* (자동 첨부 — 위 브리핑의 근거 전문)\n\n" + deep_content)
+            logger.info("[텔레그램] 심층 분석 자동 첨부 발송 완료")
+        except Exception as e:
+            logger.warning("[텔레그램] 심층 분석 자동 첨부 실패 (메인 브리핑은 정상 발송됨): %s", e)
+
     return state
 
 
@@ -677,6 +691,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "errors": [],
         "nav_recorded": {},
         "ceo_decisions": {},
+        "deep_report_content": "",
     }
 
     graph = build_graph()
@@ -723,6 +738,7 @@ def _run_global(run_type: str) -> InvestmentState:
         "risk_level": "중간", "market_direction": "",
         "review_report": "", "errors": [], "nav_recorded": {},
         "ceo_decisions": {},
+        "deep_report_content": "",
     }
 
     graph = build_global_graph()
