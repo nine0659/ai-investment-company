@@ -23,6 +23,12 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL     = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_MODEL_CEO = os.getenv("OPENAI_MODEL_CEO", OPENAI_MODEL)  # CEO 전용 모델
 
+# ── OpenRouter (OpenAI 크레딧 소진/장애 시 자동 폴백, 선택사항) ──────
+# 미설정 시 폴백 없이 기존과 동일하게 동작 (OpenAI 호출 실패는 그대로 상위로 전파)
+OPENROUTER_API_KEY   = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL     = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
+OPENROUTER_MODEL_CEO = os.getenv("OPENROUTER_MODEL_CEO", OPENROUTER_MODEL)
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
 

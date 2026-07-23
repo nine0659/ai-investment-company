@@ -142,6 +142,7 @@ jobs:
         if: steps.gate.outputs.proceed == 'true'
         env:
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_MODEL:        ${{ secrets.OPENAI_MODEL }}
           OPENAI_MODEL_CEO:    ${{ secrets.OPENAI_MODEL_CEO }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -177,6 +178,7 @@ jobs:
       - name: Run price alert
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
@@ -206,6 +208,7 @@ jobs:
       - name: Run KOSPI trend analysis
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_MODEL:       ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -233,6 +236,7 @@ jobs:
       - name: Run weekly stats
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_MODEL:       ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -260,6 +264,7 @@ jobs:
       - name: Run US invest picks
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_MODEL_CEO:   ${{ secrets.OPENAI_MODEL_CEO }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -287,6 +292,7 @@ jobs:
       - name: Run monthly learning
         env:
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_MODEL:       ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}

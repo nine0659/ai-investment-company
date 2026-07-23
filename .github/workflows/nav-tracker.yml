@@ -39,6 +39,7 @@ jobs:
           KIS_ACCOUNT_NO:      ${{ secrets.KIS_ACCOUNT_NO }}
           KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           DATABASE_URL:        ${{ secrets.DATABASE_URL }}
           PYTHONUTF8:          "1"
         run: python scripts/backup_daily_jobs.py

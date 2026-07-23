@@ -53,6 +53,7 @@ jobs:
       - name: Run midterm analysis
         env:
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_MODEL:        ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -102,6 +103,7 @@ jobs:
         if: steps.check.outputs.proceed == 'true'
         env:
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_MODEL:        ${{ secrets.OPENAI_MODEL }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}

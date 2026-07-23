@@ -13,6 +13,9 @@ services:
         value: gpt-4.1-mini
       - key: OPENAI_MODEL_CEO
         value: gpt-4o
+      # OpenAI 크레딧 소진/장애 시 자동 폴백 (선택사항, 미설정 시 폴백 없음)
+      - key: OPENROUTER_API_KEY
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
