@@ -343,6 +343,30 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
     if not report:
         logger.warning("[텔레그램] 발송할 리포트 없음")
         return state
+
+    from services.decision_guard import gate_high_conviction_actions
+    gate = gate_high_conviction_actions(
+        state.get("ceo_decisions", {}),
+        state.get("raw_market_data", {}),
+        state.get("kr_index_realtime", {}),
+    )
+    if gate["blocked"]:
+        logger.error("[교차검증] 발송 보류: %s", gate["reason"])
+        try:
+            from services.report_service import release_report_slot
+            release_report_slot(state.get("date", ""), state.get("run_type", ""))
+        except Exception as e:
+            logger.warning("[교차검증] 슬롯 해제 실패: %s", e)
+        try:
+            send_error_alert(
+                f"[발송 보류] {state.get('run_type','')} 브리핑에 고신뢰도 액션과 "
+                f"시장 데이터 불일치가 함께 발견돼 자동발송을 보류했습니다.\n{gate['reason']}\n"
+                f"데이터 확인 후 수동 재실행하세요: python main.py --type <해당타입>"
+            )
+        except Exception:
+            pass
+        return state
+
     try:
         send_message(report)
         logger.info("[텔레그램] 발송 완료")
