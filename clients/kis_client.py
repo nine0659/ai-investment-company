@@ -169,15 +169,25 @@ class KISClient:
         )
 
     def get_fluctuation_rank(self, market: str = "J", rise: bool = True, top_n: int = 20) -> list[dict]:
-        """등락률 순위"""
+        """등락률 순위.
+
+        기존 코드는 TR_ID "FHPST01760000"(실제로는 시간외잔량순위 API 소속)을
+        엉뚱하게 이 엔드포인트에 써서 KIS가 매번 요청을 거부 — 응답이 항상
+        빈 리스트로 삼켜져 "데이터 없음"으로 오인됐다 (2026-08-07 확인, /rebound
+        장중 실행에도 계속 실패한 게 단서). 올바른 TR_ID는 FHPST01700000이고
+        상승/하락 정렬은 FID_DIV_CLS_CODE가 아니라 FID_RANK_SORT_CLS_CODE로 제어한다.
+        """
         return self._rank(
             "/uapi/domestic-stock/v1/ranking/fluctuation",
-            "FHPST01760000",
+            "FHPST01700000",
             {"FID_COND_MRKT_DIV_CODE": market, "FID_COND_SCR_DIV_CODE": "20170",
-             "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "1" if rise else "2",
-             "FID_BLNG_CLS_CODE": "0", "FID_TRGT_CLS_CODE": "111111111",
+             "FID_INPUT_ISCD": "0000",
+             "FID_RANK_SORT_CLS_CODE": "0" if rise else "1",
+             "FID_INPUT_CNT_1": "0", "FID_PRC_CLS_CODE": "1",
+             "FID_DIV_CLS_CODE": "0", "FID_TRGT_CLS_CODE": "111111111",
              "FID_TRGT_EXLS_CLS_CODE": "000000",
-             "FID_INPUT_PRICE_1": "", "FID_INPUT_PRICE_2": "", "FID_VOL_CNT": "", "FID_INPUT_DATE_1": ""},
+             "FID_INPUT_PRICE_1": "", "FID_INPUT_PRICE_2": "", "FID_VOL_CNT": "",
+             "FID_RSFL_RATE1": "", "FID_RSFL_RATE2": ""},
             top_n,
         )
 
