@@ -23,7 +23,7 @@
 ## 아키텍처 지도
 
 ```
-scheduler.py          ← Render 상주 프로세스 (잡 8개 + 텔레그램 봇 스레드). 주 실행자.
+scheduler.py          ← Render 상주 프로세스 (잡 9개 + 텔레그램 봇 스레드). 주 실행자.
 .github/workflows/    ← CI(테스트) + 브리핑 백업 크론 (GH cron은 상시 수십 분 지연됨)
 graph/investment_graph.py ← 장전/마감 브리핑 LangGraph 파이프라인 (수집→분석→CEO→발송)
 agents/               ← 개별 분석 에이전트 (ceo=핵심 브리핑, midterm/us=주간 추천, ...)
@@ -34,11 +34,12 @@ db/database.py        ← SQLAlchemy 테이블 정의. DATABASE_URL=Neon Postgre
 tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지우지 마라.
 ```
 
-## 현재 스케줄 (2026-07-06 축소 후 — 정기 메시지 주 5통)
+## 현재 스케줄 (2026-08-07 반등스크리너 주1회 추가 후 — 정기 메시지 주 6통)
 
 | 시각 | 잡 | 내용 |
 |---|---|---|
 | 월·수·금 08:20 | pre_market | 장전 브리핑 |
+| 금 15:00 | rebound_screener | 반등 스크리너 자동 발송 (LLM 미사용, 그 외엔 /rebound 온디맨드) |
 | 금 16:30 | close_market | 주간 마감 브리핑 |
 | 일 20:00 | weekly_picks | 주간 추천 1통 (국내 중기 + 미국 통합) |
 | 장중 매 15분 | market_monitor | 이상 신호 시에만 발송 |

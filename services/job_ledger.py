@@ -29,7 +29,7 @@ _EXPECTED_BY_WEEKDAY: dict[int, list[str]] = {
     1: ["daily_nav", "daily_tracker"],
     2: ["pre_market", "daily_nav", "daily_tracker"],
     3: ["daily_nav", "daily_tracker"],
-    4: ["pre_market", "close_market", "daily_nav", "daily_tracker"],
+    4: ["pre_market", "close_market", "daily_nav", "daily_tracker", "rebound_screener"],
     5: [],
     6: ["weekly_midterm", "weekly_us_invest"],
 }

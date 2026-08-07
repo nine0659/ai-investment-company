@@ -348,6 +348,35 @@ def job_daily_health():
         logger.error("헬스체크 실패: %s", e)
 
 
+def job_rebound_screener():
+    """매주 금요일 15:00 — 기술적·추세적 반등 스크리너 자동 발송.
+
+    LLM을 쓰지 않아 비용은 0원이지만(2026-08-07 KIS TR_ID 버그 수정 후 정상화),
+    매일 자동 발송하면 2026-07-06에 의도적으로 줄인 메시지 볼륨이 다시 늘어나므로
+    사용자 선택으로 주 1회만 자동화(그 외엔 /rebound 온디맨드 계속 사용 가능).
+    장중(09:00~15:30) 안에서 안정적인 15:00을 골라 장마감 직전 데이터 공백을 피한다.
+    """
+    from services.job_ledger import record_job
+    from services.report_service import claim_report_slot, release_report_slot
+
+    if not is_krx_trading_day():
+        record_job("rebound_screener", "skipped", "KRX 비거래일")
+        return
+
+    date_str = datetime.now(_KST).strftime("%Y-%m-%d")
+    if not claim_report_slot(date_str, "rebound_screener"):
+        logger.info("반등 스크리너 — 이미 다른 트리거가 선점함, 스킵")
+        return
+    try:
+        from agents.rebound_screener_agent import run_rebound_screen
+        run_rebound_screen(send=True)
+        record_job("rebound_screener", "success")
+    except Exception as e:
+        logger.error("반등 스크리너 실패: %s", e)
+        record_job("rebound_screener", "fail", str(e))
+        release_report_slot(date_str, "rebound_screener")
+
+
 def _parse_time(time_str: str) -> tuple[int, int]:
     h, m = time_str.split(":")
     return int(h), int(m)
@@ -456,6 +485,17 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 매일 08:05[/cyan] 일일 헬스체크 (조용한 실패 감지)")
+
+    # 반등 스크리너: 금요일 15:00 — 주 1회 자동 발송 (LLM 미사용, 그 외엔 /rebound 온디맨드)
+    scheduler.add_job(
+        job_rebound_screener,
+        CronTrigger(day_of_week="fri", hour=15, minute=0, timezone=TIMEZONE_STR),
+        id="rebound_screener",
+        name="[금 15:00] 반등 스크리너 자동 발송 (LLM 미사용)",
+        misfire_grace_time=600,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 금 15:00[/cyan] 반등 스크리너 (기술적/추세적, 주 1회 자동)")
 
 
 def shutdown(signum, frame):
