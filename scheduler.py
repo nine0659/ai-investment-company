@@ -503,6 +503,24 @@ def _recover_missed_briefings():
         ).start()
 
 
+def _recover_missed_daily_health(now: datetime = None) -> None:
+    """스케줄러 재시작이 08:05 헬스체크 시각을 덮치면 즉시 대신 실행.
+
+    daily_health는 _recover_missed_briefings()의 복구 대상(pre_market/close_market)에
+    없어 컨테이너 재시작이 그 시각과 겹치면 조용히 증발했다 — 정작 "조용한 실패"를
+    잡으려고 만든 헬스체크 자신이 조용히 실패한 사례 (2026-08-07 발견, 2026-07-25~
+    08-06 2주간 미실행). 장 개장 여부와 무관하게 매일 돌아야 하므로 거래일 체크 없음.
+    """
+    now = now or datetime.now(_KST)
+    if now.hour * 60 + now.minute < 8 * 60 + 5:
+        return  # 아직 예정 시각 전
+    from services.job_ledger import has_trace_today
+    if has_trace_today("daily_health"):
+        return
+    logger.warning("🔄 [복구] daily_health 헬스체크 누락 감지 — 지금 바로 실행")
+    threading.Thread(target=job_daily_health, name="recover-daily_health", daemon=True).start()
+
+
 def main():
     # 환경변수 검증
     missing = validate_env()
@@ -528,6 +546,12 @@ def main():
         _recover_missed_briefings()
     except Exception as e:
         logger.warning("복구 실행 오류 (무시): %s", e)
+
+    # 재시작으로 인한 당일 미실행 헬스체크 복구
+    try:
+        _recover_missed_daily_health()
+    except Exception as e:
+        logger.warning("헬스체크 복구 실행 오류 (무시): %s", e)
 
     # 텔레그램 봇을 백그라운드 스레드로 함께 시작
     try:
