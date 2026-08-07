@@ -109,6 +109,13 @@ BIG_FIGURES: dict[str, dict] = {
         "query_ko": "순다르피차이 구글 AI",
         "query_en": "Sundar Pichai Google AI Gemini",
     },
+    "데미스허사비스": {
+        "name_en":  "Demis Hassabis",
+        "org":      "구글 딥마인드",
+        "sector":   "AI/모델연구",
+        "query_ko": "데미스허사비스 딥마인드 AI",
+        "query_en": "Demis Hassabis DeepMind Gemini AI",
+    },
     "마크저커버그": {
         "name_en":  "Mark Zuckerberg",
         "org":      "메타",
