@@ -37,6 +37,10 @@ def build_deep_report(state: dict) -> str:
     """state에 이미 계산된 분석 리포트들 + 종목별 차트 지표를 모아 심층 리포트 텍스트 생성."""
     sections: list[str] = []
 
+    futures = state.get("futures_report", "")
+    if futures:
+        sections.append("🌙 *선물시장 분석 (오버나이트 신호 → 오늘 수혜 섹터/종목)*\n" + futures)
+
     macro = state.get("macro_report", "")
     if macro:
         sections.append("🌍 *매크로 분석*\n" + macro)
