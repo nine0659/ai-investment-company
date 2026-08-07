@@ -176,16 +176,50 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
 
 # ── 에이전트 노드 ───────────────────────────────────────────────
 
-def node_futures(state):      return futures_market_team.run(state)
-def node_us_global(state):    return us_global_team.run(state)
-def node_korea_flow(state):   return korea_flow_team.run(state)
-def node_news(state):         return news_analysis_team.run(state)
-def node_bigfigure(state):    return bigfigure_agent.run(state)
-def node_macro(state):        return macro_team.run(state)
-def node_event_risk(state):   return event_risk_team.run(state)
-def node_intelligence(state): return market_intelligence_team.run(state)
+def _parallel(run_fn):
+    """병렬(L2/L3) 브랜치용 안전 래퍼 — 이 브랜치가 실제로 바꾼 필드만 반환.
+
+    병렬 노드들이 각자 `state[k]=v; return state`로 전체 state를 반환하면,
+    LangGraph의 _last 리듀서가 "가장 나중에 병합된 브랜치"의 (그 브랜치
+    입장에서는 안 바뀐, 즉 자기 브랜치 시작 시점의 옛) 값으로 형제 브랜치가
+    막 써넣은 변경사항을 덮어써버린다. 2026-08-07 발견 — 2026-06-12 병렬
+    L2/L3 도입 이후 매크로·빅피겨·뉴스·글로벌인텔리전스·이벤트리스크·
+    이슈종목 분석이 거의 매번 서로를 지워 심층 리포트·CEO 브리핑 어디에도
+    도달하지 못하고 있었다(계산은 되지만 결과가 반영되기 직전에 증발).
+
+    errors(list, operator.add 리듀서)는 병렬 구간에서 아예 손대지 않는다 — 브랜치별로
+    "새로 늘어난 만큼만" 반환해도, 실측 결과 L2/L3처럼 여러 병렬 브랜치가 동시에
+    같은 리듀서 채널에 값을 반환하면 병합 과정에서 지수적으로 중복된다(브랜치 1개가
+    오류 1건만 냈는데 최종 512건까지 불어남 — 정확한 내부 메커니즘 미상, 재현은 확인함).
+    안전한 값을 못 찾아서, 병렬 브랜치의 오류는 리듀서에 넘기지 않고 로그로만 남긴다.
+    실패해도 각 에이전트가 자기 리포트 필드에 "OO 실패" 문구를 남기므로(위 델타 로직으로
+    이제 정상 전달됨) 사용자에게 보이는 정보 손실은 없다 — 사라지는 건 텔레그램
+    "데이터 수집 오류 N건" 진단 카운트 중 병렬 구간 몫뿐(순차 구간은 그대로 집계됨).
+    """
+    def wrapper(state):
+        local = dict(state)
+        local["errors"] = []
+        result = run_fn(local)
+        before = state
+        changed = {k: v for k, v in result.items() if k != "errors" and before.get(k) != v}
+        own_errors = result.get("errors", [])
+        if own_errors:
+            logger.warning("[병렬브랜치 오류] %s", own_errors)
+        return changed
+    return wrapper
+
+
+node_futures      = _parallel(lambda state: futures_market_team.run(state))
+node_us_global     = _parallel(lambda state: us_global_team.run(state))
+node_korea_flow    = _parallel(lambda state: korea_flow_team.run(state))
+node_news          = _parallel(lambda state: news_analysis_team.run(state))
+node_bigfigure     = _parallel(lambda state: bigfigure_agent.run(state))
+node_macro         = _parallel(lambda state: macro_team.run(state))
+node_event_risk    = _parallel(lambda state: event_risk_team.run(state))
+node_intelligence  = _parallel(lambda state: market_intelligence_team.run(state))
+node_issue_stocks  = _parallel(lambda state: issue_stock_agent.run(state))
+
 def node_risk(state):         return risk_management_team.run(state)
-def node_issue_stocks(state): return issue_stock_agent.run(state)
 
 def node_midterm_stocks(state):
     if state.get("run_type") in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
