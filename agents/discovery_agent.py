@@ -210,8 +210,14 @@ def _register_watchlist(report: str) -> tuple[str, int]:
     return cleaned, count
 
 
-def run_discovery(send: bool = True) -> str:
-    """탑다운 종목 발굴 실행. 리포트 텍스트 반환."""
+def run_discovery(send: bool = True, silent_if_empty: bool = False) -> str:
+    """탑다운 종목 발굴 실행. 리포트 텍스트 반환.
+
+    silent_if_empty: True면 발굴 종목이 0개(워치리스트 미등록)일 때 텔레그램
+    발송을 생략한다 — 주간 자동 실행에서 "이번 주 발굴 없음"류 공허한 리포트가
+    반복 발송되는 걸 막기 위함 (2026-07-06 신뢰성 회복 계획의 중단 사유와 동일한
+    문제를 재발시키지 않으려는 조건). 리포트 텍스트 자체는 항상 반환한다.
+    """
     now = datetime.now(_TZ)
     logger.info("[발굴] 시작: %s", now.strftime("%Y-%m-%d %H:%M"))
 
@@ -281,8 +287,10 @@ def run_discovery(send: bool = True) -> str:
         header += f"발굴 종목 {n_watch}개 워치리스트 자동 등록 — 진입 조건 도달 시 알림\n"
     header += "\n"
 
-    if send:
+    if send and not (silent_if_empty and n_watch == 0):
         send_message(header + report)
+    elif send:
+        logger.info("[발굴] 발굴 종목 없음 — silent_if_empty=True라 발송 생략")
     logger.info("[발굴] 완료 (워치리스트 등록 %d개)", n_watch)
     return header + report
 

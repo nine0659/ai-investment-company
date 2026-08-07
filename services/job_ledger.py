@@ -26,7 +26,7 @@ _KST = ZoneInfo("Asia/Seoul")
 # 일요일은 통합 추천 1통(weekly_midterm + weekly_us_invest 클레임으로 검증).
 _EXPECTED_BY_WEEKDAY: dict[int, list[str]] = {
     0: ["pre_market", "daily_nav", "daily_tracker"],
-    1: ["daily_nav", "daily_tracker"],
+    1: ["daily_nav", "daily_tracker", "discovery_weekly"],
     2: ["pre_market", "daily_nav", "daily_tracker"],
     3: ["daily_nav", "daily_tracker"],
     4: ["pre_market", "close_market", "daily_nav", "daily_tracker", "rebound_screener"],

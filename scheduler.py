@@ -207,11 +207,16 @@ def job_monthly_thesis():
 
 
 # ── 일시 중단된 잡 (2026-07-06 축소 결정) ────────────────────────────
-# 귀인분석·적중률통계·주간전략·종목발굴·장기분석(월간)은 추천/거래 데이터가
-# 충분히 쌓일 때까지 자동 스케줄에서 제외한다 — "추천 데이터 없음" 리포트가
+# 귀인분석·적중률통계·주간전략·장기분석(월간)은 추천/거래 데이터가 충분히
+# 쌓일 때까지 자동 스케줄에서 제외한다 — "추천 데이터 없음" 리포트가
 # 반복 발송된 것이 중단 근거. 수동 실행은 계속 가능:
 #   python main.py --type attribution / weekly / strategy / longterm
 # 재개 시 이 파일에 잡을 다시 등록하고 job_ledger의 기대 목록도 갱신할 것.
+#
+# 종목발굴(discovery_agent)은 2026-08-07 사용자 승인으로 조건부 재개했다
+# (job_discovery_weekly 참조) — 원래 재개 기준(추천 8건+)은 아직 미달이지만,
+# "완전 자동 발송"이 아니라 "후보 있을 때만 발송"으로 공허한 리포트 반복
+# 문제를 구조적으로 차단했기 때문에 예외로 허용됨.
 
 
 def job_weekly_picks():
@@ -377,6 +382,38 @@ def job_rebound_screener():
         release_report_slot(date_str, "rebound_screener")
 
 
+def job_discovery_weekly():
+    """매주 화요일 19:00 — 탑다운 종목 발굴, 진짜 후보가 있을 때만 발송.
+
+    discovery_agent(종목발굴)는 2026-07-06 신뢰성 회복 계획으로 자동 스케줄에서
+    빠졌고, 재개 기준(stock_recommendations 8건+, 추적 4주+)이 CLAUDE.md에
+    명문화돼 있다. 2026-08-07 기준 3건으로 그 기준은 아직 미달이지만, 사용자가
+    트레이드오프를 인지한 상태에서 "완전 자동화는 아니고, 조건부(진짜 좋은
+    종목일 때만) 발송이면 지금 재개해도 된다"고 명시적으로 승인 — 그래서
+    무조건 매주 발송이 아니라 silent_if_empty=True로 빈 리포트는 억제한다.
+    (원래 있던 실패 패턴 — 공허한 리포트 반복 발송 — 을 구조적으로 차단.)
+    """
+    from services.job_ledger import record_job
+    from services.report_service import claim_report_slot, release_report_slot
+
+    if not is_krx_trading_day():
+        record_job("discovery_weekly", "skipped", "KRX 비거래일")
+        return
+
+    date_str = datetime.now(_KST).strftime("%Y-%m-%d")
+    if not claim_report_slot(date_str, "discovery_weekly"):
+        logger.info("종목 발굴(주간) — 이미 다른 트리거가 선점함, 스킵")
+        return
+    try:
+        from agents.discovery_agent import run_discovery
+        run_discovery(send=True, silent_if_empty=True)
+        record_job("discovery_weekly", "success")
+    except Exception as e:
+        logger.error("종목 발굴(주간) 실패: %s", e)
+        record_job("discovery_weekly", "fail", str(e))
+        release_report_slot(date_str, "discovery_weekly")
+
+
 def _parse_time(time_str: str) -> tuple[int, int]:
     h, m = time_str.split(":")
     return int(h), int(m)
@@ -496,6 +533,18 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 금 15:00[/cyan] 반등 스크리너 (기술적/추세적, 주 1회 자동)")
+
+    # 종목 발굴: 화요일 19:00 — 주 1회 자동 실행, 진짜 후보 있을 때만 발송
+    # (2026-08-07 사용자 승인 하 조건부 재개 — job_discovery_weekly 문서 참조)
+    scheduler.add_job(
+        job_discovery_weekly,
+        CronTrigger(day_of_week="tue", hour=19, minute=0, timezone=TIMEZONE_STR),
+        id="discovery_weekly",
+        name="[화 19:00] 종목 발굴 (조건부 발송 — 후보 있을 때만)",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 화 19:00[/cyan] 종목 발굴 (조건부 발송, 후보 있을 때만)")
 
 
 def shutdown(signum, frame):

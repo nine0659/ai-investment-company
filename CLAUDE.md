@@ -23,7 +23,7 @@
 ## 아키텍처 지도
 
 ```
-scheduler.py          ← Render 상주 프로세스 (잡 9개 + 텔레그램 봇 스레드). 주 실행자.
+scheduler.py          ← Render 상주 프로세스 (잡 10개 + 텔레그램 봇 스레드). 주 실행자.
 .github/workflows/    ← CI(테스트) + 브리핑 백업 크론 (GH cron은 상시 수십 분 지연됨)
 graph/investment_graph.py ← 장전/마감 브리핑 LangGraph 파이프라인 (수집→분석→CEO→발송)
 agents/               ← 개별 분석 에이전트 (ceo=핵심 브리핑, midterm/us=주간 추천, ...)
@@ -34,11 +34,12 @@ db/database.py        ← SQLAlchemy 테이블 정의. DATABASE_URL=Neon Postgre
 tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지우지 마라.
 ```
 
-## 현재 스케줄 (2026-08-07 반등스크리너 주1회 추가 후 — 정기 메시지 주 6통)
+## 현재 스케줄 (2026-08-07 종목발굴 조건부 재개 후 — 정기 메시지 주 6통 + 조건부 1통)
 
 | 시각 | 잡 | 내용 |
 |---|---|---|
 | 월·수·금 08:20 | pre_market | 장전 브리핑 |
+| 화 19:00 | discovery_weekly | 종목 발굴 — **조건부 발송**(진짜 후보 있을 때만, 없으면 무발송) |
 | 금 15:00 | rebound_screener | 반등 스크리너 자동 발송 (LLM 미사용, 그 외엔 /rebound 온디맨드) |
 | 금 16:30 | close_market | 주간 마감 브리핑 |
 | 일 20:00 | weekly_picks | 주간 추천 1통 (국내 중기 + 미국 통합) |
@@ -49,10 +50,16 @@ tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지�
 | 평일 16:45 (GH) | nav-tracker.yml 백업 | Render가 16:10/16:20을 놓친 날만 대신 실행 (job_runs 흔적 확인 후) |
 
 **일시 중단** (추천·거래 데이터 축적 전 공허한 리포트 방지):
-귀인분석 · 적중률통계 · 주간전략 · 종목발굴 · 장기분석 · KOSPI추세 · 월간학습.
+귀인분석 · 적중률통계 · 주간전략 · 장기분석 · KOSPI추세 · 월간학습.
 수동 실행: `python main.py --type attribution|weekly|strategy|longterm|trend|monthly`
 **재개 절차**: scheduler.py에 잡 재등록 → job_ledger 기대목록 갱신 → 테스트 갱신 → 사용자 승인.
 재개 판단 기준: stock_recommendations에 추천이 8건+ 쌓이고 추적 데이터가 4주+ 존재할 것.
+
+**예외 — 종목발굴(discovery_agent)은 2026-08-07 조건부 재개됨**: 위 8건+ 기준은
+아직 미달(3건)이지만, "완전 자동 발송"이 아니라 `silent_if_empty=True`로
+후보가 없으면 조용히 넘어가는 조건부 방식이라 공허한 리포트 반복 문제가
+구조적으로 차단된다는 점을 사용자에게 설명하고 명시적 승인을 받아 재개.
+다른 중단 기능(귀인분석 등)에 이 예외를 유추 적용하지 말 것 — 매번 별도 승인 필요.
 
 ## 학습 루프 (2026-07-06 복원 — 끊어먹지 마라)
 
