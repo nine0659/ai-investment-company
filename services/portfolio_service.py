@@ -140,6 +140,80 @@ def close_position(code: str, exit_price: float = None, exit_date: str = None,
             "avg_price": avg_price, "exit_price": exit_price, "return_pct": ret}
 
 
+# ── KIS 실계좌 동기화 (읽기 전용) ──────────────────────────────
+#
+# portfolio_positions는 그동안 사람이 직접 갱신해왔다(비고에 "사용자 실보유
+# 등록" 같은 수동 메모가 남아있음). get_account_balance()가 실계좌 잔고를
+# 가져올 수 있는데도 여태 이 테이블 갱신에 쓰이지 않아, DB 상태가 실제
+# 계좌와 어긋나도 아무도 몰랐다(2026-08 발견). 이 함수는 실계좌를 진실
+# 소스로 삼아 반영만 한다 — 주문을 내지 않으므로 드로다운 자동매도 금지
+# 원칙과 무관하다.
+def sync_from_kis(kis) -> dict:
+    """KIS 실계좌 잔고를 portfolio_positions에 읽기 전용으로 반영.
+
+    - 실계좌엔 있는데 DB엔 없는 종목 → 신규 등록
+    - DB엔 holding인데 수량/평균단가가 실계좌와 다름 → 실계좌 기준으로 갱신
+    - DB엔 holding인데 실계좌엔 없음(시스템 밖에서 매도됨) → status='sold' 처리
+      (실제 매도가를 알 수 없으므로 portfolio_history에 허구 수익률을 남기지 않는다)
+    status='draft'인 행(CIO 검토 대기 등)은 건드리지 않는다.
+    """
+    changes = {"new": [], "updated": [], "closed": []}
+    try:
+        balance = kis.get_account_balance()
+    except Exception as e:
+        logger.warning("[KIS동기화] 잔고 조회 실패 — 동기화 건너뜀: %s", e)
+        return changes
+
+    kis_holdings = {h["code"]: h for h in balance.get("holdings", []) if h.get("qty", 0) > 0}
+    db_by_code   = {p["code"]: p for p in get_portfolio()}  # status='holding'만
+    now = datetime.now(_TZ).strftime("%Y-%m-%d")
+
+    with get_conn() as conn:
+        for code, h in kis_holdings.items():
+            qty, avg = h["qty"], h["avg_price"]
+            existing = db_by_code.get(code)
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO portfolio_positions "
+                        "(code, name, quantity, avg_price, entry_date, timeframe, "
+                        " status, memo, created_at, updated_at) "
+                        "VALUES (:code, :name, :qty, :avg, :entry_date, 'mid', "
+                        "        'holding', :memo, :now, :now)"
+                    ),
+                    {"code": code, "name": h.get("name") or code, "qty": qty, "avg": avg,
+                     "entry_date": now, "memo": f"{now} KIS 계좌 자동 동기화로 신규 등록", "now": now},
+                )
+                changes["new"].append(code)
+            elif existing["quantity"] != qty or round(existing["avg_price"] or 0) != round(avg):
+                conn.execute(
+                    text(
+                        "UPDATE portfolio_positions SET quantity=:qty, avg_price=:avg, updated_at=:now "
+                        "WHERE code=:code AND status='holding'"
+                    ),
+                    {"qty": qty, "avg": avg, "now": now, "code": code},
+                )
+                changes["updated"].append(code)
+
+        for code in db_by_code:
+            if code not in kis_holdings:
+                conn.execute(
+                    text(
+                        "UPDATE portfolio_positions SET status='sold', updated_at=:now, "
+                        "memo = COALESCE(memo, '') || :note "
+                        "WHERE code=:code AND status='holding'"
+                    ),
+                    {"now": now, "code": code,
+                     "note": f" [{now} KIS 동기화: 실계좌에서 확인 안 됨 — 자동 종료 처리]"},
+                )
+                changes["closed"].append(code)
+
+    if changes["new"] or changes["updated"] or changes["closed"]:
+        logger.info("[KIS동기화] 신규 %d건 갱신 %d건 종료 %d건: %s",
+                    len(changes["new"]), len(changes["updated"]), len(changes["closed"]), changes)
+    return changes
+
+
 # ── 조회 ──────────────────────────────────────────────────────
 
 def get_portfolio() -> list[dict]:

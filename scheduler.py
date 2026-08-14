@@ -286,6 +286,24 @@ def job_daily_nav():
     if not is_krx_trading_day():
         record_job("daily_nav", "skipped", "KRX 비거래일")
         return
+
+    # KIS 실계좌 잔고를 portfolio_positions에 반영(읽기 전용) — NAV 계산이
+    # 이 테이블을 그대로 쓰므로, 동기화가 record_nav보다 먼저 돌아야 한다.
+    # 그동안 이 테이블은 수동 입력에 의존해 실계좌와 어긋나도 몰랐다(2026-08 발견).
+    try:
+        kis = _get_kis()
+        if kis:
+            from services.portfolio_service import sync_from_kis
+            changes = sync_from_kis(kis)
+            if changes.get("new") or changes.get("closed"):
+                send_error_alert(
+                    "[KIS 계좌 동기화] 실계좌 기준 반영: "
+                    f"신규 {len(changes['new'])}건 {changes['new']} | "
+                    f"종료 {len(changes['closed'])}건 {changes['closed']}"
+                )
+    except Exception as e:
+        logger.warning("KIS 계좌 동기화 실패 (NAV는 계속 진행): %s", e)
+
     try:
         from services.nav_service import record_nav
         nav = record_nav(_get_kis())
