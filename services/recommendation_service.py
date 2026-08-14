@@ -78,6 +78,11 @@ _PICK_RE = re.compile(
     re.MULTILINE,
 )
 
+# 같은 줄/근처 블록에서 손절 기준을 찾는 패턴 — "손절 -10%" 또는 "손절가 280,000원"
+_STOP_PCT_RE   = re.compile(r"손절\s*[:：]?\s*-?([\d.]+)\s*%")
+_STOP_PRICE_RE = re.compile(r"손절가\s*[:：]?\s*([\d,]+)\s*원")
+_DEFAULT_STOP_PCT = 10.0  # 브리핑에 손절 기준이 없을 때 적용하는 기본 하락폭
+
 
 def recs_from_weekly_picks(
     report: str,
@@ -96,6 +101,12 @@ def recs_from_weekly_picks(
       3) 목표가가 진입가의 0.7~3.0배 범위 밖이면 폐기 (비현실 목표)
       4) "(지난 추천 유지)" 종목은 저장하지 않는다 — 최초 추천일 기준으로
          이미 추적 중이므로, 다시 저장하면 성과 측정 기준일이 오염된다
+
+    손절가: 브리핑 텍스트에 "손절 -N%" 또는 "손절가 N원"이 있으면 그 기준을
+    실데이터 진입가에 적용해 계산한다. 텍스트에 손절 기준이 전혀 없으면
+    기본값(_DEFAULT_STOP_PCT)을 적용한다 — 0으로 저장하지 않는다. stop_price가
+    0이면 daily_tracker의 손절 판정(`if stop_price and price <= stop_price`)이
+    0을 falsy로 취급해 손절 알림이 영구히 발동하지 않는 버그가 있었다(2026-08).
     """
     results: list[dict] = []
     seen: set[str] = set()
@@ -139,12 +150,30 @@ def recs_from_weekly_picks(
         if why:
             rationale = f"{rationale_prefix} — {why.group(1).strip()[:150]}"
 
+        # 손절가: 텍스트에 명시된 기준 우선, 없으면 기본 하락폭 적용 (절대 0 아님)
+        stop_price = None
+        pct_m = _STOP_PCT_RE.search(line_block)
+        if pct_m:
+            try:
+                stop_price = actual_price * (1 - float(pct_m.group(1)) / 100)
+            except ValueError:
+                stop_price = None
+        if stop_price is None:
+            price_m = _STOP_PRICE_RE.search(line_block)
+            if price_m:
+                try:
+                    stop_price = float(price_m.group(1).replace(",", ""))
+                except ValueError:
+                    stop_price = None
+        if stop_price is None or not (0 < stop_price < actual_price):
+            stop_price = actual_price * (1 - _DEFAULT_STOP_PCT / 100)
+
         seen.add(code)
         results.append({
             "name":         name,
             "code":         code,
             "entry_price":  int(actual_price),
-            "stop_price":   0,
+            "stop_price":   int(stop_price),
             "target_price": int(target),
             "rationale":    rationale,
         })
@@ -152,8 +181,14 @@ def recs_from_weekly_picks(
     return results
 
 
-def has_open_recommendation(code: str, days: int = 30) -> bool:
-    """최근 N일 내 같은 종목의 미결(추적 가능) 추천이 있는지 — 중복 추적 방지."""
+def has_open_recommendation(code: str, days: int = 45) -> bool:
+    """최근 N일 내 같은 종목의 미결(추적 가능) 추천이 있는지 — 중복 추적 방지.
+
+    days 기본값은 recommendation_tracker_service._get_active_recommendations()의
+    45일 활성 풀 창과 맞춘 것 — 추적기의 만료 기준(30 영업일 ≈ 캘린더 42일)보다
+    이 창이 짧으면, 아직 만료되지 않은 추천인데도 dedup을 통과해 같은 종목이
+    중복 추적 행으로 쌓일 수 있다(2026-08 발견).
+    """
     try:
         cutoff = (datetime.now(_TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
         with get_conn() as conn:
