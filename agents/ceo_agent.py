@@ -470,6 +470,8 @@ def _build_prompt_intra2() -> str:
 # ── 메인 run() ───────────────────────────────────────────────────────────────
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"] 직접 mutate 금지 — 이유는 risk_management_team.py 참조.
+    _new_errors: list[str] = []
     try:
         run_type = state.get("run_type", RUN_TYPE_PRE)
         now      = datetime.now(TZ)
@@ -942,7 +944,7 @@ def run(state: InvestmentState) -> InvestmentState:
             if _rr_warns:
                 for _w in _rr_warns:
                     logger.warning("[CIO] %s", _w)
-                state["errors"].extend(_rr_warns)
+                _new_errors.extend(_rr_warns)
                 # 브리핑 맨 앞에 경고 블록 삽입 (텔레그램 가시성)
                 _rr_block = (
                     "\n\n🚨 [CIO 헌장 위반 — R/R 기준 미달]\n"
@@ -1009,7 +1011,8 @@ def run(state: InvestmentState) -> InvestmentState:
         logger.error("[CIO] 실패: %s", e)
         state["ceo_report"]    = "브리핑 생성 실패"
         state["ceo_decisions"] = {}
-        state["errors"].append(f"ceo_agent: {e}")
+        _new_errors.append(f"ceo_agent: {e}")
+    state["errors"] = _new_errors
     return state
 
 

@@ -32,6 +32,8 @@ _SYSTEM = """당신은 투자 성과 복기 전문가입니다.
 
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"] 직접 mutate 금지 — 이유는 risk_management_team.py 참조.
+    _new_errors: list[str] = []
     try:
         last    = get_last_close_report()
         mkt     = state.get("raw_market_data", {})
@@ -110,5 +112,6 @@ def run(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[복기팀] 실패: %s", e)
         state["review_report"] = "복기 생성 실패"
-        state["errors"].append(f"review_team: {e}")
+        _new_errors.append(f"review_team: {e}")
+    state["errors"] = _new_errors
     return state

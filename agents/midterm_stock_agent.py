@@ -82,6 +82,8 @@ def _fmt_us_movers(us_hot: list) -> str:
 
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"] 직접 mutate 금지 — 이유는 risk_management_team.py 참조.
+    _new_errors: list[str] = []
     try:
         macro     = state.get("macro_report", "")
         sector    = state.get("sector_report", "")
@@ -127,5 +129,6 @@ def run(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[중장기추천] 실패: %s", e)
         state["midterm_stock_report"] = ""
-        state["errors"].append(f"midterm_stock_agent: {e}")
+        _new_errors.append(f"midterm_stock_agent: {e}")
+    state["errors"] = _new_errors
     return state

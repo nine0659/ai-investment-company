@@ -21,6 +21,11 @@ _SYSTEM = """당신은 리스크 관리 전문가입니다.
 
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"]는 operator.add 채널의 백업 리스트 자체라 직접 append하면
+    # 채널의 "이전 값"까지 오염돼 이 노드를 지날 때마다 정확히 2배씩 불어난다
+    # (2026-08 재현 확인, project_langgraph_parallel_state_wipe_bug 메모리 참조).
+    # 반드시 별도 로컬 리스트에 모아 마지막에 델타로 교체할 것.
+    _new_errors: list[str] = []
     try:
         mkt = state.get("raw_market_data", {})
         vix     = mkt.get("vix",     {}).get("close", "N/A")
@@ -60,5 +65,6 @@ def run(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[리스크팀] 실패: %s", e)
         state["risk_report"] = "분석 실패"
-        state["errors"].append(f"risk_team: {e}")
+        _new_errors.append(f"risk_team: {e}")
+    state["errors"] = _new_errors
     return state

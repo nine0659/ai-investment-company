@@ -86,6 +86,8 @@ def _format_watchlist_for_prompt(items: list[dict], triggered: list[dict]) -> st
 
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"] 직접 mutate 금지 — 이유는 risk_management_team.py 참조.
+    _new_errors: list[str] = []
     try:
         portfolio = calculate_pnl()  # 현재가 없이 기본 계산 (KIS 호출 비용 절약)
         watchlist = get_watchlist("active")
@@ -93,6 +95,7 @@ def run(state: InvestmentState) -> InvestmentState:
         if not portfolio and not watchlist:
             logger.info("[포트폴리오매니저] 보유 포지션·워치리스트 모두 없음 — 스킵")
             state["portfolio_report"] = ""
+            state["errors"] = _new_errors
             return state
 
         # KIS로 현재가 조회 (포트폴리오가 있을 때만)
@@ -196,5 +199,6 @@ def run(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[포트폴리오매니저] 실패: %s", e)
         state["portfolio_report"] = ""
-        state.setdefault("errors", []).append(f"portfolio_manager_agent: {e}")
+        _new_errors.append(f"portfolio_manager_agent: {e}")
+    state["errors"] = _new_errors
     return state

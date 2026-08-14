@@ -41,6 +41,11 @@ kis = KISClient()
 
 def collect_raw_data(state: InvestmentState) -> InvestmentState:
     logger.info("[데이터수집] 시작")
+    # state["errors"]는 operator.add 채널의 실제 백업 리스트 그 자체라 직접
+    # append하면 채널의 "이전 값"까지 오염돼 매 노드 hop마다 정확히 2배씩
+    # 불어난다(2026-08 재현 확인, project_langgraph_parallel_state_wipe_bug
+    # 메모리 참조). 반드시 별도 로컬 리스트에 모아 마지막에 델타로 교체할 것.
+    _new_errors: list[str] = []
 
     try:
         state["raw_market_data"] = fetch_global_market_data()
@@ -48,14 +53,14 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         state["data_freshness"] = freshness
         if freshness["warning"]:
             logger.warning("[데이터수집] %s", freshness["warning"])
-            state["errors"].append(f"data_stale: {freshness['warning']}")
+            _new_errors.append(f"data_stale: {freshness['warning']}")
         else:
             logger.info("[데이터수집] 글로벌 시장 완료 — 데이터 기준: %s", freshness["label"])
     except Exception as e:
         logger.error("[데이터수집] 글로벌 실패: %s", e)
         state["raw_market_data"] = {}
         state["data_freshness"] = {}
-        state["errors"].append(f"collect_global: {e}")
+        _new_errors.append(f"collect_global: {e}")
 
     try:
         state["us_hot_stocks"] = fetch_us_top_movers(n=5)
@@ -63,7 +68,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[데이터수집] 미국 상위 종목 실패: %s", e)
         state["us_hot_stocks"] = []
-        state["errors"].append(f"collect_us_hot: {e}")
+        _new_errors.append(f"collect_us_hot: {e}")
 
     try:
         state["us_sector_data"] = fetch_us_sectors()
@@ -71,7 +76,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[데이터수집] 미국 섹터 실패: %s", e)
         state["us_sector_data"] = {}
-        state["errors"].append(f"collect_us_sectors: {e}")
+        _new_errors.append(f"collect_us_sectors: {e}")
 
     try:
         state["us_52w_highs"] = fetch_us_52w_highs()
@@ -79,7 +84,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[데이터수집] 미국 52w 실패: %s", e)
         state["us_52w_highs"] = []
-        state["errors"].append(f"collect_us_52w: {e}")
+        _new_errors.append(f"collect_us_52w: {e}")
 
     try:
         state["bigfigure_news"] = fetch_bigfigure_news(max_per_figure=3)
@@ -87,7 +92,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[데이터수집] 빅피겨 뉴스 실패: %s", e)
         state["bigfigure_news"] = []
-        state["errors"].append(f"collect_bigfigure: {e}")
+        _new_errors.append(f"collect_bigfigure: {e}")
 
     try:
         kis_data: dict = {}
@@ -111,7 +116,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[데이터수집] KIS 전체 실패: %s", e)
         state["raw_kis_data"] = {}
-        state["errors"].append(f"collect_kis: {e}")
+        _new_errors.append(f"collect_kis: {e}")
 
     try:
         state["raw_news_data"] = fetch_all_news(
@@ -122,7 +127,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[데이터수집] 뉴스 실패: %s", e)
         state["raw_news_data"] = {}
-        state["errors"].append(f"collect_news: {e}")
+        _new_errors.append(f"collect_news: {e}")
 
     try:
         from agents.dart_alert_agent import fetch_for_briefing
@@ -171,6 +176,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
         logger.warning("[데이터수집] 컨센서스 수집 실패 (무시): %s", e)
         state["consensus_data"] = {}
 
+    state["errors"] = _new_errors  # 델타만 반환 — 원본 리스트는 절대 참조하지 않음
     return state
 
 
@@ -259,6 +265,8 @@ def node_l3_barrier(state): return {}
 # ── 저장 / 발송 노드 ────────────────────────────────────────────
 
 def node_save_report(state: InvestmentState) -> InvestmentState:
+    # state["errors"]를 직접 mutate하지 않는다 — 이유는 collect_raw_data 참조.
+    _new_errors: list[str] = []
     try:
         save_report(
             date=state["date"],
@@ -271,7 +279,7 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         logger.info("[리포트저장] 완료")
     except Exception as e:
         logger.error("[리포트저장] 실패: %s", e)
-        state["errors"].append(f"save_report: {e}")
+        _new_errors.append(f"save_report: {e}")
 
     ceo_report = state.get("ceo_report", "")
 
@@ -357,6 +365,7 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.warning("[아카이브] 저장 실패: %s", e)
 
+    state["errors"] = _new_errors  # 델타만 반환 — 원본 리스트는 절대 참조하지 않음
     return state
 
 
@@ -371,10 +380,17 @@ def node_deep_report(state: InvestmentState) -> InvestmentState:
         state["deep_report_content"] = content
     except Exception as e:
         logger.warning("[심층리포트] 생성 실패 (무시): %s", e)
+    # 이 노드는 errors에 새로 추가하는 게 없다 — 빈 델타로 반환해야 한다.
+    # state["errors"]를 그대로 반환하면(무수정이어도) 채널 백업 리스트를
+    # 참조로 다시 제출하는 셈이라 이 노드를 지날 때마다 2배씩 불어난다.
+    state["errors"] = []
     return state
 
 
 def node_record_nav(state: InvestmentState) -> InvestmentState:
+    # 이 노드도 errors를 새로 추가하지 않는다 — 이유는 node_deep_report 참조.
+    # 조기 반환(run_type != CLOSE) 경로도 동일하게 빈 델타여야 하므로 맨 앞에서 처리.
+    state["errors"] = []
     if state.get("run_type") != RUN_TYPE_CLOSE:
         return state
     try:
@@ -390,6 +406,12 @@ def node_record_nav(state: InvestmentState) -> InvestmentState:
 
 
 def node_send_telegram(state: InvestmentState) -> InvestmentState:
+    # 이 노드는 진단 로그에 쓰려고 지금까지 누적된 errors를 "읽어야" 하므로
+    # (아래 filtered 계산), 채널 백업 리스트를 건드리기 전에 내용을 스냅샷으로
+    # 떠 둔다 — 이후 모든 return 경로에서 state["errors"]는 빈 델타로 나간다.
+    _errors_snapshot = list(state.get("errors", []))
+    state["errors"] = []
+
     report = state.get("ceo_report", "")
     if not report:
         logger.warning("[텔레그램] 발송할 리포트 없음")
@@ -421,7 +443,7 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
     try:
         send_message(report)
         logger.info("[텔레그램] 발송 완료")
-        errors = state.get("errors", [])
+        errors = _errors_snapshot
         if errors:
             _SKIP_PATTERNS = ("psycopg2", "OperationalError", "supabase", "connection to server")
             filtered = [e for e in errors if not any(p in e for p in _SKIP_PATTERNS)]
@@ -452,6 +474,8 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
 
 def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
     logger.info("[글로벌수집] 시작 (KIS 제외)")
+    # state["errors"]를 직접 mutate하지 않는다 — 이유는 collect_raw_data 참조.
+    _new_errors: list[str] = []
 
     for key, fn, label, default in [
         ("raw_market_data", fetch_global_market_data,          "글로벌 시장",      {}),
@@ -464,7 +488,7 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
         except Exception as e:
             logger.error("[글로벌수집] %s 실패: %s", label, e)
             state[key] = default
-            state["errors"].append(f"global_{key}: {e}")
+            _new_errors.append(f"global_{key}: {e}")
 
     try:
         freshness = check_data_freshness(state["raw_market_data"])
@@ -480,7 +504,7 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[글로벌수집] 미국 상위 종목 실패: %s", e)
         state["us_hot_stocks"] = []
-        state["errors"].append(f"global_us_hot: {e}")
+        _new_errors.append(f"global_us_hot: {e}")
 
     try:
         state["bigfigure_news"] = fetch_bigfigure_news(max_per_figure=3)
@@ -516,6 +540,7 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
     except Exception:
         state["weekly_strategy_summary"] = ""
 
+    state["errors"] = _new_errors  # 델타만 반환 — 원본 리스트는 절대 참조하지 않음
     return state
 
 

@@ -46,6 +46,8 @@ _DIRECTIONS = ["강한상승", "상승", "강한하락", "하락", "중립"]
 
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"] 직접 mutate 금지 — 이유는 risk_management_team.py 참조.
+    _new_errors: list[str] = []
     try:
         event_level = state.get("event_risk_level", "중간")
         parts = [
@@ -106,5 +108,6 @@ def run(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[분석팀] 실패: %s", e)
         state["committee_report"] = "분석팀 보고 실패"
-        state["errors"].append(f"committee: {e}")
+        _new_errors.append(f"committee: {e}")
+    state["errors"] = _new_errors
     return state
