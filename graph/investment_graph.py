@@ -176,7 +176,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
 
 # ── 에이전트 노드 ───────────────────────────────────────────────
 
-def _parallel(run_fn):
+def _parallel(run_fn, name: str):
     """병렬(L2/L3) 브랜치용 안전 래퍼 — 이 브랜치가 실제로 바꾼 필드만 반환.
 
     병렬 노드들이 각자 `state[k]=v; return state`로 전체 state를 반환하면,
@@ -205,19 +205,35 @@ def _parallel(run_fn):
         own_errors = result.get("errors", [])
         if own_errors:
             logger.warning("[병렬브랜치 오류] %s", own_errors)
+
+        # 브랜치 단위 실행 기록 — job 전체는 성공해도 특정 브랜치만 계속
+        # 실패/무반영이면 job 단위 daily_health로는 못 잡는다(2026-08 발견).
+        # 기록 자체가 실패해도 브리핑엔 영향 없어야 하므로 예외를 삼킨다.
+        try:
+            from services.job_ledger import record_job
+            branch_job = f"branch:{name}"
+            if own_errors:
+                record_job(branch_job, "fail", "; ".join(str(e) for e in own_errors)[:280])
+            elif not changed:
+                record_job(branch_job, "fail", "state 변경 없음 — 결과 미반영")
+            else:
+                record_job(branch_job, "success", f"{len(changed)}개 필드 갱신")
+        except Exception:
+            pass
+
         return changed
     return wrapper
 
 
-node_futures      = _parallel(lambda state: futures_market_team.run(state))
-node_us_global     = _parallel(lambda state: us_global_team.run(state))
-node_korea_flow    = _parallel(lambda state: korea_flow_team.run(state))
-node_news          = _parallel(lambda state: news_analysis_team.run(state))
-node_bigfigure     = _parallel(lambda state: bigfigure_agent.run(state))
-node_macro         = _parallel(lambda state: macro_team.run(state))
-node_event_risk    = _parallel(lambda state: event_risk_team.run(state))
-node_intelligence  = _parallel(lambda state: market_intelligence_team.run(state))
-node_issue_stocks  = _parallel(lambda state: issue_stock_agent.run(state))
+node_futures      = _parallel(lambda state: futures_market_team.run(state), "futures_market_team")
+node_us_global     = _parallel(lambda state: us_global_team.run(state), "us_global_team")
+node_korea_flow    = _parallel(lambda state: korea_flow_team.run(state), "korea_flow_team")
+node_news          = _parallel(lambda state: news_analysis_team.run(state), "news_analysis_team")
+node_bigfigure     = _parallel(lambda state: bigfigure_agent.run(state), "bigfigure_agent")
+node_macro         = _parallel(lambda state: macro_team.run(state), "macro_team")
+node_event_risk    = _parallel(lambda state: event_risk_team.run(state), "event_risk_team")
+node_intelligence  = _parallel(lambda state: market_intelligence_team.run(state), "market_intelligence_team")
+node_issue_stocks  = _parallel(lambda state: issue_stock_agent.run(state), "issue_stock_agent")
 
 def node_risk(state):         return risk_management_team.run(state)
 

@@ -75,3 +75,24 @@ def test_non_numeric_value_removed():
     cleaned, warnings = sanitize_stock_data({"code": "X", "name": "T", "per": "N/A값"})
     assert cleaned["per"] is None
     assert warnings
+
+
+def test_absolute_amount_scale_error_removed():
+    # 2026-08 감사에서 발견: 비율 지표(성장률·마진)만 범위 검사하고 절대금액
+    # (매출·영업이익·순이익, 억원)은 무방비였다 — DART 파싱 자릿수 오류가 나도
+    # 안 걸림. 자릿수 3개 밀린 값(정상 매출 300조를 300경으로 오인)을 검증.
+    cleaned, warnings = sanitize_stock_data({
+        "code": "005930", "name": "삼성전자", "revenue_억": 3_000_000_000,
+    })
+    assert cleaned["revenue_억"] is None
+    assert warnings
+
+
+def test_normal_absolute_amounts_untouched():
+    cleaned, warnings = sanitize_stock_data({
+        "code": "005930", "name": "삼성전자",
+        "revenue_억": 3_000_000, "op_income_억": 400_000, "net_income_억": 300_000,
+        "q_revenue_억": 800_000, "q_op_income_억": 100_000,
+    })
+    assert warnings == []
+    assert cleaned["revenue_억"] == 3_000_000

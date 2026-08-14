@@ -21,7 +21,6 @@ from sqlalchemy import (
     Column, Float, Integer, MetaData, String, Table, Text, UniqueConstraint,
     create_engine, text,
 )
-from sqlalchemy.pool import StaticPool
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +50,16 @@ def _make_sqlite() -> "Engine":
     db_path = Path(__file__).parent.parent / "data" / "database.sqlite3"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("[DB] SQLite 로컬: %s", db_path)
+    # StaticPool은 커넥션 풀 전체가 sqlite3 커넥션 객체 단 하나를 공유한다 —
+    # :memory: DB의 상태를 여러 논리 커넥션 간에 유지하려는 용도인데, 여기는
+    # 파일 기반 DB라 애초에 불필요했다. 게다가 LangGraph 병렬 브랜치처럼 여러
+    # 스레드가 진짜로 동시에(같은 순간) 그 하나의 커넥션에 쓰기를 시도하면
+    # "sqlite3.InterfaceError: bad parameter or other API misuse"가 난다
+    # (2026-08 발견 — job_runs 브랜치 기록 테스트에서 재현). 기본 풀을 쓰면
+    # 스레드마다 파일에 대한 독립된 커넥션을 받아 이 경합이 사라진다.
     return create_engine(
         f"sqlite:///{db_path}",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
 
 

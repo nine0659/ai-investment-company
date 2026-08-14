@@ -108,7 +108,7 @@ def get_yesterday_problems() -> list[str]:
                     problems.append(f"❌ {job}: 어제({date_str}) 실행 흔적 없음 — 스케줄러 점검 필요")
             rows = conn.execute(
                 text("SELECT job_name, detail FROM job_runs "
-                     "WHERE date=:d AND status='fail'"),
+                     "WHERE date=:d AND status='fail' AND job_name NOT LIKE 'branch:%'"),
                 {"d": date_str},
             ).fetchall()
             for job_name, detail in rows:
@@ -116,6 +116,31 @@ def get_yesterday_problems() -> list[str]:
     except Exception as e:
         logger.warning("[잡대장] 헬스체크 조회 실패: %s", e)
         problems.append(f"⚠️ 헬스체크 자체가 DB 조회에 실패: {str(e)[:120]}")
+
+    problems.extend(get_yesterday_branch_problems(date_str))
+    return problems
+
+
+def get_yesterday_branch_problems(date_str: str) -> list[str]:
+    """어제 L2/L3 병렬 브랜치(graph/investment_graph.py의 _parallel())별 실패 집계.
+
+    job(pre_market 등) 전체는 성공으로 기록돼도, 특정 브랜치(예: macro_team)만
+    계속 실패하거나 아무 state도 못 바꾸면 job 단위 체크로는 안 잡힌다
+    (2026-08 발견 — 3bdbb8d 버그가 바로 이 사각지대에서 2개월 조용히 진행됐다).
+    """
+    problems: list[str] = []
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                text("SELECT job_name, COUNT(*) FROM job_runs "
+                     "WHERE date=:d AND job_name LIKE 'branch:%' AND status='fail' "
+                     "GROUP BY job_name"),
+                {"d": date_str},
+            ).fetchall()
+        for job_name, fail_cnt in rows:
+            problems.append(f"⚠️ {job_name}: 어제 {fail_cnt}회 실패/무반영 — Render 로그 확인")
+    except Exception as e:
+        logger.warning("[잡대장] 브랜치 헬스체크 조회 실패: %s", e)
     return problems
 
 

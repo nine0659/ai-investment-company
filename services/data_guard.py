@@ -8,6 +8,29 @@ LLM은 주어진 숫자를 무비판적으로 서술한다. 오염된 수치 하
 원칙: 이상한 숫자는 고치려 하지 말고 제거(N/A)한다. 프롬프트들은 이미
 "없는 수치는 만들지 마라"를 강제하므로, N/A로 만들면 해당 수치는
 브리핑에서 언급 자체가 사라진다 — 틀린 수치보다 빠진 수치가 낫다.
+
+커버리지 감사 (2026-08, 4개 표준 카테고리 기준 — 과거 사고 전부 이 중 하나였음):
+  1) 범위(range)      — _RANGES 아래. valuation_service.format_for_prompt가
+                          LLM에 주입하는 숫자 필드는 전부 여기 있어야 한다
+                          (2026-08 감사에서 revenue_억/op_income_억/net_income_억/
+                          q_revenue_억/q_op_income_억 절대금액 필드가 빠진 걸 발견해 추가 —
+                          비율 지표만 검사하고 스케일 오류 절대금액은 무방비였다).
+  2) 단위(unit)        — 이 파일 밖에 있다: yfinance dividendYield의
+                          0.0291 vs 2.91 이중 단위 문제는 agents/us_invest_agent.py의
+                          _normalize_dividend_yield()가 진입점에서 정규화한다(KIS 기반
+                          한국 종목은 단위가 고정이라 이 문제 자체가 없음). data_guard의
+                          dividend_yield 범위(0.01~20%)는 그 이후의 최종 백스톱.
+  3) 교차필드(cross)   — 가격 vs 52주 밴드(아래). DART 분기/연간 혼합 비교는
+                          services/valuation_service.py가 애초에 연간끼리만 계산하도록
+                          구조적으로 분리했고(진짜 수정), revenue_growth 범위는 그래도
+                          새는 값에 대한 백스톱일 뿐. 알파/수익률 기간 불일치는 이
+                          모듈이 다루는 "종목 데이터"가 아니라 리포트 계산값이라
+                          services/nav_service.py 쪽에서 별도로 막는다(tests/test_nav_report.py).
+  4) 신선도(freshness) — 이 파일에는 없다. clients/market_data_client.check_data_freshness()가
+                          raw_market_data(글로벌 시장)에 대해 별도로 수행 — data_guard와
+                          이름만 다를 뿐 같은 계열 가드다. 종목별 KIS/DART 데이터에는
+                          신선도 가드가 없음 — 장 마감 후 오래된 캐시가 섞여도 못 잡는다
+                          (알려진 빈틈, 발생 빈도 낮아 후순위로 남김).
 """
 import logging
 
@@ -28,6 +51,14 @@ _RANGES: dict[str, tuple[float, float]] = {
     "q_op_margin":    (-100, 100),
     "revenue_growth": (-90, 300),        # % — 분기/연간 혼합 비교 같은 오류는 대부분 여기 걸린다
     "dividend_yield": (0.01, 20),        # % — 291% 같은 단위 오류 차단
+    # 절대금액(억원) — 2026-08 감사에서 발견된 빈틈: 비율 지표만 검사하고
+    # 있었고, DART 파싱 자릿수 오류 같은 절대금액 스케일 오류는 무방비였다.
+    # 상한은 삼성전자 연매출(~300조=3,000,000억) 대비 여유를 둔 값.
+    "revenue_억":      (-500_000, 5_000_000),
+    "op_income_억":    (-500_000, 5_000_000),
+    "net_income_억":   (-500_000, 5_000_000),
+    "q_revenue_억":    (-500_000, 5_000_000),
+    "q_op_income_억":  (-500_000, 5_000_000),
 }
 
 
