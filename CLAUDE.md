@@ -34,7 +34,7 @@ db/database.py        ← SQLAlchemy 테이블 정의. DATABASE_URL=Neon Postgre
 tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지우지 마라.
 ```
 
-## 현재 스케줄 (2026-08-07 종목발굴 조건부 재개 후 — 정기 메시지 주 6통 + 조건부 1통)
+## 현재 스케줄 (2026-08-18 백테스트 스냅샷 추가 후 — 정기 메시지 주 6통 + 조건부 1통 + 무발송 잡)
 
 | 시각 | 잡 | 내용 |
 |---|---|---|
@@ -43,6 +43,7 @@ tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지�
 | 금 15:00 | rebound_screener | 반등 스크리너 자동 발송 (LLM 미사용, 그 외엔 /rebound 온디맨드) |
 | 금 16:30 | close_market | 주간 마감 브리핑 |
 | 일 20:00 | weekly_picks | 주간 추천 1통 (국내 중기 + 미국 통합) |
+| 일 20:30 | backtest_snapshot | 추천/실매매 백테스트 스냅샷 기록 — **무발송**(LLM·텔레그램 없음, StockBench식) |
 | 장중 매 15분 | market_monitor | 이상 신호 시에만 발송 |
 | 매일 08:05 | daily_health | 어제 잡 누락·실패 감지, 문제 시에만 경보 |
 | 매월 첫째 월 19:00 | monthly_thesis | 월간 투자관 (CEO 브리핑 근거 주입용) |
@@ -70,6 +71,12 @@ tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지�
 ```
 파서는 환각 차단 관문이다: 분석에 없던 종목코드 폐기, 진입가는 항상 실데이터,
 비현실 목표가 폐기, "(지난 추천 유지)"는 재저장 금지 (tests/test_recommendation_parser.py).
+
+**추천/목표가/손절가 계산 로직을 바꾸기 전에는 `python scripts/backtest_gate_check.py`를
+먼저 돌려라** (2026-08-18 추가). CI 게이트는 아니다 — 표본이 아직 적어(수건대) 자동
+pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제로 어떻게 됐는지 사람이
+한 번 보고 "이번 변경이 그 사례들을 어느 방향으로 바꾸는지" 가늠하는 체크리스트다.
+`backtest_snapshot`(일 20:30, 무발송)이 매주 같은 계산을 job_runs에 남겨 시계열을 쌓는다.
 
 ## 알려진 함정 (전부 실제 사고였음)
 
@@ -139,5 +146,6 @@ python main.py --check              # 환경변수 검증
 python main.py --type pre           # 장전 브리핑 수동 실행
 python main.py --research 005930    # 기업 딥리서치
 python main.py --portfolio list     # 보유 종목
+python scripts/backtest_gate_check.py  # 추천/목표가/손절가 로직 변경 전 확인 (CI 게이트 아님)
 git push origin master              # = 운영 배포 (Render 자동배포 + CI)
 ```

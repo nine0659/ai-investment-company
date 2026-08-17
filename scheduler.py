@@ -432,6 +432,34 @@ def job_discovery_weekly():
         release_report_slot(date_str, "discovery_weekly")
 
 
+def job_backtest_snapshot():
+    """일요일 20:30 — 추천/실매매 백테스트 성과 스냅샷 기록 (무발송, 텔레그램·LLM 없음).
+
+    StockBench식 정기 벤치마킹의 최소 버전. stock_recommendations이 아직 소량
+    (2026-08 기준 3건, 전부 7/12)이라 지금 당장 통계적으로 유의미하진 않지만,
+    데이터가 쌓일 때를 대비해 지금부터 시계열을 시작해두는 것 자체가 목적이다
+    — [[project_value_reassessment_checkpoints]] 2차 체크포인트(2026-09-15)의
+    "종료된 추천 5건+" 판정에 쓸 근거 데이터가 된다. 계산만 하고 job_runs.detail에
+    남기므로 실패해도 브리핑에 영향 없다(무사고 원칙과 충돌 없음).
+    """
+    from services.job_ledger import record_job
+    try:
+        from services.backtest_service import get_recommendation_backtest, get_portfolio_performance
+        rec = get_recommendation_backtest(days=20)
+        perf = get_portfolio_performance()
+        r_stats, p_stats = rec.get("stats", {}), perf.get("stats", {})
+        detail = (
+            f"추천백테스트 n={r_stats.get('valid', 0)}/{r_stats.get('total', 0)} "
+            f"승률={r_stats.get('win_rate', 0)}% 평균수익={r_stats.get('avg_return', 0)}% | "
+            f"실매매 n={p_stats.get('total_trades', 0)} 승률={p_stats.get('win_rate', 0)}%"
+        )
+        logger.info("[백테스트 스냅샷] %s", detail)
+        record_job("backtest_snapshot", "success", detail)
+    except Exception as e:
+        logger.warning("백테스트 스냅샷 실패 (무시): %s", e)
+        record_job("backtest_snapshot", "fail", str(e))
+
+
 def _parse_time(time_str: str) -> tuple[int, int]:
     h, m = time_str.split(":")
     return int(h), int(m)
@@ -563,6 +591,18 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 화 19:00[/cyan] 종목 발굴 (조건부 발송, 후보 있을 때만)")
+
+    # 백테스트 스냅샷: 일요일 20:30 — 주간 추천 발송(20:00) 후, 추천/실매매 성과
+    # 시계열을 무발송으로 기록 (StockBench식 정기 백테스트, B그룹 항목)
+    scheduler.add_job(
+        job_backtest_snapshot,
+        CronTrigger(day_of_week="sun", hour=20, minute=30, timezone=TIMEZONE_STR),
+        id="backtest_snapshot",
+        name="[일 20:30] 백테스트 스냅샷 기록 (무발송, 데이터 축적)",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 매주 일요일 20:30[/cyan] 백테스트 스냅샷 기록 (무발송)")
 
 
 def shutdown(signum, frame):

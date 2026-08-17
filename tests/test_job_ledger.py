@@ -6,7 +6,7 @@ report_claims 별칭)이 없으면 헬스체크가 매주 오탐 경보를 낸�
 from services import job_ledger
 
 # job_runs에 직접 기록하는 잡들 (scheduler.py에서 record_job 호출)
-_DIRECT_RECORDERS = {"daily_nav", "daily_tracker", "weekly_picks", "daily_health", "rebound_screener", "discovery_weekly"}
+_DIRECT_RECORDERS = {"daily_nav", "daily_tracker", "weekly_picks", "daily_health", "rebound_screener", "discovery_weekly", "backtest_snapshot"}
 
 
 def test_every_expected_job_has_a_trace_source():

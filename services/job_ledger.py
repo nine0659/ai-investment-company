@@ -31,7 +31,7 @@ _EXPECTED_BY_WEEKDAY: dict[int, list[str]] = {
     3: ["daily_nav", "daily_tracker"],
     4: ["pre_market", "close_market", "daily_nav", "daily_tracker", "rebound_screener"],
     5: [],
-    6: ["weekly_midterm", "weekly_us_invest"],
+    6: ["weekly_midterm", "weekly_us_invest", "backtest_snapshot"],
 }
 
 # 잡 이름 → report_claims.run_type 매핑 (선점 가드를 쓰는 잡들).
