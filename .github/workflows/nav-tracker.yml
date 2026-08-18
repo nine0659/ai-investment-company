@@ -41,5 +41,8 @@ jobs:
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:       ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8:          "1"
         run: python scripts/backup_daily_jobs.py

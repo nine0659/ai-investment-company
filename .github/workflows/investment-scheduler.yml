@@ -156,6 +156,9 @@ jobs:
           TELEGRAM_API_HASH:      ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
           DATABASE_URL:           ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY:    ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY:    ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:          ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8:             "1"
         run: python main.py --type ${{ steps.run_type.outputs.type }}
 
@@ -185,6 +188,9 @@ jobs:
           KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
           KIS_ACCOUNT_NO:     ${{ secrets.KIS_ACCOUNT_NO }}
           DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:      ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8:         "1"
         run: python main.py --type price-alert
 
@@ -213,6 +219,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:      ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8:         "1"
         run: python main.py --type trend
 
@@ -241,6 +250,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:      ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8:         "1"
         run: python main.py --type weekly
 
@@ -269,6 +281,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:      ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8:         "1"
         run: python main.py --type us-invest
 
@@ -297,5 +312,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:      ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8:         "1"
         run: python main.py --type monthly

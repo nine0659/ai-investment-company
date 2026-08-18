@@ -63,6 +63,9 @@ jobs:
           KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
           DART_API_KEY:        ${{ secrets.DART_API_KEY }}
           DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:       ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8: "1"
         run: python main.py --type midterm
 
@@ -113,5 +116,8 @@ jobs:
           KIS_ACCOUNT_PROD_CD: ${{ secrets.KIS_ACCOUNT_PROD_CD }}
           DART_API_KEY:        ${{ secrets.DART_API_KEY }}
           DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST:       ${{ secrets.LANGFUSE_HOST }}
           PYTHONUTF8: "1"
         run: python main.py --type longterm
