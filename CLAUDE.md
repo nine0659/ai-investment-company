@@ -28,7 +28,8 @@ scheduler.py          ← Render 상주 프로세스 (잡 10개 + 텔레그램 �
 graph/investment_graph.py ← 장전/마감 브리핑 LangGraph 파이프라인 (수집→분석→CEO→발송)
 agents/               ← 개별 분석 에이전트 (ceo=핵심 브리핑, midterm/us=주간 추천, ...)
 services/             ← 계산·저장 로직 (LLM 없음): valuation, nav, data_guard, job_ledger...
-clients/              ← 외부 연동: kis(한국투자증권), dart, openai, telegram, yfinance
+clients/              ← 외부 연동: kis(한국투자증권), dart, openai, telegram, yfinance,
+                        langfuse(LLM 호출·파이프라인 관측성, 선택사항 — 키 미설정 시 no-op)
 db/database.py        ← SQLAlchemy 테이블 정의. DATABASE_URL=Neon PostgreSQL(운영),
                         미설정 시 SQLite(개발 전용 — 운영 데이터 아님!)
 tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지우지 마라.

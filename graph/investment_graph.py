@@ -24,6 +24,7 @@ import agents.midterm_stock_agent       as midterm_stock_agent
 import agents.ceo_agent                 as ceo_agent
 
 from clients.kis_client          import KISClient
+from clients.langfuse_client     import get_langfuse_callbacks
 from clients.market_data_client  import fetch_global_market_data, fetch_kr_index_realtime, check_data_freshness
 from clients.news_client         import fetch_all_news
 from clients.telegram_client     import send_message, send_error_alert
@@ -772,7 +773,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
     graph = build_graph()
     logger.info("파이프라인 시작: %s (%s)", run_type, now.strftime("%Y-%m-%d %H:%M"))
     try:
-        final = graph.invoke(initial)
+        final = graph.invoke(initial, config={"callbacks": get_langfuse_callbacks()})
         logger.info("파이프라인 완료: %s", run_type)
         return final
     except Exception as e:
@@ -819,7 +820,7 @@ def _run_global(run_type: str) -> InvestmentState:
     graph = build_global_graph()
     logger.info("[글로벌] 파이프라인 시작 (%s)", now.strftime("%Y-%m-%d %H:%M"))
     try:
-        final = graph.invoke(initial)
+        final = graph.invoke(initial, config={"callbacks": get_langfuse_callbacks()})
         logger.info("[글로벌] 파이프라인 완료")
         return final
     except Exception as e:

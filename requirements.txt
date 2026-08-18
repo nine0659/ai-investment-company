@@ -52,3 +52,6 @@ holidays>=0.45
 
 # GH Actions 워크플로 YAML 유효성 회귀 테스트용 (tests/test_workflows.py)
 PyYAML>=6.0
+
+# 관측성 — Langfuse Cloud (선택사항, 미설정 시 clients/langfuse_client.py가 no-op)
+langfuse>=3.0.0

@@ -29,6 +29,13 @@ OPENROUTER_API_KEY   = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL     = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
 OPENROUTER_MODEL_CEO = os.getenv("OPENROUTER_MODEL_CEO", OPENROUTER_MODEL)
 
+# ── Langfuse Cloud (LLM 호출·파이프라인 관측성, 선택사항) ─────────────
+# 미설정 시(둘 중 하나라도 없으면) 관측성 없이 기존과 완전히 동일하게 동작.
+# 가입: https://cloud.langfuse.com → 프로젝트 생성 → Settings에서 키 발급
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_HOST       = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
 

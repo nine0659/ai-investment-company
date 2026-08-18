@@ -1,12 +1,24 @@
 import logging
 from collections.abc import Generator
-from openai import OpenAI
 from config.settings import (
     OPENAI_API_KEY, OPENAI_MODEL, OPENAI_MODEL_CEO,
     OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_MODEL_CEO,
 )
+from clients.langfuse_client import langfuse_configured
 
 logger = logging.getLogger(__name__)
+
+# Langfuse 설정 시에만 드롭인 래퍼(langfuse.openai.OpenAI)로 교체 — 같은
+# openai.OpenAI 인터페이스에 호출마다 프롬프트·토큰·비용을 자동 트레이스한다.
+# 미설정이거나 임포트 실패 시 기존 openai.OpenAI 그대로 (동작 변화 없음).
+try:
+    if langfuse_configured():
+        from langfuse.openai import OpenAI
+    else:
+        from openai import OpenAI
+except Exception as e:
+    logger.warning("[Langfuse] openai 드롭인 로드 실패, 기본 클라이언트로 진행: %s", e)
+    from openai import OpenAI
 
 _client: OpenAI | None = None
 _fallback_client: OpenAI | None = None
