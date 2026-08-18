@@ -1,4 +1,5 @@
 import logging
+import math
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
@@ -108,6 +109,13 @@ def _parse(ticker: yf.Ticker) -> dict:
         prev   = hist.iloc[-2] if len(hist) > 1 else latest
         close  = float(latest["Close"])
         prev_c = float(prev["Close"])
+        # yfinance가 아직 안 채워진 최신 봉을 NaN Close로 얹어 반환할 때가 있다
+        # (장 초반 등). float(nan)은 예외를 던지지 않아 그대로 통과해버리므로
+        # 여기서 걸러야 한다 — 아니면 "없는 데이터"가 아니라 "값이 있는데 nan"이
+        # 되어 호출부의 .get(key, 'N/A') 기본값이 아예 적용되지 않는다
+        # (2026-08-18 발견 — 봇 대화 프롬프트에 S&P500 nan (+nan%)로 노출됨).
+        if math.isnan(close) or math.isnan(prev_c):
+            return {}
         chg    = close - prev_c
         chg_pct = (chg / prev_c * 100) if prev_c else 0
         return {

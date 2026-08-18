@@ -9,6 +9,8 @@
    있어, 2026-07 실제 KOSPI(6,500~9,000대)가 매번 "비정상"으로 걸려
    "실시간" 값이 사실상 항상 일봉 종가(지난 정보)로 대체되고 있었다.
 """
+import math
+
 import pandas as pd
 import pytest
 
@@ -93,3 +95,23 @@ def test_kr_index_realtime_still_rejects_genuine_glitch(monkeypatch):
     result = mdc.fetch_kr_index_realtime()
     # 장중 글리치(65420.7)는 버려지고 일봉 종가(6748.0)로 대체돼야 한다
     assert result["kospi"]["current"] == 6748.0
+
+
+def test_parse_rejects_nan_close():
+    """2026-08-18 발견: yfinance가 아직 안 채워진 최신 봉을 NaN Close로 반환하면
+    float(nan)이 예외 없이 통과해 호출부의 .get(key, 'N/A') 기본값을 무력화한다
+    — 봇 대화 프롬프트에 'S&P500: nan (+nan%)'로 그대로 노출됐던 사고.
+    _parse()가 빈 dict를 반환해야 호출부가 '데이터 없음'으로 정상 처리한다."""
+    rows = _hist([350.0, math.nan])
+    assert mdc._parse(_FakeTicker(rows)) == {}
+
+
+def test_parse_rejects_nan_prev_close():
+    rows = _hist([math.nan, 350.0])
+    assert mdc._parse(_FakeTicker(rows)) == {}
+
+
+def test_parse_passes_normal_values():
+    rows = _hist([350.0, 355.0])
+    result = mdc._parse(_FakeTicker(rows))
+    assert result and result["close"] == 355.0
