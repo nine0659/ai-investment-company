@@ -25,9 +25,15 @@
 ```
 scheduler.py          ← Render 상주 프로세스 (잡 10개 + 텔레그램 봇 스레드). 주 실행자.
 .github/workflows/    ← CI(테스트) + 브리핑 백업 크론 (GH cron은 상시 수십 분 지연됨)
-graph/investment_graph.py ← 장전/마감 브리핑 LangGraph 파이프라인 (수집→분석→CEO→발송)
-agents/               ← 개별 분석 에이전트 (ceo=핵심 브리핑, midterm/us=주간 추천, ...)
-services/             ← 계산·저장 로직 (LLM 없음): valuation, nav, data_guard, job_ledger...
+graph/investment_graph.py ← 장전/마감 브리핑 LangGraph 파이프라인 (수집→분석→
+                        bull/bear 토론→CEO→발송). PRE/CLOSE 순차 꼬리:
+                        risk_management_team→review_feedback_team→investment_committee→
+                        portfolio_manager_agent→midterm_stock_agent→bull_case→bear_case→
+                        ceo_agent (2026-09-03 bull_case/bear_case 추가)
+agents/               ← 개별 분석 에이전트 (ceo=핵심 브리핑, midterm/us=주간 추천,
+                        bull_bear_debate_team=CEO 직전 강세/약세 토론, ...)
+services/             ← 계산·저장 로직 (LLM 없음): valuation, nav, data_guard, job_ledger,
+                        risk_gate(CEO 자체 비중 규칙 위반 결정론적 검사, 2026-09-03)...
 clients/              ← 외부 연동: kis(한국투자증권), dart, openai, telegram, yfinance,
                         langfuse(LLM 호출·파이프라인 관측성, 선택사항 — 키 미설정 시 no-op)
 db/database.py        ← SQLAlchemy 테이블 정의. DATABASE_URL=Neon PostgreSQL(운영),
@@ -69,9 +75,31 @@ tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지�
 일요일 추천 발송 → recs_from_weekly_picks()가 파싱·교차검증 → stock_recommendations
 → daily_tracker(16:20)가 목표/손절/만료 추적 → recommendation_tracking
 → (데이터 쌓이면) 적중률·귀인분석 재개 → 프롬프트·기준 개선의 근거
+
+[2026-09-03 추가] 월·수·금 08:20 pre_market → CEO 신규편입 판단(ceo_decisions)
+→ recs_from_cio_decisions()가 코드로 목표가/손절가 계산(실데이터 진입가 필수,
+조회 실패 시 폐기) → 같은 stock_recommendations → daily_tracker가 동일하게 추적.
+PRE 실행에서만 저장(save_recommendations가 날짜 단위 전체 교체라 같은 금요일
+pre_market+close_market 이중 저장 시 충돌 방지 — _register_drafts/_trigger_auto_buy와
+같은 이유).
 ```
 파서는 환각 차단 관문이다: 분석에 없던 종목코드 폐기, 진입가는 항상 실데이터,
 비현실 목표가 폐기, "(지난 추천 유지)"는 재저장 금지 (tests/test_recommendation_parser.py).
+`recs_from_cio_decisions`는 브리핑 텍스트 파싱이 아니라 코드 계산(진입가만 실데이터,
+손절 -15%는 CEO 헌장의 재검토 의무 기준, 목표가는 risk_reward 비율 적용)으로 같은
+원칙을 지킨다 — 2026-06-19 브리핑 포맷 개편 이후 이 함수가 원래 의존하던 텍스트
+문구가 사라져 사실상 죽은 코드였던 걸 재설계하며 발견.
+
+**Risk Gate (2026-09-03 추가, `services/risk_gate.py`)**: CEO가 스스로 문서화한
+확신도별 비중 밴드(상 5~10%/중 3~5%/하 1~3%)를 CEO 자신이 어겼는지 결정론적으로
+검사, 위반 시 별도 경고 메시지만 발송(발송 자체는 막지 않음 — decision_guard의
+데이터불일치 차단과는 성격이 다름). node_send_telegram에서 메인 리포트 발송 직후 실행.
+
+**Bull/Bear 토론 (2026-09-03 추가, `agents/bull_bear_debate_team.py`)**: PRE/CLOSE에서
+midterm_stock_agent와 ceo_agent 사이에 순차 삽입. Bear가 Bull의 결과를 직접 받아
+반박하도록 설계되어 있어 반드시 순차([[project_langgraph_parallel_state_wipe_bug]]
+함정과 무관 — 병렬이 아님). CEO의 `=CIO_DECISION_START=` 출력 파싱 스키마는 그대로,
+CEO가 읽는 입력 컨텍스트만 풍부해진다.
 
 **추천/목표가/손절가 계산 로직을 바꾸기 전에는 `python scripts/backtest_gate_check.py`를
 먼저 돌려라** (2026-08-18 추가). CI 게이트는 아니다 — 표본이 아직 적어(수건대) 자동
