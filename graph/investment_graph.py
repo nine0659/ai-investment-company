@@ -445,6 +445,20 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
     try:
         send_message(report)
         logger.info("[텔레그램] 발송 완료")
+
+        # CEO가 스스로 정한 확신도별 비중 밴드를 스스로 어겼는지 결정론적으로 검사.
+        # 발송을 막지 않는다 — decision_guard와 달리 데이터 문제가 아니라 판단의
+        # 문제라 CEO 나름의 근거가 있을 수 있음(2026-09-03 사용자 확인). 위반 없으면
+        # 평소처럼 침묵 — daily_health·market_monitor와 같은 패턴.
+        try:
+            from services.risk_gate import check_position_sizing
+            violations = check_position_sizing(state.get("ceo_decisions", {}))
+            if violations:
+                send_message("⚠️ *리스크 게이트* (CEO 자체 비중 규칙 위반 감지)\n\n" + "\n".join(violations))
+                logger.info("[텔레그램] 리스크 게이트 경고 발송 완료")
+        except Exception as e:
+            logger.warning("[텔레그램] 리스크 게이트 검사 실패 (무시): %s", e)
+
         errors = _errors_snapshot
         if errors:
             _SKIP_PATTERNS = ("psycopg2", "OperationalError", "supabase", "connection to server")
