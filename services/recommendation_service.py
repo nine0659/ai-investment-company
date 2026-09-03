@@ -14,56 +14,67 @@ _TZ = ZoneInfo("Asia/Seoul")
 
 # ── 파싱 ──────────────────────────────────────────────────────────
 
-# "목표 +X% / 손절 -Y%" 패턴 — 현재 CIO 브리핑 포맷
-_PCT_RE = re.compile(r"목표\s+\+?([\d.]+)%\s*/\s*손절\s+-?([\d.]+)%")
+# "X:Y" 손익비 문자열(예: "3.5:1") 파싱 — ceo_decisions.new_positions의 risk_reward 필드
+_RR_RE = re.compile(r"([\d.]+)\s*[:：]\s*([\d.]+)")
+_CIO_DEFAULT_STOP_PCT = 15.0   # CEO 헌장(agents/ceo_agent.py)의 "재검토 의무 발동" 기준
+_CIO_DEFAULT_RR_RATIO = 2.5    # risk_reward 파싱 실패 시 보수적 기본값(헌장 "3:1 미만 보류"보다 낮게)
+# 아래 recs_from_weekly_picks 전용 _DEFAULT_STOP_PCT(10.0)와 이름이 겹치면 모듈 로드 시
+# 나중 정의가 앞 정의를 덮어써 조용히 잘못된 값이 쓰인다 — 반드시 접두사로 구분할 것.
 
 
 def recs_from_cio_decisions(
     decisions: dict,
-    ceo_report: str,
     price_fn,  # Callable[[str], int] — 종목코드 → 현재가(원), 실패 시 0
 ) -> list[dict]:
-    """ceo_decisions.new_positions + 브리핑 텍스트 % + 현재가 → stock_recommendations 레코드.
+    """ceo_decisions.new_positions(장전/마감 CIO 판단) → stock_recommendations 레코드.
 
-    진입가: price_fn으로 조회한 현재가
-    목표가/손절가: 브리핑 텍스트 "목표 +X% / 손절 -Y%" 파싱 후 현재가에 적용
+    2026-09-03 재설계: 과거 버전은 브리핑 텍스트의 "목표 +X% / 손절 -Y%" 문구를
+    정규식으로 긁어왔으나, 2026-06-19 브리핑 포맷 개편(9줄 압축형) 이후 그 문구 자체가
+    리포트에 나타나지 않아 사실상 죽은 코드였다. 텍스트 파싱 대신 코드로 직접 계산한다
+    (헌장 원칙 2 "계산은 코드가, LLM은 서술만"에 더 충실한 방식):
+
+    - 진입가: 항상 price_fn(code)의 실데이터. 실패(0/None)하면 그 포지션은 폐기
+      (recs_from_weekly_picks의 "환각 의심 시 폐기" 원칙과 동일 — 텍스트 가격을 쓰지 않는다)
+    - 손절가: CEO 헌장에 이미 명문화된 "-15% 이상 손실 시 보유 근거 재검토 의무" 규칙을
+      기본 손절 기준으로 사용 → entry * 0.85
+    - 목표가: new_positions의 risk_reward 문자열("X:Y")을 손절폭에 곱해 산출.
+      파싱 실패 시 보수적 기본 비율(_DEFAULT_RR_RATIO) 사용.
     """
     results: list[dict] = []
     seen: set[str] = set()
 
-    for pos in decisions.get("new_positions", []):
+    for pos in (decisions or {}).get("new_positions", []) or []:
         code = pos.get("code", "")
         name = pos.get("name", "")
         if not code or code in seen:
             continue
 
-        # 브리핑 텍스트에서 해당 종목 주변 블록 추출 (코드 또는 이름 앞 4자 기준)
-        target_pct = stop_pct = None
-        for anchor in (code, name[:4] if name else ""):
-            idx = ceo_report.find(anchor)
-            if idx < 0:
-                continue
-            nearby = ceo_report[max(0, idx - 10): idx + 140]
-            m = _PCT_RE.search(nearby)
-            if m:
-                try:
-                    target_pct = float(m.group(1))
-                    stop_pct   = float(m.group(2))
-                except ValueError:
-                    pass
-                break
+        entry = price_fn(code) if price_fn else 0
+        if not entry:
+            logger.warning("[CIO추천파싱] %s(%s) 실데이터 가격 조회 실패 — 폐기", name, code)
+            continue
 
-        entry  = price_fn(code) if price_fn else 0
-        target = int(entry * (1 + target_pct / 100)) if entry and target_pct else 0
-        stop   = int(entry * (1 - stop_pct   / 100)) if entry and stop_pct   else 0
+        stop = entry * (1 - _CIO_DEFAULT_STOP_PCT / 100)
+
+        ratio = _CIO_DEFAULT_RR_RATIO
+        m = _RR_RE.search(pos.get("risk_reward", "") or "")
+        if m:
+            try:
+                up, down = float(m.group(1)), float(m.group(2))
+                if down > 0:
+                    ratio = up / down
+            except (ValueError, ZeroDivisionError):
+                pass
+
+        target = entry + (entry - stop) * ratio
 
         seen.add(code)
         results.append({
             "name":         name,
             "code":         code,
-            "entry_price":  entry,
-            "stop_price":   stop,
-            "target_price": target,
+            "entry_price":  int(entry),
+            "stop_price":   int(stop),
+            "target_price": int(target),
             "rationale":    pos.get("thesis", ""),
         })
 

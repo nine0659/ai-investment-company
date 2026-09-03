@@ -1006,6 +1006,7 @@ def run(state: InvestmentState) -> InvestmentState:
         if run_type == RUN_TYPE_PRE:
             _register_drafts(date, ceo_decisions)
             _trigger_auto_buy(ceo_decisions, state)
+            _track_recommendations(date, ceo_decisions)
 
     except Exception as e:
         logger.error("[CIO] 실패: %s", e)
@@ -1097,3 +1098,40 @@ def _trigger_auto_buy(decisions: dict, state: dict) -> None:
         pass
     except Exception as _ae:
         logger.warning("[CIO] 자동 실행 트리거 실패: %s", _ae)
+
+
+def _track_recommendations(date: str, decisions: dict) -> None:
+    """장전 CIO 신규편입 판단을 stock_recommendations에 저장 — 적중률 추적 루프 연결.
+
+    PRE에서만 호출한다: save_recommendations가 날짜 단위 전체 교체(DELETE→INSERT)라
+    같은 금요일에 pre_market·close_market이 둘 다 저장하면 나중 실행이 먼저 것을
+    지워버린다. _register_drafts/_trigger_auto_buy도 같은 이유로 PRE 전용이다.
+    """
+    positions = decisions.get("new_positions", [])
+    if not positions:
+        return
+    try:
+        from services.recommendation_service import recs_from_cio_decisions, save_recommendations
+
+        kis = None
+        try:
+            from clients.kis_client import KISClient
+            kis = KISClient()
+        except Exception as e:
+            logger.warning("[CIO] 추천추적용 KIS 초기화 실패 — 이번 회차 추적 스킵: %s", e)
+            return
+
+        def _price_fn(code: str) -> int:
+            try:
+                data = kis.get_stock_price(code)
+                return int(data.get("price", 0) or 0)
+            except Exception:
+                return 0
+
+        recs = recs_from_cio_decisions(decisions, price_fn=_price_fn)
+        if recs:
+            save_recommendations(date, recs)
+            logger.info("[CIO] 장전 판단 추천추적 등록 %d건: %s",
+                        len(recs), ", ".join(r["name"] for r in recs))
+    except Exception as e:
+        logger.warning("[CIO] 추천추적 등록 실패 (무시): %s", e)
