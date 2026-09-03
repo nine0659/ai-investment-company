@@ -58,3 +58,4 @@ class InvestmentState(TypedDict):
     nav_recorded:   Annotated[dict,      _last]
     ceo_decisions:  Annotated[dict,      _last]
     deep_report_content: Annotated[str,  _last]
+    deep_report_summary: Annotated[str,  _last]

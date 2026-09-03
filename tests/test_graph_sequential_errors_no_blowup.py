@@ -68,6 +68,9 @@ def test_single_early_error_survives_full_pipeline_without_amplification(monkeyp
     import clients.telegram_client as telegram_client
     import services.nav_service as nav_service
     import services.report_service as report_service
+    import services.deep_report_service as deep_report_service
+
+    monkeypatch.setattr(deep_report_service, "chat", lambda *a, **k: "요약테스트")
 
     # L1에서 오류가 1건 난 것처럼 흉내낸다 — 실제 collect_raw_data와 같은 패턴
     # (수정된 버전)으로 델타만 반환.

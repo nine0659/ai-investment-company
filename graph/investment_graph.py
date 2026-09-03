@@ -374,11 +374,12 @@ def node_deep_report(state: InvestmentState) -> InvestmentState:
     """메인 브리핑에서 압축돼 잘려나간 분석(글로벌 서사·전문가시각·종목 기술/수급)을
     보존 — /insight 명령어·대시보드에서 조회."""
     try:
-        from services.deep_report_service import build_deep_report
+        from services.deep_report_service import build_deep_report, summarize_deep_report
         from services.report_service import save_deep_report
         content = build_deep_report(state)
         save_deep_report(state["date"], state["run_type"], content)
         state["deep_report_content"] = content
+        state["deep_report_summary"] = summarize_deep_report(content)
     except Exception as e:
         logger.warning("[심층리포트] 생성 실패 (무시): %s", e)
     # 이 노드는 errors에 새로 추가하는 게 없다 — 빈 델타로 반환해야 한다.
@@ -458,15 +459,17 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         return state
 
     # 메인 브리핑은 압축된 결론만 담는다 — 압축 과정에서 잘려나가는 원본 분석
-    # (매크로·글로벌서사·이슈종목·수급·종목별 실측 기술지표)을 자동으로 뒤이어 보낸다.
-    # 2026-07-23: 그동안 /insight로 직접 조회해야만 보이던 것을 매번 자동 첨부로 전환.
-    deep_content = state.get("deep_report_content", "")
-    if deep_content:
+    # (매크로·글로벌서사·이슈종목·수급·종목별 실측 기술지표)의 핵심만 뒤이어 보낸다.
+    # 2026-07-23: /insight 온디맨드 조회 → 자동 첨부로 전환했으나 전문 그대로 보내
+    # 브리핑 1회당 5~7통으로 쪼개져 오는 부작용 발생. 2026-09-03: 3~5줄 요약만
+    # 자동 발송하고 전문은 다시 /insight 온디맨드로 되돌림(전문은 여전히 DB에 저장됨).
+    summary = state.get("deep_report_summary", "")
+    if summary:
         try:
-            send_message("🔍 *심층 분석* (자동 첨부 — 위 브리핑의 근거 전문)\n\n" + deep_content)
-            logger.info("[텔레그램] 심층 분석 자동 첨부 발송 완료")
+            send_message("🔍 *심층 분석 요약* (전문은 /insight)\n\n" + summary)
+            logger.info("[텔레그램] 심층 분석 요약 발송 완료")
         except Exception as e:
-            logger.warning("[텔레그램] 심층 분석 자동 첨부 실패 (메인 브리핑은 정상 발송됨): %s", e)
+            logger.warning("[텔레그램] 심층 분석 요약 발송 실패 (메인 브리핑은 정상 발송됨): %s", e)
 
     return state
 
@@ -768,6 +771,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "nav_recorded": {},
         "ceo_decisions": {},
         "deep_report_content": "",
+        "deep_report_summary": "",
     }
 
     graph = build_graph()
@@ -815,6 +819,7 @@ def _run_global(run_type: str) -> InvestmentState:
         "review_report": "", "errors": [], "nav_recorded": {},
         "ceo_decisions": {},
         "deep_report_content": "",
+        "deep_report_summary": "",
     }
 
     graph = build_global_graph()

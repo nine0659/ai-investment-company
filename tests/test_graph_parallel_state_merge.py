@@ -63,6 +63,9 @@ def test_all_parallel_branch_reports_survive_to_final_state(monkeypatch):
     import agents.ceo_agent as ceo_agent
     import clients.telegram_client as telegram_client
     import services.nav_service as nav_service
+    import services.deep_report_service as deep_report_service
+
+    monkeypatch.setattr(deep_report_service, "chat", lambda *a, **k: "요약테스트")
 
     expectations = {
         "futures_report":             "선물테스트",
@@ -138,6 +141,9 @@ def test_errors_from_parallel_branches_do_not_explode(monkeypatch, caplog):
     import agents.ceo_agent as ceo_agent
     import clients.telegram_client as telegram_client
     import services.nav_service as nav_service
+    import services.deep_report_service as deep_report_service
+
+    monkeypatch.setattr(deep_report_service, "chat", lambda *a, **k: "요약테스트")
 
     def _err(field, msg):
         def _run(state):
