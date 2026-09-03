@@ -652,6 +652,8 @@ def run(state: InvestmentState) -> InvestmentState:
             ("[이벤트 리스크]",                      "event_risk_report"),
             ("[글로벌 전문가 서사]",                  "market_intelligence_report"),
             ("[리스크 관리팀]",                      "risk_report"),
+            ("[강세 논리 — Bull]",                   "bull_case_report"),
+            ("[약세 반박 — Bear, Bull 논리를 직접 반박함]", "bear_case_report"),
         ]:
             if state.get(key):
                 context_parts.append(f"\n{label}\n{state[key]}")

@@ -64,8 +64,11 @@ def test_all_parallel_branch_reports_survive_to_final_state(monkeypatch):
     import clients.telegram_client as telegram_client
     import services.nav_service as nav_service
     import services.deep_report_service as deep_report_service
+    import agents.bull_bear_debate_team as bull_bear_debate_team
 
     monkeypatch.setattr(deep_report_service, "chat", lambda *a, **k: "요약테스트")
+    monkeypatch.setattr(bull_bear_debate_team, "run_bull", _set_field("bull_case_report", "불테스트"))
+    monkeypatch.setattr(bull_bear_debate_team, "run_bear", _set_field("bear_case_report", "베어테스트"))
 
     expectations = {
         "futures_report":             "선물테스트",
@@ -81,6 +84,8 @@ def test_all_parallel_branch_reports_survive_to_final_state(monkeypatch):
         "committee_report":           "위원회테스트",
         "portfolio_report":           "포트폴리오테스트",
         "midterm_stock_report":       "중기테스트",
+        "bull_case_report":           "불테스트",
+        "bear_case_report":           "베어테스트",
     }
 
     monkeypatch.setattr(futures_market_team, "run", _set_field("futures_report", expectations["futures_report"]))
@@ -142,8 +147,11 @@ def test_errors_from_parallel_branches_do_not_explode(monkeypatch, caplog):
     import clients.telegram_client as telegram_client
     import services.nav_service as nav_service
     import services.deep_report_service as deep_report_service
+    import agents.bull_bear_debate_team as bull_bear_debate_team
 
     monkeypatch.setattr(deep_report_service, "chat", lambda *a, **k: "요약테스트")
+    monkeypatch.setattr(bull_bear_debate_team, "run_bull", _set_field("bull_case_report", "불테스트"))
+    monkeypatch.setattr(bull_bear_debate_team, "run_bear", _set_field("bear_case_report", "베어테스트"))
 
     def _err(field, msg):
         def _run(state):

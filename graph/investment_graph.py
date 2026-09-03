@@ -21,6 +21,7 @@ import agents.review_feedback_team      as review_feedback_team
 import agents.investment_committee      as investment_committee
 import agents.portfolio_manager_agent   as portfolio_manager_agent
 import agents.midterm_stock_agent       as midterm_stock_agent
+import agents.bull_bear_debate_team     as bull_bear_debate_team
 import agents.ceo_agent                 as ceo_agent
 
 from clients.kis_client          import KISClient
@@ -248,6 +249,18 @@ def node_midterm_stocks(state):
     if state.get("run_type") in (RUN_TYPE_INTRA1, RUN_TYPE_INTRA2):
         return {}
     return midterm_stock_agent.run(state)
+
+def node_bull_case(state):
+    # PRE/CLOSE에서만 실행 — 장중 등 나머지 run_type은 비용 절감을 위해 스킵
+    # (node_midterm_stocks의 조기 반환 패턴과 동일).
+    if state.get("run_type") not in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
+        return {}
+    return bull_bear_debate_team.run_bull(state)
+
+def node_bear_case(state):
+    if state.get("run_type") not in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
+        return {}
+    return bull_bear_debate_team.run_bear(state)
 
 def node_ceo(state):               return ceo_agent.run(state)
 def node_portfolio_manager(state): return portfolio_manager_agent.run(state)
@@ -610,6 +623,8 @@ def build_graph() -> StateGraph:
     g.add_node("investment_committee",     node_committee)
     g.add_node("portfolio_manager_agent",  node_portfolio_manager)
     g.add_node("midterm_stock_agent",      node_midterm_stocks)
+    g.add_node("bull_case",               node_bull_case)
+    g.add_node("bear_case",               node_bear_case)
     g.add_node("ceo_agent",               node_ceo)
     g.add_node("save_report",             node_save_report)
     g.add_node("deep_report",             node_deep_report)
@@ -642,7 +657,9 @@ def build_graph() -> StateGraph:
         ("review_feedback_team", "investment_committee"),
         ("investment_committee", "portfolio_manager_agent"),
         ("portfolio_manager_agent", "midterm_stock_agent"),
-        ("midterm_stock_agent",  "ceo_agent"),
+        ("midterm_stock_agent",  "bull_case"),
+        ("bull_case",            "bear_case"),
+        ("bear_case",            "ceo_agent"),
         ("ceo_agent",            "save_report"),
         ("save_report",          "deep_report"),
         ("deep_report",          "record_nav"),
@@ -786,6 +803,8 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "ceo_decisions": {},
         "deep_report_content": "",
         "deep_report_summary": "",
+        "bull_case_report": "",
+        "bear_case_report": "",
     }
 
     graph = build_graph()
@@ -834,6 +853,8 @@ def _run_global(run_type: str) -> InvestmentState:
         "ceo_decisions": {},
         "deep_report_content": "",
         "deep_report_summary": "",
+        "bull_case_report": "",
+        "bear_case_report": "",
     }
 
     graph = build_global_graph()

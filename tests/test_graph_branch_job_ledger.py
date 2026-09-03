@@ -65,8 +65,11 @@ def _run_minimal_graph(monkeypatch, futures_ok: bool):
     import clients.telegram_client as telegram_client
     import services.nav_service as nav_service
     import services.deep_report_service as deep_report_service
+    import agents.bull_bear_debate_team as bull_bear_debate_team
 
     monkeypatch.setattr(deep_report_service, "chat", lambda *a, **k: "요약테스트")
+    monkeypatch.setattr(bull_bear_debate_team, "run_bull", _set_field("bull_case_report", "ok"))
+    monkeypatch.setattr(bull_bear_debate_team, "run_bear", _set_field("bear_case_report", "ok"))
 
     def _futures_run(state):
         if futures_ok:
