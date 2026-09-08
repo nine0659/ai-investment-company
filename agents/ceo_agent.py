@@ -124,6 +124,62 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
     return cleaned, base
 
 
+# ── 브리핑 최상단 요약 카드 (파싱된 dict에서 코드로 조립 — LLM 서식 의존 없음) ──
+_STANCE_KR  = {"neutral": "중립", "defensive": "방어적", "aggressive": "공격적"}
+_THESIS_KR  = {"intact": "유지", "challenged": "도전받음", "reconsider": "재검토 필요"}
+_ACTION_KR  = {"reduce": "축소", "add": "확대", "exit": "청산"}
+
+
+def _build_summary_card(d: dict) -> str:
+    """ceo_decisions dict를 고정 포맷 3~6줄 요약으로 조립. 본문 맨 위에 붙인다.
+
+    긴 서술형 본문에 결론이 묻혀 한눈에 안 들어온다는 사용자 피드백(2026-09-08)
+    대응 — 이미 파싱된 구조화 데이터를 코드가 그대로 나열하므로 LLM이 매번
+    형식을 지킬지 여부와 무관하게 항상 같은 모양으로 나온다.
+    """
+    stance = _STANCE_KR.get(d.get("macro_stance", "neutral"), d.get("macro_stance", ""))
+    thesis = _THESIS_KR.get(d.get("thesis_status", "intact"), d.get("thesis_status", ""))
+
+    lines = [
+        "📌 *오늘의 결론*",
+        f"- 스탠스: {stance} (현금목표 {d.get('cash_target_pct', 30)}%) · 투자관: {thesis}",
+    ]
+
+    new_pos = d.get("new_positions") or []
+    if new_pos:
+        names = ", ".join(f"{p.get('name','')}({p.get('size_pct','?')}%)" for p in new_pos)
+        lines.append(f"- 신규 편입 {len(new_pos)}건: {names}")
+    else:
+        lines.append("- 신규 편입: 없음")
+
+    changes = d.get("position_changes") or []
+    if changes:
+        parts = ", ".join(
+            f"{c.get('name','')} {_ACTION_KR.get(c.get('action',''), c.get('action',''))}"
+            for c in changes
+        )
+        lines.append(f"- 비중조정/청산 {len(changes)}건: {parts}")
+    else:
+        lines.append("- 비중조정/청산: 없음")
+
+    holds = d.get("position_holds") or []
+    if holds:
+        lines.append(f"- 보유 유지 {len(holds)}종목: 특이 변화 없음")
+
+    risks = d.get("key_risks") or []
+    if risks:
+        lines.append(f"- 주요 리스크: {' / '.join(risks[:2])}")
+    else:
+        lines.append("- 주요 리스크: 특이사항 없음")
+
+    if d.get("committee_alignment") == "disagree" and d.get("committee_dissent"):
+        lines.append(f"- 분석팀과 이견: {d['committee_dissent']}")
+
+    lines.append("")
+    lines.append("(아래는 상세 근거 ↓)")
+    return "\n".join(lines)
+
+
 # ── 급등종목 수급 교차분석 (CEO 판단용) ──────────────────────────────────────
 def _format_surge_context(raw_kis_data: dict, top_n: int = 10) -> str:
     surge_items: list[tuple[str, str, float, str]] = []
@@ -936,6 +992,10 @@ def run(state: InvestmentState) -> InvestmentState:
 
         # ── CIO 결정 로그 파싱 + 텔레그램 메시지 정리 ──────────────────────
         ceo_report, ceo_decisions = _parse_cio_decisions(raw_result, date, run_type)
+        try:
+            ceo_report = _build_summary_card(ceo_decisions) + "\n\n" + ceo_report
+        except Exception as _sce:
+            logger.debug("[CIO] 요약 카드 생성 실패 (본문은 정상): %s", _sce)
         state["ceo_report"]   = ceo_report
         state["ceo_decisions"]= ceo_decisions
 
