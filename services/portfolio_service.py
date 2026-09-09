@@ -145,6 +145,45 @@ def close_position(code: str, exit_price: float = None, exit_date: str = None,
 # 사용자의 텔레그램 승인/기각/보류 응답에 따라 전환한다. add_position은
 # 기존 holding과 평단을 합산 병합하므로 draft 전환에는 맞지 않아 별도로 둔다.
 
+def register_draft_positions(date: str, items: list[dict]) -> int:
+    """신규편입 후보를 portfolio_positions에 status='draft'로 등록 (승인 큐 대상).
+
+    items: [{"code", "name", "timeframe", "memo"}, ...]. 이미 같은 (code, date)
+    draft가 있으면 스킵. PRE(ceo_agent._register_drafts)와 주간추천(midterm_agent)
+    양쪽에서 공유하는 함수 — 두 호출자 모두 동일한 INSERT 로직이 필요해 2026-09-09
+    확장 때 여기로 추출했다(호출자별로 다른 memo/timeframe만 각자 조립해서 넘김).
+
+    반환값: 새로 등록한 건수.
+    """
+    registered = 0
+    with get_conn() as conn:
+        for it in items:
+            code = it.get("code", "")
+            if not code:
+                continue
+            exists = conn.execute(
+                text("SELECT 1 FROM portfolio_positions "
+                     "WHERE code=:c AND entry_date=:d AND status='draft'"),
+                {"c": code, "d": date},
+            ).fetchone()
+            if exists:
+                continue
+            conn.execute(text("""
+                INSERT INTO portfolio_positions
+                (code, name, quantity, avg_price, entry_date, target_price, stop_price,
+                 timeframe, memo, status)
+                VALUES (:code, :name, 0, 0, :date, 0, 0, :tf, :memo, 'draft')
+            """), {
+                "code": code,
+                "name": it.get("name", ""),
+                "date": date,
+                "tf":   it.get("timeframe", "mid"),
+                "memo": it.get("memo", ""),
+            })
+            registered += 1
+    return registered
+
+
 def approve_draft_position(code: str, date: str, qty: int, fill_price: float,
                            target_price: float, stop_price: float) -> dict | None:
     """draft 포지션을 실제 체결 수량/가격으로 holding 전환. 대상 없으면 None."""

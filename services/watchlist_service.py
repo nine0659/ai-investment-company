@@ -71,6 +71,66 @@ def add_to_watchlist(code: str, name: str, target_entry: float = None,
     return row_id
 
 
+# ── 종목발굴 승인 큐 (2026-09-09) ──────────────────────────────
+# discovery_agent가 찾은 후보를 곧바로 active 등록하지 않고 candidate로 스테이징 →
+# 사용자 승인 시에만 active 전환한다. add_to_watchlist는 재사용하지 않는다 —
+# 그 함수의 UPDATE 분기가 status='active'를 하드코딩하고 있어(위 add_to_watchlist
+# 참고) candidate로 넣어도 기존 행이 있으면 즉시 active로 덮어써지는 문제가 있다.
+# get_watchlist(status="active") 기본값 덕분에 check_triggers/format_watchlist_for_briefing은
+# 코드 변경 없이 candidate 행을 자동으로 무시한다.
+
+def stage_watchlist_candidate(code: str, name: str, target_entry: float = None,
+                              reason: str = None) -> int | None:
+    """발굴 후보를 status='candidate'로 스테이징. code가 이미 존재하면(active든
+    candidate든) 중복 등록 방지를 위해 None 반환."""
+    now = datetime.now(_TZ).strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        existing = conn.execute(
+            text("SELECT id FROM watchlist_items WHERE code=:code"), {"code": code}
+        ).fetchone()
+        if existing:
+            return None
+        result = conn.execute(
+            text(
+                "INSERT INTO watchlist_items "
+                "(code, name, target_entry, timeframe, reason, trigger_type, trigger_value, "
+                " priority, status, added_date) "
+                "VALUES (:code, :name, :target, 'mid', :reason, 'price_below', :target, "
+                "        'high', 'candidate', :now) RETURNING id"
+            ),
+            {"code": code, "name": name, "target": target_entry, "reason": reason, "now": now},
+        )
+        row_id = result.scalar()
+    logger.info("[승인큐] 워치리스트 후보 스테이징: %s(%s)", name, code)
+    return row_id
+
+
+def approve_watchlist_candidate(code: str) -> bool:
+    """candidate → active 전환. 이미 처리됐거나 대상 없으면 False."""
+    with get_conn() as conn:
+        result = conn.execute(
+            text("UPDATE watchlist_items SET status='active' WHERE code=:code AND status='candidate'"),
+            {"code": code},
+        )
+    ok = result.rowcount > 0
+    if ok:
+        logger.info("[승인큐] 워치리스트 승인: %s", code)
+    return ok
+
+
+def reject_watchlist_candidate(code: str) -> bool:
+    """candidate → removed 전환. 이미 처리됐거나 대상 없으면 False."""
+    with get_conn() as conn:
+        result = conn.execute(
+            text("UPDATE watchlist_items SET status='removed' WHERE code=:code AND status='candidate'"),
+            {"code": code},
+        )
+    ok = result.rowcount > 0
+    if ok:
+        logger.info("[승인큐] 워치리스트 기각: %s", code)
+    return ok
+
+
 def remove_from_watchlist(code: str) -> bool:
     """워치리스트에서 종목 제거."""
     with get_conn() as conn:

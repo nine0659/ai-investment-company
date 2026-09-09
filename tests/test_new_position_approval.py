@@ -17,6 +17,7 @@ from services.portfolio_service import (
     approve_draft_position,
     reject_new_position,
     defer_new_position,
+    register_draft_positions,
 )
 
 
@@ -172,3 +173,27 @@ def test_defer_leaves_draft_untouched_marks_recommendation():
         ).fetchone()[0]
     assert status == "draft"  # 보류는 draft를 그대로 둔다
     assert action == "deferred"
+
+
+# ── register_draft_positions (2026-09-09 주간추천 확장 — PRE/weekly 공유) ─────
+
+def test_register_draft_positions_inserts_new_rows():
+    items = [{"code": "005930", "name": "삼성전자", "timeframe": "mid", "memo": "테스트"}]
+    n = register_draft_positions("2026-09-09", items)
+    assert n == 1
+    with get_conn() as conn:
+        row = conn.execute(
+            text("SELECT quantity, avg_price, status FROM portfolio_positions WHERE code='005930'")
+        ).fetchone()
+    assert row == (0, 0.0, "draft")
+
+
+def test_register_draft_positions_skips_existing_draft():
+    items = [{"code": "005930", "name": "삼성전자", "timeframe": "mid", "memo": "테스트"}]
+    assert register_draft_positions("2026-09-09", items) == 1
+    assert register_draft_positions("2026-09-09", items) == 0  # 같은 (code,date) draft 중복 스킵
+
+
+def test_register_draft_positions_skips_missing_code():
+    items = [{"code": "", "name": "이름만있음", "timeframe": "mid", "memo": ""}]
+    assert register_draft_positions("2026-09-09", items) == 0

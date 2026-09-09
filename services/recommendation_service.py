@@ -81,6 +81,46 @@ def recs_from_cio_decisions(
     return results
 
 
+def send_new_position_approvals(date: str, recs: list[dict]) -> None:
+    """신규편입 후보마다 승인/보류/기각 인라인 버튼 카드를 발송한다 (승인 큐, 2026-09-09).
+
+    recs는 recs_from_cio_decisions(PRE)와 recs_from_weekly_picks(weekly_picks) 양쪽이
+    동일하게 반환하는 모양(name/code/entry_price/stop_price/target_price/rationale)이라
+    두 호출자가 공유한다. 콜백은 napp/ndef/nrej:{code}:{date} — telegram_bot.py의
+    _handle_callback이 date+code로 portfolio_positions/stock_recommendations를 조회하는
+    범용 로직이라 호출자(PRE/weekly)를 가리지 않는다.
+
+    별도 claim_report_slot 불필요 — 호출자(ceo_agent.run/midterm_agent.run_analysis)가
+    이미 자기 자신의 claim_report_slot으로 선점된 실행 안에서만 이 함수를 부르므로
+    중복 방지 가드를 그대로 상속받는다.
+    """
+    if not recs:
+        return
+    try:
+        from clients.telegram_client import send_message_with_buttons
+
+        for r in recs:
+            code = r.get("code", "")
+            if not code:
+                continue
+            text_msg = (
+                f"🆕 *신규편입 승인 요청*\n\n"
+                f"{r.get('name', code)}({code})\n"
+                f"진입가(현재가): {r.get('entry_price', 0):,}원\n"
+                f"목표가: {r.get('target_price', 0):,}원 | 손절가: {r.get('stop_price', 0):,}원\n"
+                f"근거: {r.get('rationale', '')}\n\n"
+                f"승인하면 실제 체결 수량·가격을 물어봅니다."
+            )
+            buttons = [[
+                {"text": "✅ 승인", "callback_data": f"napp:{code}:{date}"},
+                {"text": "⏸ 보류", "callback_data": f"ndef:{code}:{date}"},
+                {"text": "❌ 기각", "callback_data": f"nrej:{code}:{date}"},
+            ]]
+            send_message_with_buttons(text_msg, buttons)
+    except Exception as e:
+        logger.warning("[승인큐] 승인 요청 발송 실패 (무시): %s", e)
+
+
 # "1. 종목명 (005930) — 현재가 175,100원 → 목표가 210,000원" 패턴 — 주간 추천 포맷
 _PICK_RE = re.compile(
     r"^\s*\d+\.\s*(?P<name>[^\n(]+?)\s*\((?P<code>\d{6})\)\s*"

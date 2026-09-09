@@ -21,7 +21,7 @@ from clients.openai_client import chat
 from clients.kis_client import KISClient
 from clients.market_data_client import fetch_global_market_data
 from clients.us_market_client import fetch_us_sectors
-from clients.telegram_client import send_message
+from clients.telegram_client import send_message, send_message_with_buttons
 
 logger = logging.getLogger(__name__)
 _TZ = ZoneInfo("Asia/Seoul")
@@ -179,17 +179,25 @@ def _format_candidates(cands: list[dict]) -> str:
     return "\n".join(lines) if lines else "후보 없음 (품질 필터 통과 종목 없음)"
 
 
-def _register_watchlist(report: str) -> tuple[str, int]:
-    """WATCH 블록 파싱 → 워치리스트 자동 등록. (블록 제거된 리포트, 등록 수) 반환."""
+def _register_watchlist(report: str) -> tuple[str, list[dict]]:
+    """WATCH 블록 파싱 → 워치리스트 candidate로 스테이징(승인 큐, 2026-09-09).
+
+    이전엔 여기서 곧바로 status='active'로 등록해 사용자 승인 없이 감시가
+    시작됐다. 이제는 stage_watchlist_candidate로 후보 등록만 해두고, 실제 active
+    전환은 텔레그램 승인 버튼(wapp)을 눌러야 일어난다.
+
+    반환값: (WATCH 블록 제거된 리포트, 새로 스테이징된 후보 리스트). 이미 존재하는
+    코드(활성 워치리스트든 스테이징 중이든)는 리스트에서 빠진다 — 중복 카드 방지.
+    """
     m = _WATCH_RE.search(report)
     if not m:
-        return report, 0
+        return report, []
     block   = m.group(1)
     cleaned = (report[: m.start()] + report[m.end():]).strip()
 
-    count = 0
+    staged: list[dict] = []
     try:
-        from services.watchlist_service import add_to_watchlist
+        from services.watchlist_service import stage_watchlist_candidate
         for raw in block.split("\n"):
             parts = [p.strip() for p in raw.strip().split("|")]
             if len(parts) < 5 or parts[0].lower() != "watch":
@@ -199,15 +207,46 @@ def _register_watchlist(report: str) -> tuple[str, int]:
                 entry = float(parts[3].replace(",", ""))
             except ValueError:
                 entry = None
-            add_to_watchlist(
-                code, name, target_entry=entry, timeframe="mid",
-                reason=f"[발굴] {parts[4]}", priority="high",
-            )
-            count += 1
-            logger.info("[발굴] 워치리스트 등록: %s(%s)", name, code)
+            reason = f"[발굴] {parts[4]}"
+            row_id = stage_watchlist_candidate(code, name, target_entry=entry, reason=reason)
+            if row_id is None:
+                logger.info("[발굴] %s(%s) 이미 워치리스트에 존재 — 스킵", name, code)
+                continue
+            staged.append({"code": code, "name": name, "target_entry": entry, "reason": reason})
+            logger.info("[발굴] 워치리스트 후보 스테이징: %s(%s)", name, code)
     except Exception as e:
-        logger.warning("[발굴] 워치리스트 등록 실패: %s", e)
-    return cleaned, count
+        logger.warning("[발굴] 워치리스트 스테이징 실패: %s", e)
+    return cleaned, staged
+
+
+def _send_watchlist_approvals(staged: list[dict]) -> None:
+    """스테이징된 발굴 후보마다 승인/보류/기각 버튼 카드를 발송한다.
+
+    portfolio_positions 기반 신규편입 승인 큐(napp/nrej/ndef)와 달리 수량·가격
+    입력이 필요 없는 단발성 액션이라 체결가 대기 없이 버튼 하나로 끝난다.
+    watchlist_items.code가 UNIQUE라 콜백에 날짜가 필요 없다.
+    """
+    if not staged:
+        return
+    try:
+        for c in staged:
+            code = c["code"]
+            entry_txt = f"{c['target_entry']:,.0f}원" if c.get("target_entry") else "미설정"
+            text_msg = (
+                f"🔭 *워치리스트 등록 승인 요청*\n\n"
+                f"{c['name']}({code})\n"
+                f"목표진입가: {entry_txt}\n"
+                f"발굴 근거: {c.get('reason', '')}\n\n"
+                f"승인하면 워치리스트에 등록돼 진입 조건 도달 시 알림을 받습니다."
+            )
+            buttons = [[
+                {"text": "✅ 승인", "callback_data": f"wapp:{code}"},
+                {"text": "⏸ 보류", "callback_data": f"wdef:{code}"},
+                {"text": "❌ 기각", "callback_data": f"wrej:{code}"},
+            ]]
+            send_message_with_buttons(text_msg, buttons)
+    except Exception as e:
+        logger.warning("[발굴] 워치리스트 승인 요청 발송 실패 (무시): %s", e)
 
 
 def run_discovery(send: bool = True, silent_if_empty: bool = False) -> str:
@@ -279,19 +318,21 @@ def run_discovery(send: bool = True, silent_if_empty: bool = False) -> str:
         logger.error("[발굴] LLM 실패: %s", e)
         return f"발굴 분석 실패: {e}"
 
-    # ⑤ 워치리스트 자동 등록
-    report, n_watch = _register_watchlist(report)
+    # ⑤ 워치리스트 후보 스테이징 (승인 큐 — 실제 활성화는 텔레그램 버튼 승인 후)
+    report, staged = _register_watchlist(report)
+    n_watch = len(staged)
 
     header = f"🔭 *종목 발굴 리포트* ({now.strftime('%Y.%m.%d')})\n"
     if n_watch:
-        header += f"발굴 종목 {n_watch}개 워치리스트 자동 등록 — 진입 조건 도달 시 알림\n"
+        header += f"발굴 종목 {n_watch}개 — 아래 승인 카드에서 워치리스트 등록 여부를 결정해주세요\n"
     header += "\n"
 
     if send and not (silent_if_empty and n_watch == 0):
         send_message(header + report)
+        _send_watchlist_approvals(staged)
     elif send:
         logger.info("[발굴] 발굴 종목 없음 — silent_if_empty=True라 발송 생략")
-    logger.info("[발굴] 완료 (워치리스트 등록 %d개)", n_watch)
+    logger.info("[발굴] 완료 (워치리스트 후보 스테이징 %d개)", n_watch)
     return header + report
 
 

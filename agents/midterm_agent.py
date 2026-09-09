@@ -182,6 +182,20 @@ def run_analysis(send: bool = True) -> str | None:
             save_recommendations(today, recs)
             logger.info("[중기에이전트] 추천 %d건 추적 등록: %s",
                         len(recs), ", ".join(r["name"] for r in recs))
+
+            # 승인 큐(2026-09-09, PRE와 동일 패턴) — send=False로 불려도 항상 실행:
+            # 이 블록 자체가 지금도 send와 무관하게 일요일 딱 한 번만 도는 구조라
+            # 승인 카드도 같은 타이밍에 나가야 자연스럽다. 콜백 핸들러는 date+code로
+            # portfolio_positions/stock_recommendations를 조회하는 범용 로직이라
+            # PRE(agents/ceo_agent.py)와 완전히 동일하게 재사용된다.
+            from services.portfolio_service import register_draft_positions
+            from services.recommendation_service import send_new_position_approvals
+            items = [{
+                "code": r["code"], "name": r["name"], "timeframe": "mid",
+                "memo": f"주간추천({today}): {r['rationale'][:200]}",
+            } for r in recs]
+            register_draft_positions(today, items)
+            send_new_position_approvals(today, recs)
     except Exception as e:
         logger.warning("[중기에이전트] 추천 추적 등록 실패 (브리핑은 정상 발송): %s", e)
 

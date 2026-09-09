@@ -944,9 +944,12 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
       "ignore:CODE"              — 무시 (알림만 닫기)
       "auto_on"                  — 자동 실행 ON
       "auto_off"                 — 자동 실행 OFF
-      "napp:CODE:DATE"           — CIO 신규편입 승인 → 체결가 입력 대기
-      "nrej:CODE:DATE"           — CIO 신규편입 기각
-      "ndef:CODE:DATE"           — CIO 신규편입 보류
+      "napp:CODE:DATE"           — 신규편입(PRE/주간추천) 승인 → 체결가 입력 대기
+      "nrej:CODE:DATE"           — 신규편입 기각
+      "ndef:CODE:DATE"           — 신규편입 보류
+      "wapp:CODE"                — 종목발굴 후보 승인 → 워치리스트 active 전환
+      "wrej:CODE"                — 종목발굴 후보 기각
+      "wdef:CODE"                — 종목발굴 후보 보류 (DB 변경 없음)
     """
     from clients.telegram_client import answer_callback_query
     if callback_query_id:
@@ -1080,6 +1083,34 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
             from services.portfolio_service import defer_new_position
             defer_new_position(code, date)
             _send(chat_id, f"⏸ 보류 처리됨: {code} — 필요 시 `/holdings add`로 직접 등록 가능")
+            return
+
+        if action == "wapp":
+            if len(parts) < 2:
+                _send(chat_id, "❌ wapp 콜백 데이터 오류")
+                return
+            code = parts[1].zfill(6)
+            from services.watchlist_service import approve_watchlist_candidate
+            ok = approve_watchlist_candidate(code)
+            _send(chat_id, f"✅ 워치리스트 등록 완료: {code}" if ok else f"❌ 이미 처리된 후보입니다 ({code})")
+            return
+
+        if action == "wrej":
+            if len(parts) < 2:
+                _send(chat_id, "❌ wrej 콜백 데이터 오류")
+                return
+            code = parts[1].zfill(6)
+            from services.watchlist_service import reject_watchlist_candidate
+            ok = reject_watchlist_candidate(code)
+            _send(chat_id, f"❌ 워치리스트 기각됨: {code}" if ok else f"❌ 이미 처리된 후보입니다 ({code})")
+            return
+
+        if action == "wdef":
+            if len(parts) < 2:
+                _send(chat_id, "❌ wdef 콜백 데이터 오류")
+                return
+            code = parts[1].zfill(6)
+            _send(chat_id, f"⏸ 후보 목록에 남겨둠: {code} — 필요할 때 다시 승인/기각할 수 있어요")
             return
 
         _send(chat_id, f"❓ 알 수 없는 콜백: {data}")

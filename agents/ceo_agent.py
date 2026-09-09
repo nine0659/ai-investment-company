@@ -1069,7 +1069,8 @@ def run(state: InvestmentState) -> InvestmentState:
             _register_drafts(date, ceo_decisions)
             _trigger_auto_buy(ceo_decisions, state)
             recs = _track_recommendations(date, ceo_decisions)
-            _send_approval_requests(date, recs)
+            from services.recommendation_service import send_new_position_approvals
+            send_new_position_approvals(date, recs)
 
     except Exception as e:
         logger.error("[CIO] 실패: %s", e)
@@ -1081,40 +1082,29 @@ def run(state: InvestmentState) -> InvestmentState:
 
 
 def _register_drafts(date: str, decisions: dict) -> None:
-    """ceo_decisions의 new_positions를 portfolio_positions draft로 등록."""
+    """ceo_decisions의 new_positions를 portfolio_positions draft로 등록.
+
+    실제 INSERT는 services.portfolio_service.register_draft_positions에 위임 —
+    주간추천(agents/midterm_agent.py)도 동일한 등록 로직이 필요해 2026-09-09
+    확장 때 공유 함수로 추출했다. 여기선 CIO 결정 특유의 필드(thesis/conviction/
+    size_pct)를 memo 문구로 조립하는 부분만 남는다.
+    """
     positions = decisions.get("new_positions", [])
     if not positions:
         return
     try:
-        from db.database import get_conn
-        from sqlalchemy import text as _text
-        with get_conn() as conn:
-            for pos in positions:
-                code = pos.get("code", "")
-                if not code:
-                    continue
-                exists = conn.execute(
-                    _text("SELECT 1 FROM portfolio_positions "
-                          "WHERE code=:c AND entry_date=:d AND status='draft'"),
-                    {"c": code, "d": date},
-                ).fetchone()
-                if not exists:
-                    tf_map = {"mid": "mid", "long": "long", "short": "short"}
-                    conn.execute(_text("""
-                        INSERT INTO portfolio_positions
-                        (code, name, quantity, avg_price, entry_date, target_price, stop_price,
-                         timeframe, memo, status)
-                        VALUES (:code, :name, 0, 0, :date, 0, 0, :tf, :memo, 'draft')
-                    """), {
-                        "code": code,
-                        "name": pos.get("name", ""),
-                        "date": date,
-                        "tf":   tf_map.get(pos.get("timeframe", "mid"), "mid"),
-                        "memo": (f"CIO결정({date}): {pos.get('thesis','')[:200]} | "
-                                 f"확신:{pos.get('conviction','medium')} | "
-                                 f"비중목표:{pos.get('size_pct',0)}%"),
-                    })
-        logger.info("[CIO] portfolio draft %d건 등록", len(positions))
+        from services.portfolio_service import register_draft_positions
+        tf_map = {"mid": "mid", "long": "long", "short": "short"}
+        items = [{
+            "code": pos.get("code", ""),
+            "name": pos.get("name", ""),
+            "timeframe": tf_map.get(pos.get("timeframe", "mid"), "mid"),
+            "memo": (f"CIO결정({date}): {pos.get('thesis','')[:200]} | "
+                     f"확신:{pos.get('conviction','medium')} | "
+                     f"비중목표:{pos.get('size_pct',0)}%"),
+        } for pos in positions if pos.get("code")]
+        n = register_draft_positions(date, items)
+        logger.info("[CIO] portfolio draft %d건 등록", n)
     except Exception as e:
         logger.warning("[CIO] draft 등록 실패: %s", e)
 
@@ -1203,37 +1193,3 @@ def _track_recommendations(date: str, decisions: dict) -> list[dict]:
     except Exception as e:
         logger.warning("[CIO] 추천추적 등록 실패 (무시): %s", e)
         return []
-
-
-def _send_approval_requests(date: str, recs: list[dict]) -> None:
-    """신규편입 후보마다 승인/보류/기각 인라인 버튼 카드를 발송한다 (승인 큐, 2026-09-09).
-
-    별도 claim_report_slot 불필요 — 이 함수는 이미 claim_report_slot(date, "pre")로
-    선점된 PRE 파이프라인 실행(run_pipeline) 내부에서만 호출되므로 중복 방지 가드를
-    그대로 상속받는다.
-    """
-    if not recs:
-        return
-    try:
-        from clients.telegram_client import send_message_with_buttons
-
-        for r in recs:
-            code = r.get("code", "")
-            if not code:
-                continue
-            text_msg = (
-                f"🆕 *신규편입 승인 요청*\n\n"
-                f"{r.get('name', code)}({code})\n"
-                f"진입가(현재가): {r.get('entry_price', 0):,}원\n"
-                f"목표가: {r.get('target_price', 0):,}원 | 손절가: {r.get('stop_price', 0):,}원\n"
-                f"근거: {r.get('rationale', '')}\n\n"
-                f"승인하면 실제 체결 수량·가격을 물어봅니다."
-            )
-            buttons = [[
-                {"text": "✅ 승인", "callback_data": f"napp:{code}:{date}"},
-                {"text": "⏸ 보류", "callback_data": f"ndef:{code}:{date}"},
-                {"text": "❌ 기각", "callback_data": f"nrej:{code}:{date}"},
-            ]]
-            send_message_with_buttons(text_msg, buttons)
-    except Exception as e:
-        logger.warning("[CIO] 승인 요청 발송 실패 (무시): %s", e)
