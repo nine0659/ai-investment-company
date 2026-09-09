@@ -492,6 +492,7 @@ def init_db():
     """모든 테이블 생성 (존재하면 스킵). 애플리케이션 시작 시 한 번 호출."""
     metadata.create_all(engine, checkfirst=True)
     _migrate_order_history()
+    _migrate_stock_recommendations()
     try:
         from services.position_lifecycle_service import migrate_portfolio_positions
         migrate_portfolio_positions()
@@ -520,6 +521,25 @@ def _migrate_order_history():
             logger.debug("[DB] order_history.rec_id 이미 존재 — 스킵")
     except Exception as e:
         logger.warning("[DB] order_history 마이그레이션 실패: %s", e)
+
+
+def _migrate_stock_recommendations():
+    """stock_recommendations 테이블에 user_action 컬럼이 없으면 ALTER TABLE로 추가.
+
+    승인 큐(2026-09-09)가 사용자의 승인/기각/보류 반응을 기록하는 컬럼.
+    """
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        inspector = sa_inspect(engine)
+        cols = [c["name"] for c in inspector.get_columns("stock_recommendations")]
+        if "user_action" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE stock_recommendations ADD COLUMN user_action TEXT"))
+            logger.info("[DB] stock_recommendations.user_action 컬럼 추가 완료")
+        else:
+            logger.debug("[DB] stock_recommendations.user_action 이미 존재 — 스킵")
+    except Exception as e:
+        logger.warning("[DB] stock_recommendations 마이그레이션 실패: %s", e)
 
 
 # ── 연결 컨텍스트 매니저 ───────────────────────────────────────────

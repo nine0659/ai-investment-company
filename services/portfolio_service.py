@@ -140,6 +140,70 @@ def close_position(code: str, exit_price: float = None, exit_date: str = None,
             "avg_price": avg_price, "exit_price": exit_price, "return_pct": ret}
 
 
+# ── CIO 신규편입 승인 큐 (2026-09-09) ─────────────────────────────
+# ceo_agent._register_drafts가 만든 status='draft' 행(수량/가격 0)을
+# 사용자의 텔레그램 승인/기각/보류 응답에 따라 전환한다. add_position은
+# 기존 holding과 평단을 합산 병합하므로 draft 전환에는 맞지 않아 별도로 둔다.
+
+def approve_draft_position(code: str, date: str, qty: int, fill_price: float,
+                           target_price: float, stop_price: float) -> dict | None:
+    """draft 포지션을 실제 체결 수량/가격으로 holding 전환. 대상 없으면 None."""
+    now = datetime.now(_TZ).strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        result = conn.execute(
+            text(
+                "UPDATE portfolio_positions SET quantity=:qty, avg_price=:price, "
+                "target_price=:target, stop_price=:stop, status='holding', updated_at=:now "
+                "WHERE code=:code AND entry_date=:date AND status='draft'"
+            ),
+            {"qty": qty, "price": fill_price, "target": target_price, "stop": stop_price,
+             "now": now, "code": code, "date": date},
+        )
+        if result.rowcount == 0:
+            return None
+        row = conn.execute(
+            text("SELECT name FROM portfolio_positions WHERE code=:code AND entry_date=:date"),
+            {"code": code, "date": date},
+        ).fetchone()
+        conn.execute(
+            text("UPDATE stock_recommendations SET user_action='approved' "
+                 "WHERE date=:date AND code=:code"),
+            {"date": date, "code": code},
+        )
+    logger.info("[승인큐] %s(%s) draft→holding 전환: %d주 @%.0f원", row[0] if row else "", code, qty, fill_price)
+    return {"code": code, "name": row[0] if row else code, "qty": qty, "fill_price": fill_price}
+
+
+def reject_new_position(code: str, date: str) -> bool:
+    """draft 포지션을 rejected로 표시. 이미 처리됐으면 False."""
+    with get_conn() as conn:
+        result = conn.execute(
+            text("UPDATE portfolio_positions SET status='rejected', updated_at=:now "
+                 "WHERE code=:code AND entry_date=:date AND status='draft'"),
+            {"now": datetime.now(_TZ).strftime("%Y-%m-%d"), "code": code, "date": date},
+        )
+        if result.rowcount == 0:
+            return False
+        conn.execute(
+            text("UPDATE stock_recommendations SET user_action='rejected' "
+                 "WHERE date=:date AND code=:code"),
+            {"date": date, "code": code},
+        )
+    logger.info("[승인큐] %s 기각 처리 (%s)", code, date)
+    return True
+
+
+def defer_new_position(code: str, date: str) -> None:
+    """draft는 그대로 두고 추천 추적에만 '보류'로 표시."""
+    with get_conn() as conn:
+        conn.execute(
+            text("UPDATE stock_recommendations SET user_action='deferred' "
+                 "WHERE date=:date AND code=:code"),
+            {"date": date, "code": code},
+        )
+    logger.info("[승인큐] %s 보류 처리 (%s)", code, date)
+
+
 # ── KIS 실계좌 동기화 (읽기 전용) ──────────────────────────────
 #
 # portfolio_positions는 그동안 사람이 직접 갱신해왔다(비고에 "사용자 실보유

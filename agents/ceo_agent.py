@@ -1068,7 +1068,8 @@ def run(state: InvestmentState) -> InvestmentState:
         if run_type == RUN_TYPE_PRE:
             _register_drafts(date, ceo_decisions)
             _trigger_auto_buy(ceo_decisions, state)
-            _track_recommendations(date, ceo_decisions)
+            recs = _track_recommendations(date, ceo_decisions)
+            _send_approval_requests(date, recs)
 
     except Exception as e:
         logger.error("[CIO] 실패: %s", e)
@@ -1162,16 +1163,19 @@ def _trigger_auto_buy(decisions: dict, state: dict) -> None:
         logger.warning("[CIO] 자동 실행 트리거 실패: %s", _ae)
 
 
-def _track_recommendations(date: str, decisions: dict) -> None:
+def _track_recommendations(date: str, decisions: dict) -> list[dict]:
     """장전 CIO 신규편입 판단을 stock_recommendations에 저장 — 적중률 추적 루프 연결.
 
     PRE에서만 호출한다: save_recommendations가 날짜 단위 전체 교체(DELETE→INSERT)라
     같은 금요일에 pre_market·close_market이 둘 다 저장하면 나중 실행이 먼저 것을
     지워버린다. _register_drafts/_trigger_auto_buy도 같은 이유로 PRE 전용이다.
+
+    반환값(recs)은 승인 큐(_send_approval_requests)가 동일한 진입/목표/손절가를
+    재사용하기 위한 것 — 가격을 두 번 조회해 값이 달라지는 것을 방지한다.
     """
     positions = decisions.get("new_positions", [])
     if not positions:
-        return
+        return []
     try:
         from services.recommendation_service import recs_from_cio_decisions, save_recommendations
 
@@ -1181,7 +1185,7 @@ def _track_recommendations(date: str, decisions: dict) -> None:
             kis = KISClient()
         except Exception as e:
             logger.warning("[CIO] 추천추적용 KIS 초기화 실패 — 이번 회차 추적 스킵: %s", e)
-            return
+            return []
 
         def _price_fn(code: str) -> int:
             try:
@@ -1195,5 +1199,41 @@ def _track_recommendations(date: str, decisions: dict) -> None:
             save_recommendations(date, recs)
             logger.info("[CIO] 장전 판단 추천추적 등록 %d건: %s",
                         len(recs), ", ".join(r["name"] for r in recs))
+        return recs
     except Exception as e:
         logger.warning("[CIO] 추천추적 등록 실패 (무시): %s", e)
+        return []
+
+
+def _send_approval_requests(date: str, recs: list[dict]) -> None:
+    """신규편입 후보마다 승인/보류/기각 인라인 버튼 카드를 발송한다 (승인 큐, 2026-09-09).
+
+    별도 claim_report_slot 불필요 — 이 함수는 이미 claim_report_slot(date, "pre")로
+    선점된 PRE 파이프라인 실행(run_pipeline) 내부에서만 호출되므로 중복 방지 가드를
+    그대로 상속받는다.
+    """
+    if not recs:
+        return
+    try:
+        from clients.telegram_client import send_message_with_buttons
+
+        for r in recs:
+            code = r.get("code", "")
+            if not code:
+                continue
+            text_msg = (
+                f"🆕 *신규편입 승인 요청*\n\n"
+                f"{r.get('name', code)}({code})\n"
+                f"진입가(현재가): {r.get('entry_price', 0):,}원\n"
+                f"목표가: {r.get('target_price', 0):,}원 | 손절가: {r.get('stop_price', 0):,}원\n"
+                f"근거: {r.get('rationale', '')}\n\n"
+                f"승인하면 실제 체결 수량·가격을 물어봅니다."
+            )
+            buttons = [[
+                {"text": "✅ 승인", "callback_data": f"napp:{code}:{date}"},
+                {"text": "⏸ 보류", "callback_data": f"ndef:{code}:{date}"},
+                {"text": "❌ 기각", "callback_data": f"nrej:{code}:{date}"},
+            ]]
+            send_message_with_buttons(text_msg, buttons)
+    except Exception as e:
+        logger.warning("[CIO] 승인 요청 발송 실패 (무시): %s", e)

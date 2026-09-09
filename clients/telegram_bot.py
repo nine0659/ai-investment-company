@@ -49,6 +49,10 @@ _RUNNING = threading.Event()
 # 허용된 chat_id (설정된 TELEGRAM_CHAT_ID만 수신)
 _ALLOWED = {TELEGRAM_CHAT_ID} if TELEGRAM_CHAT_ID else set()
 
+# CIO 신규편입 승인 큐 — "승인" 버튼 누른 뒤 체결가 입력을 기다리는 상태 (인메모리,
+# Render 재시작 시 유실되면 사용자가 승인 버튼을 다시 누르면 됨 — draft가 그대로라 멱등).
+_PENDING_FILL: dict[str, dict] = {}
+
 
 # ── 메시지 발송 ────────────────────────────────────────────────
 
@@ -887,6 +891,47 @@ def _cmd_pause(chat_id: str, args: str) -> None:
         _send(chat_id, f"❌ 일시중단 오류: {e}")
 
 
+# ── CIO 신규편입 승인 큐 (2026-09-09) ─────────────────────────────
+
+def _handle_fill_reply(chat_id: str, text: str) -> None:
+    """승인 버튼을 누른 뒤 기다리던 "수량 가격" 답장을 처리."""
+    pending = _PENDING_FILL.get(chat_id)
+    if not pending:
+        return
+    parts = text.replace(",", "").split()
+    if len(parts) < 2:
+        _send(chat_id, "❌ `수량 가격` 형식으로 답장해주세요 (예: `10 71500`)")
+        return
+    try:
+        qty = int(parts[0])
+        fill_price = float(parts[1])
+        if qty <= 0 or fill_price <= 0:
+            raise ValueError
+    except ValueError:
+        _send(chat_id, "❌ 수량·가격은 양수 숫자로 입력해주세요 (예: `10 71500`)")
+        return
+
+    code = pending["code"]
+    date = pending["date"]
+    try:
+        from services.portfolio_service import approve_draft_position
+        result = approve_draft_position(
+            code=code, date=date, qty=qty, fill_price=fill_price,
+            target_price=pending.get("target_price", 0),
+            stop_price=pending.get("stop_price", 0),
+        )
+        if result:
+            _send(chat_id, f"✅ 승인 완료: *{result['name']}*({code}) "
+                            f"{qty:,}주 @{fill_price:,.0f}원 — 보유종목에 반영됨")
+        else:
+            _send(chat_id, f"❌ 이미 처리된 판단입니다 ({code})")
+    except Exception as e:
+        logger.error("[Bot] 승인 체결 처리 오류 (%s): %s", code, e)
+        _send(chat_id, f"❌ 처리 중 오류: {e}")
+    finally:
+        _PENDING_FILL.pop(chat_id, None)
+
+
 # ── 콜백 쿼리 핸들러 (인라인 버튼 클릭) ─────────────────────────
 
 def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> None:
@@ -899,6 +944,9 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
       "ignore:CODE"              — 무시 (알림만 닫기)
       "auto_on"                  — 자동 실행 ON
       "auto_off"                 — 자동 실행 OFF
+      "napp:CODE:DATE"           — CIO 신규편입 승인 → 체결가 입력 대기
+      "nrej:CODE:DATE"           — CIO 신규편입 기각
+      "ndef:CODE:DATE"           — CIO 신규편입 보류
     """
     from clients.telegram_client import answer_callback_query
     if callback_query_id:
@@ -985,6 +1033,53 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
                     _send(chat_id, f"❌ 절반 매도 실패: {result['message']}")
             except Exception as e:
                 _send(chat_id, f"❌ 절반 매도 오류: {e}")
+            return
+
+        if action == "napp":
+            if len(parts) < 3:
+                _send(chat_id, "❌ napp 콜백 데이터 오류")
+                return
+            code, date = parts[1].zfill(6), parts[2]
+            target_price = stop_price = 0
+            try:
+                from db.database import get_conn
+                from sqlalchemy import text as _text
+                with get_conn() as conn:
+                    row = conn.execute(
+                        _text("SELECT target_price, stop_price FROM stock_recommendations "
+                              "WHERE date=:d AND code=:c"),
+                        {"d": date, "c": code},
+                    ).fetchone()
+                if row:
+                    target_price, stop_price = row[0] or 0, row[1] or 0
+            except Exception as e:
+                logger.warning("[Bot] napp 목표/손절가 조회 실패 (%s): %s", code, e)
+            _PENDING_FILL[chat_id] = {
+                "code": code, "date": date,
+                "target_price": target_price, "stop_price": stop_price,
+            }
+            _send(chat_id, "✅ 승인 처리 중... 실제 체결 수량과 가격을 "
+                            "`수량 가격` 형식으로 답장해주세요 (예: `10 71500`)")
+            return
+
+        if action == "nrej":
+            if len(parts) < 3:
+                _send(chat_id, "❌ nrej 콜백 데이터 오류")
+                return
+            code, date = parts[1].zfill(6), parts[2]
+            from services.portfolio_service import reject_new_position
+            ok = reject_new_position(code, date)
+            _send(chat_id, f"❌ 기각 처리됨: {code}" if ok else f"❌ 이미 처리된 판단입니다 ({code})")
+            return
+
+        if action == "ndef":
+            if len(parts) < 3:
+                _send(chat_id, "❌ ndef 콜백 데이터 오류")
+                return
+            code, date = parts[1].zfill(6), parts[2]
+            from services.portfolio_service import defer_new_position
+            defer_new_position(code, date)
+            _send(chat_id, f"⏸ 보류 처리됨: {code} — 필요 시 `/holdings add`로 직접 등록 가능")
             return
 
         _send(chat_id, f"❓ 알 수 없는 콜백: {data}")
@@ -1169,6 +1264,10 @@ def _dispatch(chat_id: str, text: str) -> None:
     """메시지를 파싱해 적절한 핸들러로 라우팅. 슬래시 명령이 아니면 AI 대화."""
     text = text.strip()
     if not text:
+        return
+
+    if chat_id in _PENDING_FILL and not text.startswith("/"):
+        _handle_fill_reply(chat_id, text)
         return
 
     if text.startswith("/"):
