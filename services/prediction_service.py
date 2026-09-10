@@ -342,16 +342,32 @@ def _parse_scenarios(report: str) -> tuple[float | None, float | None, float | N
         try: bear = float(m.group(1))
         except ValueError: pass
 
-    # ☠️ 꼬리위험 — 한 줄 추출
+    # ☠️ 꼬리위험 — 한 줄 추출. 2026-09-10: CEO 출력 템플릿(agents/ceo_agent.py의
+    # _build_prompt_pre/_build_prompt_global)엔 "꼬리위험"이라는 문구가 없다 —
+    # 이 정규식은 항상 빈 값이었다. 같은 템플릿의 "주의: [오늘 눈여겨볼 것 —
+    # 어떤 일이 생기면 어떻게 할지]" 줄이 사실상 같은 역할(경계할 조건)이라
+    # 이를 폴백으로 쓴다.
     m = re.search(r"꼬리위험[:\s：]*([^\n]{5,80})", report)
     if m:
         tail = m.group(1).strip()[:80]
+    else:
+        m = re.search(r"주의[:\s：]*([^\n]{5,80})", report)
+        if m:
+            tail = m.group(1).strip()[:80]
 
     return baseline, bull, bear, tail
 
 
 def _parse_sector(report: str) -> str:
-    """주도 섹터 파싱."""
+    """주도 섹터 파싱.
+
+    2026-09-10 확인: CEO 출력 템플릿엔 "주도"라는 라벨이 없어 이 정규식은
+    현재 항상 빈 값을 반환한다("살 것/더 살 것"에 언급된 종목명이 사실상
+    이 역할을 대신함). 전용 라인을 새로 추가하려면 이미 9줄 예산이 빠듯한
+    CEO 브리핑 포맷 자체를 건드려야 해서 baseline/bull/bear 확률(시장 분위기
+    줄에 병기, 2026-09-10 추가)과 달리 보류 — get_selfcheck_context()가
+    빈 값이면 해당 줄을 그냥 생략하도록 이미 방어돼 있어 안전하게 비어있다.
+    """
     m = re.search(r"주도[:\s：]*([가-힣A-Za-z·,\s]{2,25})", report)
     if m:
         return m.group(1).strip()[:30]
