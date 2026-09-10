@@ -140,6 +140,40 @@ def _parse_structured_fields(report: str) -> dict:
     m = re.search(r"약세[^:]*:?\s*(.{10,120})", report)
     if m:
         fields["bear_scenario"] = m.group(1)[:200].strip()
+
+    # 섹터 비중 확대/축소 — "섹터 비중 확대: 반도체, 방산 — 근거" 한 줄 형태
+    # (2026-09-10: 이전엔 파싱 자체가 없어 항상 빈 리스트였음 — 이 컬럼을 실제로
+    # 읽는 곳은 아직 없어 당장 영향은 없지만, invalidation과 같은 원인이라 함께 수정)
+    m = re.search(r"섹터\s*비중\s*확대[:：]?\s*([^\n]{2,80})", report)
+    if m:
+        raw = re.split(r"[—\-–]", m.group(1))[0].strip()
+        fields["sector_overweight"] = [s.strip() for s in re.split(r"[,、·/]", raw) if s.strip()]
+    m = re.search(r"섹터\s*비중\s*축소[:：]?\s*([^\n]{2,80})", report)
+    if m:
+        raw = re.split(r"[—\-–]", m.group(1))[0].strip()
+        fields["sector_underweight"] = [s.strip() for s in re.split(r"[,、·/]", raw) if s.strip()]
+
+    # 핵심 확신 아이디어 — "종목명(코드) | 투자 기간: ..." 형태 줄들 (섹션⑥).
+    # 이름 문자클래스에 \s(줄바꿈 포함)를 쓰면 비탐욕 매칭이 앞 문단 끝까지
+    # 거슬러 올라가 붙어버린다 — 공백만 허용 + 줄 시작(^)에 고정해야 한다.
+    for name, code in re.findall(
+        r"^([가-힣A-Za-z0-9&· ]{2,20}?)\((\d{6})\)\s*\|\s*투자\s*기간", report, re.MULTILINE
+    ):
+        fields["conviction_ideas"].append({"name": name.strip(), "code": code})
+
+    # 투자관 무효 조건 — "⑧ 투자관 무효 조건" 헤더 뒤에 이어지는 "- " 불릿 라인들.
+    # 2026-09-10 수정: 이전엔 이 필드 파싱 자체가 없어 항상 ""였다 — 이게
+    # agents/emergency_monitor_agent.py의 시간당 "투자관 무효조건 발동" 감지를
+    # `if not thesis.get("invalidation"): return`으로 매번 조기 종료시켜, 이
+    # 안전장치가 도입 이후 한 번도 실제로 동작한 적이 없었다(services/thesis_service.py
+    # 참조 — invalidation을 실제로 읽는 유일한 소비처).
+    inv_m = re.search(
+        r"투자관\s*무효\s*조건[^\n]*\n((?:\s*[-•][^\n]*\n?)+)", report
+    )
+    if inv_m:
+        bullets = [ln.strip().lstrip("-•").strip() for ln in inv_m.group(1).splitlines()]
+        fields["invalidation"] = " / ".join(b for b in bullets if b)[:500]
+
     return fields
 
 
