@@ -79,7 +79,21 @@ def record_nav(kis=None) -> dict | None:
         # 알파는 반드시 같은 시작점(추적 시작일)끼리 비교한다.
         baseline = _get_year_baseline()
         if baseline:
-            nav_pct_ytd = round(total_pnl_pct - baseline["pnl_pct"], 2)
+            # 2026-09-10 발견·수정: total_pnl_pct 단순 차감은 generate_nav_report()가
+            # 이미 2026-07-10에 폐기한 바로 그 계산식이다 — 추적기간 중 매매로 구성이
+            # 바뀌면(예: 수익 난 종목 전량매도) 실현돼 빠져나간 이익이 손실로 둔갑한다.
+            # get_latest_nav()가 이 값을 CEO 마감 브리핑에 "Alpha" 그대로 노출하므로
+            # (ceo_agent.py: "Alpha가 음수이면 전략 재검토 신호") 그 사고가 여기서도
+            # 그대로 재현될 수 있었다. generate_nav_report()와 같은 평가배율(value/cost)
+            # 비교로 교체 — 매입금 정보가 없는 옛 기록(과거 스키마)만 원래 방식으로 폴백.
+            base_cost = baseline.get("total_cost") or 0
+            base_value = baseline.get("total_value") or 0
+            if base_cost > 0 and total_cost > 0:
+                baseline_ratio = base_value / base_cost
+                today_ratio = total_value / total_cost
+                nav_pct_ytd = round((today_ratio / baseline_ratio - 1) * 100, 2)
+            else:
+                nav_pct_ytd = round(total_pnl_pct - baseline["pnl_pct"], 2)
             if baseline["kospi_close"] > 0 and kospi_close > 0:
                 kospi_since_start = round(
                     (kospi_close - baseline["kospi_close"]) / baseline["kospi_close"] * 100, 2
@@ -175,7 +189,8 @@ def _get_year_baseline() -> dict | None:
         with get_conn() as conn:
             row = conn.execute(
                 text("""
-                    SELECT date, total_pnl_pct, kospi_close FROM portfolio_nav
+                    SELECT date, total_pnl_pct, kospi_close, total_value, total_cost
+                    FROM portfolio_nav
                     WHERE date >= :ys ORDER BY date ASC LIMIT 1
                 """),
                 {"ys": year_start},
@@ -185,6 +200,8 @@ def _get_year_baseline() -> dict | None:
                 "date": row[0],
                 "pnl_pct": float(row[1] or 0),
                 "kospi_close": float(row[2] or 0),
+                "total_value": float(row[3] or 0),
+                "total_cost": float(row[4] or 0),
             }
     except Exception:
         pass

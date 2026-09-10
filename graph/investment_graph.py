@@ -354,12 +354,21 @@ def node_save_report(state: InvestmentState) -> InvestmentState:
         except Exception as e:
             logger.debug("[CIO결정저장] 실패 (테이블 없을 수 있음): %s", e)
 
-    if ceo_report:
-        try:
-            from services.market_prediction_service import save_prediction
-            save_prediction(state["date"], state["run_type"], ceo_report)
-        except Exception as e:
-            logger.debug("[예측저장] 실패: %s", e)
+    # 2026-09-10 제거: services.market_prediction_service.save_prediction()은
+    # ceo_report 전문을 "상승/하락/중립" 키워드로 재파싱해 market_predictions에
+    # DELETE+INSERT했는데, 실제 CEO 출력형식(_build_prompt_pre 등)은 "시장 분위기:
+    # 좋음/나쁨/보통"이지 그 단어들이 없다 — 본문 아무 문장에서나("~ 상승 여력"
+    # 등) 우연히 먼저 걸리는 값을 저장했다. 이 노드는 ceo_agent가 자기 안에서
+    # PRE/GLOBAL에 대해 이미 호출한 services.prediction_service.save_cio_prediction()
+    # (ceo_decisions["macro_stance"] 기반 — 구조화 데이터라 신뢰 가능) 바로 뒤에
+    # 실행돼, 그 정확한 예측 행을 매번 덮어써 지워버리고 있었다. 이 값은 CEO
+    # 마감 브리핑의 "Phase C: 예측 적중률 주입(자기학습)"·자기점검 컨텍스트로
+    # 그대로 들어가므로 자기학습 루프 자체가 매일 오염되고 있었다. CLOSE·장중
+    # run_type에 대한 "예측" 저장은 이미 지난 결과를 사후에 예측이라 부르는
+    # 셈이라 애초에 의미가 없어 제거해도 손실이 없다. market_prediction_service.py의
+    # 나머지 조회/검증 함수(verify_predictions·get_prediction_stats 등, scheduler.py
+    # 일일검증·web 대시보드·텔레그램 /predict 등에서 여전히 사용됨)는 그대로
+    # 두면 이제 prediction_service가 쓴 깨끗한 행을 채점하게 된다.
 
     try:
         from services.market_archive_service import save_market_snapshot, save_intelligence_summary
