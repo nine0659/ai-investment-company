@@ -468,6 +468,8 @@ def _build_prompt_close() -> str:
 
 오늘 시장: KOSPI [+/-X.X%] · 외국인 [샀다/팔았다 XXX억] · 기관 [샀다/팔았다 XXX억]
 
+자기점검: [적중/불일치] — 오판 원인: [오늘 장전 예측이 빗나갔다면 무엇을 놓쳤는지 한 줄, 적중이면 "해당없음", 컨텍스트에 자기점검 데이터가 없으면 이 줄 자체를 생략]
+
 오늘 특이사항: [중요한 일이 있었다면 한 줄 — 보유 종목에 영향이 없으면 생략]
 
 오늘 할 일:
@@ -480,7 +482,7 @@ def _build_prompt_close() -> str:
 내일 주의: [내일 눈여겨볼 것] | 밤사이: [미국 주요 일정]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-총 9줄 이하. 할 일 없으면 "없음" 한 줄로 끝낼 것."""
+총 10줄 이하. 할 일 없으면 "없음" 한 줄로 끝낼 것."""
 
 
 def _build_prompt_intra1() -> str:
@@ -1044,7 +1046,12 @@ def run(state: InvestmentState) -> InvestmentState:
                 _kr_rt = state.get("kr_index_realtime", {})
                 _k_chg = _kr_rt.get("kospi", {}).get("change_pct")
                 if _k_chg is not None:
-                    # 오판 원인 — 자기점검 🔍 섹션에서 추출
+                    # 오판 원인 추출 — 2026-09-10: "오판 원인" 문구는 예전엔 자기점검
+                    # 컨텍스트(services/prediction_service.get_selfcheck_context)에만
+                    # "반드시 명시"라고 지시로만 주입됐고, _build_prompt_close()의 실제
+                    # 출력 템플릿엔 이 라벨을 쓰라는 칸이 없어 이 정규식이 사실상 항상
+                    # 빈 값이었다(DB엔 계속 저장됐지만 아무도 안 읽어 안 걸림). 출력
+                    # 템플릿에 "자기점검: ... 오판 원인: ..." 줄을 명시적으로 추가해 고쳤다.
                     _miss = ""
                     _miss_m = _re.search(
                         r"오판 원인[:\s:\uff1a]*([^\n]{5,80})", ceo_report
