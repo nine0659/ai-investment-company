@@ -41,6 +41,30 @@ _BLUECHIP_ALWAYS_FETCH: list[dict] = [
 # ── CIO 결정 로그 파싱 ────────────────────────────────────────────────────
 _LOG_RE = re.compile(r"=CIO_DECISION_START=[ \t]*\n(.*?)\n[ \t]*=CIO_DECISION_END=", re.DOTALL)
 
+# 2026-09-10 발견: LLM이 헌장의 "반드시 출력" 지시를 매번 지키지 않는다 —
+# 2026-09-04 실제 운영 브리핑에서 "살 것: 삼성전기(009150) 3%"를 사람이 읽는
+# 본문엔 냈지만 =CIO_DECISION_START= 블록 자체를 통째로 빠뜨렸다. 그 결과
+# _parse_cio_decisions가 조용히 빈 base dict를 반환해 승인 큐 발송
+# (_track_recommendations→send_new_position_approvals)·CIO 결정 아카이브
+# (cio_decisions_log)·추천추적(stock_recommendations)·리스크게이트 검사가
+# 전부 말없이 스킵됐다 — 사용자는 매수 문구를 읽었는데 승인 버튼도, 추적도,
+# 리스크 검사도 없었던 것. "구조화 실패=매수의견 없음"으로 오판하지 않도록,
+# 본문에 실제 행동 지시가 있는데 블록이 없으면 경보로 드러낸다(자동 파싱
+# 시도는 안 함 — 프롬프트에 없던 값을 지어내지 않는다는 원칙 유지).
+_ACTION_LINE_RE = re.compile(
+    r"[-·]?\s*(살\s*것|더\s*살\s*것|줄일\s*것[·・]?\s*팔\s*것)\s*[:：]\s*(?!없음)(\S.{0,60})"
+)
+
+
+def _find_untracked_action_line(raw_result: str) -> str | None:
+    """CIO_DECISION 블록이 없는데 본문에 실제 매수/매도 지시가 있으면 그 줄을 반환."""
+    if "=CIO_DECISION_START=" in raw_result:
+        return None
+    m = _ACTION_LINE_RE.search(raw_result)
+    if m:
+        return f"{m.group(1)}: {m.group(2)}".strip()
+    return None
+
 
 def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict]:
     """CIO 결정 로그 블록을 파싱 후 (cleaned_text, decisions_dict) 반환.
@@ -993,7 +1017,23 @@ def run(state: InvestmentState) -> InvestmentState:
         raw_result = chat_ceo(prompt, context, max_tokens=1800)
 
         # ── CIO 결정 로그 파싱 + 텔레그램 메시지 정리 ──────────────────────
+        _untracked_action = _find_untracked_action_line(raw_result)
         ceo_report, ceo_decisions = _parse_cio_decisions(raw_result, date, run_type)
+        if _untracked_action:
+            logger.error(
+                "[CIO] 구조화 결정 로그 누락 — 본문엔 행동 지시가 있는데 승인큐/추적/"
+                "리스크게이트가 전부 스킵됨: %s", _untracked_action,
+            )
+            try:
+                from clients.telegram_client import send_error_alert
+                send_error_alert(
+                    f"[CIO] 구조화 결정 로그 누락 — 방금 {run_type} 브리핑 본문에 "
+                    f"\"{_untracked_action}\"가 있었지만 승인 큐·추천추적·리스크게이트가 "
+                    f"전부 스킵됐습니다. 브리핑 본문을 직접 확인 후 필요하면 수동으로 "
+                    f"처리해주세요."
+                )
+            except Exception as _uae:
+                logger.warning("[CIO] 구조화 로그 누락 경보 발송 실패: %s", _uae)
         try:
             ceo_report = _build_summary_card(ceo_decisions) + "\n\n" + ceo_report
         except Exception as _sce:
