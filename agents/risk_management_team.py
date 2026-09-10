@@ -5,7 +5,10 @@ from clients.openai_client import chat
 
 logger = logging.getLogger(__name__)
 
-_RISK_LEVEL_RE = re.compile(r"종합 리스크 레벨[：:\s]*(높음|중간|낮음)")
+# 프롬프트가 예시로 보여주는 "종합 리스크 레벨(높음·중간·낮음)" 괄호 형식도
+# 매칭돼야 한다 — 콜론·공백만 허용하면 이 형식을 못 잡고 항상 기본값 "중간"으로
+# 조용히 떨어진다(2026-09-10 발견·수정, investment_committee.py의 같은 계열 버그와 동시 수정).
+_RISK_LEVEL_RE = re.compile(r"종합 리스크 레벨[（(：:\s\-]*(높음|중간|낮음)")
 
 _SYSTEM = """당신은 리스크 관리 전문가입니다.
 현재 시장 상황에서 투자 리스크를 식별하고 경고 신호를 제공하세요.
