@@ -1043,6 +1043,20 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
                 _send(chat_id, "❌ napp 콜백 데이터 오류")
                 return
             code, date = parts[1].zfill(6), parts[2]
+
+            # _PENDING_FILL은 chat_id당 슬롯이 하나뿐이라, 다른 종목의 체결가
+            # 입력을 기다리는 중에 또 승인을 누르면 그 슬롯을 조용히 덮어써
+            # 먼저 누른 종목의 승인이 유실된다(2026-09-10 발견 — 답장을 보내면
+            # 엉뚱한 종목에 체결가가 적용됨). 같은 종목 재클릭(새로고침)은 그대로
+            # 허용하고, 다른 종목이 대기 중일 때만 막는다.
+            existing = _PENDING_FILL.get(chat_id)
+            if existing and existing.get("code") != code:
+                _send(chat_id,
+                      f"⚠️ 이미 *{existing['code']}* 체결가 입력을 기다리고 있습니다.\n"
+                      f"먼저 `수량 가격`으로 답장해 완료하거나, {existing['code']} 카드를 무시한 뒤"
+                      f" 다시 이 버튼을 눌러주세요.")
+                return
+
             target_price = stop_price = 0
             try:
                 from db.database import get_conn
