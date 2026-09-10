@@ -26,11 +26,9 @@ _L2_MODULES = {
     "bigfigure_agent":          "agents/bigfigure_agent.py",
     "macro_team":                "agents/macro_team.py",
     "event_risk_team":          "agents/event_risk_team.py",
-    "market_intelligence_team": "agents/market_intelligence_team.py",
 }
 _L3_MODULES = {
     "korea_flow_team":  "agents/korea_flow_team.py",
-    "issue_stock_agent": "agents/issue_stock_agent.py",
 }
 
 

@@ -173,6 +173,10 @@ def _fmt_dart(dart_items: list[dict]) -> str:
 
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"] 직접 mutate 금지 — 이유는 risk_management_team.py 참조.
+    # 2026-09-10: 이 노드는 l3_barrier 이후 순차 실행으로 이동했다(더 이상
+    # _parallel() 래퍼가 errors를 걸러주지 않음) — 반드시 델타 규약을 지켜야 한다.
+    _new_errors: list[str] = []
     try:
         raw_kis = state.get("raw_kis_data", {})
 
@@ -191,7 +195,9 @@ def run(state: InvestmentState) -> InvestmentState:
         # 3. 선물·매크로 방향 (길이 제한)
         futures_summary = (state.get("futures_report", "") or "선물 데이터 없음")[:800]
 
-        # 4. 섹터 테마 요약
+        # 4. 섹터 테마 요약 — 2026-09-10: 예전엔 이 노드가 korea_flow_team과 같은
+        # 병렬(L3) 레이어라 sector_report가 항상 빈 값이었다(형제 브랜치라 서로의
+        # 결과를 못 봄). l3_barrier 이후 순차 실행으로 옮겨 실제로 값을 받도록 수정.
         sector_summary = (state.get("sector_report", "") or "섹터 데이터 없음")[:400]
 
         # 5. 급등종목 관련 뉴스 추출 (원인 분석용)
@@ -231,5 +237,6 @@ def run(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[이슈종목팀] 실패: %s", e)
         state["issue_stocks_report"] = "이슈종목 분석 실패"
-        state["errors"].append(f"issue_stock_agent: {e}")
+        _new_errors.append(f"issue_stock_agent: {e}")
+    state["errors"] = _new_errors
     return state

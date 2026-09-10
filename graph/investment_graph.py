@@ -240,8 +240,16 @@ node_news          = _parallel(lambda state: news_analysis_team.run(state), "new
 node_bigfigure     = _parallel(lambda state: bigfigure_agent.run(state), "bigfigure_agent")
 node_macro         = _parallel(lambda state: macro_team.run(state), "macro_team")
 node_event_risk    = _parallel(lambda state: event_risk_team.run(state), "event_risk_team")
-node_intelligence  = _parallel(lambda state: market_intelligence_team.run(state), "market_intelligence_team")
-node_issue_stocks  = _parallel(lambda state: issue_stock_agent.run(state), "issue_stock_agent")
+
+# market_intelligence_team/issue_stock_agent는 2026-09-10부터 병렬이 아니라 순차 노드다.
+# 전자는 같은 L2 형제인 bigfigure_agent/macro_team의 결과를, 후자는 같은 L3 형제인
+# korea_flow_team의 sector_report를 프롬프트에 참조하도록 설계돼 있는데, 병렬 형제끼리는
+# barrier를 통과하기 전엔 서로의 결과를 절대 볼 수 없어 항상 빈 값이었다(발견: 2026-09-10,
+# _parallel_state_wipe_bug와는 다른 함정 — state 상호소거가 아니라 애초에 데이터가 아직
+# 안 들어온 것). 순차로 옮긴 이상 다른 순차 노드처럼 _new_errors 델타 규약을 각 파일이
+# 직접 지켜야 한다(더 이상 _parallel()이 errors를 걸러주지 않음 — 각 파일 주석 참조).
+def node_intelligence(state): return market_intelligence_team.run(state)
+def node_issue_stocks(state): return issue_stock_agent.run(state)
 
 def node_risk(state):         return risk_management_team.run(state)
 
@@ -579,12 +587,14 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
 #
 # 병렬 실행 구조:
 #   Layer 1: collect_raw_data (sequential)
-#   Layer 2: futures | us_global | news | bigfigure | macro | event_risk | intelligence (parallel)
+#   Layer 2: futures | us_global | news | bigfigure | macro | event_risk (parallel)
 #   [l2_barrier: fan-in]
-#   Layer 3: korea_flow | issue_stocks (parallel)
+#   market_intelligence_team (sequential — bigfigure/macro 참조, 2026-09-10 이동)
+#   Layer 3: korea_flow (parallel — 형제 issue_stock_agent 분리 이후 사실상 단일 브랜치)
 #   [l3_barrier: fan-in]
-#   Layer 4: risk → review → committee → portfolio → midterm → ceo (sequential)
-#   Layer 5: save → nav → telegram → END (sequential)
+#   issue_stock_agent (sequential — korea_flow의 sector_report 참조, 2026-09-10 이동)
+#   Layer 4: risk → review → committee → portfolio → midterm → bull/bear → ceo (sequential)
+#   Layer 5: save → deep_report → nav → telegram → END (sequential)
 
 _L2_NODES = [
     "futures_market_team",
@@ -593,12 +603,10 @@ _L2_NODES = [
     "bigfigure_agent",
     "macro_team",
     "event_risk_team",
-    "market_intelligence_team",
 ]
 
 _L3_NODES = [
     "korea_flow_team",
-    "issue_stock_agent",
 ]
 
 
@@ -642,17 +650,25 @@ def build_graph() -> StateGraph:
     for n in _L2_NODES:
         g.add_edge(n, "l2_barrier")
 
-    # l2_barrier → Layer 3 (fan-out)
+    # l2_barrier → market_intelligence_team (순차 — L2 형제 bigfigure/macro 결과가 필요해
+    # 더 이상 L2 병렬 브랜치일 수 없다. 2026-09-10)
+    g.add_edge("l2_barrier", "market_intelligence_team")
+
+    # market_intelligence_team → Layer 3 (fan-out)
     for n in _L3_NODES:
-        g.add_edge("l2_barrier", n)
+        g.add_edge("market_intelligence_team", n)
 
     # Layer 3 → l3_barrier (fan-in)
     for n in _L3_NODES:
         g.add_edge(n, "l3_barrier")
 
+    # l3_barrier → issue_stock_agent (순차 — L3 형제 korea_flow_team의 sector_report가
+    # 필요해 더 이상 L3 병렬 브랜치일 수 없다. 2026-09-10)
+    g.add_edge("l3_barrier", "issue_stock_agent")
+
     # Sequential tail
     for src, dst in [
-        ("l3_barrier",           "risk_management_team"),
+        ("issue_stock_agent",    "risk_management_team"),
         ("risk_management_team", "review_feedback_team"),
         ("review_feedback_team", "investment_committee"),
         ("investment_committee", "portfolio_manager_agent"),
@@ -675,8 +691,10 @@ def build_global_graph() -> StateGraph:
     """글로벌 시황 브리핑 전용 경량 그래프 (KIS 제외, 미국·글로벌 데이터만).
 
     Layer 1: collect_raw_data_global
-    Layer 2: futures | us_global | news | bigfigure | macro | intelligence (parallel)
+    Layer 2: futures | us_global | news | bigfigure | macro (parallel)
     [gl2_barrier: fan-in]
+    market_intelligence_team (sequential — bigfigure/macro 참조, 2026-09-10 이동:
+      예전엔 L2 형제라 항상 빈 값을 참조했다)
     Layer 3: midterm → committee → ceo → save → telegram
     """
     _GL2 = [
@@ -685,7 +703,6 @@ def build_global_graph() -> StateGraph:
         "news_analysis_team",
         "bigfigure_agent",
         "macro_team",
-        "market_intelligence_team",
     ]
 
     g = StateGraph(InvestmentState)
@@ -710,9 +727,10 @@ def build_global_graph() -> StateGraph:
         g.add_edge("collect_raw_data_global", n)
     for n in _GL2:
         g.add_edge(n, "gl2_barrier")
+    g.add_edge("gl2_barrier", "market_intelligence_team")
 
     for src, dst in [
-        ("gl2_barrier",         "midterm_stock_agent"),
+        ("market_intelligence_team", "midterm_stock_agent"),
         ("midterm_stock_agent", "investment_committee"),
         ("investment_committee","ceo_agent"),
         ("ceo_agent",           "save_report"),

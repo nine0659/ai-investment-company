@@ -84,6 +84,10 @@ _SYSTEM = """당신은 글로벌 투자 인텔리전스 분석가입니다.
 
 
 def run(state: InvestmentState) -> InvestmentState:
+    # state["errors"] 직접 mutate 금지 — 이유는 risk_management_team.py 참조.
+    # 2026-09-10: 이 노드는 l2_barrier 이후 순차 실행으로 이동했다(더 이상
+    # _parallel() 래퍼가 errors를 걸러주지 않음) — 반드시 델타 규약을 지켜야 한다.
+    _new_errors: list[str] = []
     try:
         intel      = fetch_all_intelligence(max_per_source=4)
         tg_msgs    = fetch_telegram_intelligence()    # 설정 미완료면 빈 리스트
@@ -152,7 +156,10 @@ def run(state: InvestmentState) -> InvestmentState:
                 lines.append(f"\n{tg_text}")
             logger.info("[인텔리전스팀] 텔레그램 %d건 포함", len(tg_msgs))
 
-        # 빅피겨 리포트를 참조 컨텍스트로 추가 (이미 앞 단계에서 생성됨)
+        # 빅피겨 리포트를 참조 컨텍스트로 추가 — 2026-09-10: 예전엔 이 노드가
+        # bigfigure_agent와 같은 병렬(L2) 레이어라 "앞 단계에서 생성됨"이 틀린
+        # 전제였다(항상 빈 값 → 교차검증 섹션이 죽어있었음). l2_barrier 이후
+        # 순차 실행으로 옮겨 실제로 값을 받도록 수정.
         if state.get("bigfigure_report"):
             lines.append(f"\n=== 빅피겨 발언 참조 (교차검증용) ===\n{state['bigfigure_report'][:600]}")
 
@@ -171,5 +178,6 @@ def run(state: InvestmentState) -> InvestmentState:
     except Exception as e:
         logger.error("[인텔리전스팀] 실패: %s", e)
         state["market_intelligence_report"] = "인텔리전스 수집 실패"
-        state["errors"].append(f"market_intelligence_team: {e}")
+        _new_errors.append(f"market_intelligence_team: {e}")
+    state["errors"] = _new_errors
     return state
