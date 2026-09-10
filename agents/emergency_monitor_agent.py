@@ -92,8 +92,17 @@ def _check_thesis_invalidation(market_data: dict, news_data: dict) -> None:
     def _v(k, f="close"):
         return market_data.get(k, {}).get(f, "N/A")
 
+    def _vf(k, f="change_pct"):
+        # change_pct는 아래서 :+.2f 숫자 포맷을 거친다 — 데이터 수집 실패로
+        # 값이 없을 때 _v()처럼 "N/A" 문자열을 반환하면 포맷 단계에서
+        # ValueError가 나서(2026-09-10 발견) 이 함수 전체가 조용히 스킵된다.
+        # 이 함수는 이제 invalidation 파싱이 고쳐져 실제로 매 정시 호출되므로
+        # 데이터 누락 한 번에 그 시간대 검사 전체가 죽는 걸 막아야 한다.
+        val = market_data.get(k, {}).get(f)
+        return val if isinstance(val, (int, float)) else 0.0
+
     market_summary = (
-        f"KOSPI: {_v('kospi')} ({_v('kospi','change_pct'):+.2f}%)"
+        f"KOSPI: {_v('kospi')} ({_vf('kospi'):+.2f}%)"
         f" | VIX: {_v('vix')} | USD/KRW: {_v('usd_krw')}"
         f" | 미국10Y금리: {_v('us10y')}%"
     )
@@ -116,8 +125,12 @@ YES인 경우 어떤 조건이 어떻게 발동됐는지 2~3줄로 설명하라.
 
     try:
         result = chat("당신은 투자 리스크 감시 전문가입니다.", prompt, max_tokens=200)
-        if result.strip().upper().startswith("YES"):
-            detail = result[4:].strip() if len(result) > 4 else result
+        stripped = result.strip()
+        if stripped.upper().startswith("YES"):
+            # 2026-09-10 수정: 판정은 stripped로 하면서 슬라이싱은 원본 result에
+            # 해왔다 — LLM 응답 앞에 공백/개행이 있으면 인덱스가 어긋나 상세
+            # 설명 앞부분이 깨진 채(예: "S: 금리 인상...") 알림에 노출됐다.
+            detail = stripped[4:].strip() if len(stripped) > 4 else stripped
             send_alert(
                 TYPE_RISK,
                 "🔴 투자관 무효조건 감지",
