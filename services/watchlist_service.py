@@ -271,13 +271,3 @@ def format_watchlist_for_briefing(kis=None, include_triggered_only: bool = False
                 )
 
     return "\n".join(lines)
-
-
-def format_watchlist_telegram() -> str:
-    """텔레그램 직접 발송용 워치리스트 현황."""
-    from clients.kis_client import KISClient
-    try:
-        kis = KISClient()
-    except Exception:
-        kis = None
-    return format_watchlist_for_briefing(kis, include_triggered_only=False)
