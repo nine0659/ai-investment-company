@@ -185,8 +185,11 @@ def get_lifecycle_context(prices: dict[str, float] | None = None) -> str:
                 ret_pct = (cur_price - avg_price) / avg_price * 100
                 perf_parts.append(f"수익률 {ret_pct:+.1f}%")
                 if target_price and target_price > avg_price:
+                    # 2026-09-10: evaluate_stage_transitions()의 "가격/목표가"(현재가/목표가
+                    # 원값 비율)와 정의가 다르다(이쪽은 진입가→목표가 구간 진행률) —
+                    # 라벨을 "구간진행"으로 구분해 혼동을 막는다.
                     tgt_progress = (cur_price - avg_price) / (target_price - avg_price) * 100
-                    perf_parts.append(f"목표가 {tgt_progress:.0f}% 도달")
+                    perf_parts.append(f"목표가 구간진행 {tgt_progress:.0f}%")
             else:
                 perf_parts.append(f"진입가 {avg_price:,.0f}원")
                 if target_price:
@@ -300,6 +303,11 @@ def evaluate_stage_transitions(
             continue
 
         ret_pct   = (cur_price - avg_price) / avg_price * 100
+        # 2026-09-10: get_lifecycle_context()의 "목표가 도달" 표시(진입가→목표가
+        # 구간 중 진행률, (cur-avg)/(target-avg))와 이름·라벨이 같아 보이지만
+        # 정의가 다르다(현재가/목표가 원값 비율) — 같은 종목에 대해 서로 다른
+        # 숫자가 각자 다른 화면(이 단계전환 알림 vs CEO 포트폴리오 컨텍스트)에
+        # 뜰 수 있어 혼동을 준다. 라벨을 "가격/목표가"로 구분해 명시한다.
         tgt_ratio = (cur_price / target_price * 100) if target_price else 0
         cur_stage = (stage or "early").lower()
         next_stage = None
@@ -314,13 +322,13 @@ def evaluate_stage_transitions(
             next_stage = "mature"
             alerts.append(
                 f"🍎 단계 전환 검토: {name}({code}) DEVELOPING→MATURE "
-                f"(수익률 {ret_pct:+.1f}%, 목표가 {tgt_ratio:.0f}%)"
+                f"(수익률 {ret_pct:+.1f}%, 가격/목표가 {tgt_ratio:.0f}%)"
             )
         elif cur_stage == "mature" and (ret_pct >= 40 or tgt_ratio >= 95):
             next_stage = "exhausted"
             alerts.append(
                 f"⚰️ 청산 검토: {name}({code}) MATURE→EXHAUSTED "
-                f"(수익률 {ret_pct:+.1f}%, 목표가 {tgt_ratio:.0f}%)"
+                f"(수익률 {ret_pct:+.1f}%, 가격/목표가 {tgt_ratio:.0f}%)"
             )
 
         # 자동 DB 갱신
