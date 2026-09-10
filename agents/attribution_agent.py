@@ -198,7 +198,12 @@ def _save_attribution(week_end: str, report: str) -> None:
     from db.database import get_conn
     from sqlalchemy import text
 
-    # 종합 점수 파싱 (예: "종합 점수: 7/10" 또는 "7/10")
+    # 종합 점수 파싱 — 실제 _SYSTEM 출력 형식(🏆 이번 주 점수: X/10, 요약 줄
+    # "매크로 X | 섹터 X | 종목 X | 타이밍 X | 투자관 X")에 맞춰야 한다.
+    # 2026-09-10 발견·수정: "종합 점수"·"투자관 부합"이라는 문구는 그 출력
+    # 형식 어디에도 없다(전자는 아예 없음 — total이 항상 0.0으로 저장됐고,
+    # 후자는 섹션⑤ 제목에만 있고 뒤에 숫자가 안 붙어 [^\d]*가 한참 뒤 "다음
+    # 주 개선 (최대 3개...)" 같은 무관한 숫자를 주워 엉뚱한 값이 저장됐다).
     def _parse_score(pattern: str) -> float:
         m = re.search(pattern, report)
         if m:
@@ -208,12 +213,12 @@ def _save_attribution(week_end: str, report: str) -> None:
                 pass
         return 0.0
 
-    total   = _parse_score(r"종합\s*점수[^\d]*(\d+(?:\.\d+)?)")
+    total   = _parse_score(r"이번\s*주\s*점수[^\d]*(\d+(?:\.\d+)?)")
     macro   = _parse_score(r"매크로[^\d]*(\d+(?:\.\d+)?)")
     sector  = _parse_score(r"섹터[^\d]*(\d+(?:\.\d+)?)")
     stock   = _parse_score(r"종목[^\d]*(\d+(?:\.\d+)?)")
     timing  = _parse_score(r"타이밍[^\d]*(\d+(?:\.\d+)?)")
-    thesis_s= _parse_score(r"투자관\s*부합[^\d]*(\d+(?:\.\d+)?)")
+    thesis_s= _parse_score(r"투자관[^\d]*(\d+(?:\.\d+)?)")
 
     # 핵심 교훈 파싱
     m = re.search(r"다음\s*주[^\n]*반드시[^\n]*개선[^\n]*(.{20,300})", report, re.DOTALL)
