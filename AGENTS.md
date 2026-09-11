@@ -109,14 +109,7 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
 
 ## 알려진 함정 (전부 실제 사고였음)
 
-**분류 규칙 (2026-09-11 추가)**: 새 항목을 추가할 때는 맨 앞에 `[버그]` 또는
-`[설계문제]`를 붙인다. `[버그]`는 의도한 설계는 맞는데 구현이 틀린 경우(수정하면
-끝), `[설계문제]`는 구현은 의도대로 동작했지만 그 설계/구조 자체가 이런 사고를
-구조적으로 유발하는 경우(같은 클래스의 사고가 또 날 수 있어 재발 방지책까지
-필요)다. 사후에 "고쳤다"로 끝내지 말고 어느 쪽인지 판단해서 남길 것 — 아래는
-기존 항목을 소급 분류한 것.
-
-- **[설계문제] LangGraph 병렬 노드는 절대 `state[k]=v; return state`로 전체 state를 반환하면
+- **LangGraph 병렬 노드는 절대 `state[k]=v; return state`로 전체 state를 반환하면
   안 된다 — 반드시 바뀐 필드만 담은 델타 dict를 반환할 것(graph/investment_graph.py의
   `_parallel()` 래퍼 참조).** 병렬 브랜치가 전체 state를 반환하면 `_last` 리듀서가
   "가장 나중에 병합된 브랜치"의 (그 브랜치 입장에선 안 바뀐, 즉 옛) 값으로 형제
@@ -127,53 +120,42 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   "새로 늘어난 만큼만" 반환해도 병합 과정에서 지수적으로 중복된다(오류 1건→최종
   512건 실측) — 정확한 내부 메커니즘은 못 밝혔고, 병렬 구간에서는 아예 리듀서에
   넘기지 않고 로그로만 남기는 우회로 해결. 새 병렬 노드를 추가할 때 이 함정을 반복하지
-  말 것. `tests/test_graph_parallel_state_merge.py`가 회귀 테스트. (2026-09-10 이 설계문제의
-  연장선에서 market_intelligence_team/issue_stock_agent를 아예 순차로 옮겼고, 그 과정에서
-  잃은 무변화 감지를 2026-09-11 `_track_sequential()`로 다시 메웠다 — 아래 참조.)
-- **[버그] DART 재무**: `get_multi_year_financials` history[0]은 당해 **분기** 보고서일 수 있다.
+  말 것. `tests/test_graph_parallel_state_merge.py`가 회귀 테스트.
+- **DART 재무**: `get_multi_year_financials` history[0]은 당해 **분기** 보고서일 수 있다.
   분기(3개월)와 연간(12개월) 손익을 섞어 비교하면 안 된다 → 전 종목 성장률 -75% 사고.
-- **[버그] yfinance dividendYield**: 버전에 따라 0.0291 또는 2.91로 온다. 반드시
+- **yfinance dividendYield**: 버전에 따라 0.0291 또는 2.91로 온다. 반드시
   `_normalize_dividend_yield()` 경유 → 배당수익률 291% 사고.
-- **[버그] 알파/수익률 비교는 반드시 같은 시작점·같은 기간끼리** → 알파 -71%p 사고.
-- **[설계문제] 보유 누적수익률 ≠ 주간 수익률.** LLM 프롬프트에 라벨 명시 → 주간알파 +37% 오기 사고.
-  (원인이 계산 실수가 아니라 "어떤 값인지 프롬프트에 명시 안 함"이라는 설계 공백이었음.)
-- **[설계문제] DATABASE_URL 누락 시 SQLite 폴백** = 데이터 증발. 2026-07-07부터 db/database.py가
+- **알파/수익률 비교는 반드시 같은 시작점·같은 기간끼리** → 알파 -71%p 사고.
+- **보유 누적수익률 ≠ 주간 수익률.** LLM 프롬프트에 라벨 명시 → 주간알파 +37% 오기 사고.
+- **DATABASE_URL 누락 시 SQLite 폴백** = 데이터 증발. 2026-07-07부터 db/database.py가
   프로젝트 루트 .env를 자체 로드하고, 폴백 시(미설정 포함) 텔레그램 경보를 보낸다.
   로컬 스크립트는 이제 자동으로 Neon에 붙는다 — 수동 반영 스크립트는 그래도
   `db.database.is_postgres()` 확인 후 쓰기. 테스트는 conftest가 DB_FORCE_SQLITE=1로
   격리한다. GH Actions 신규 잡에는 여전히 `DATABASE_URL: ${{ secrets.DATABASE_URL }}`
   주입 필요 (Render/CI엔 .env가 없다) → 2026-07-02 데이터 소실 사고.
-- **[설계문제] GH Actions cron은 정시에 안 돈다** (수십 분 지연). 정시성 필요한 잡은 Render에.
-- **[설계문제] Render 재시작(플랫폼 이벤트·배포)을 넘긴 APScheduler 실행은 증발한다** — 잡스토어가
+- **GH Actions cron은 정시에 안 돈다** (수십 분 지연). 정시성 필요한 잡은 Render에.
+- **Render 재시작(플랫폼 이벤트·배포)을 넘긴 APScheduler 실행은 증발한다** — 잡스토어가
   메모리라 지나간 스케줄을 기억 못 한다 → 2026-07-08 daily_tracker 누락. GH 백업
   (nav-tracker.yml 16:45)이 job_runs 흔적을 보고 누락분만 대신 돈다.
-- **[버그] 워크플로 YAML에 `python -c "` 멀티라인 인라인은 금지** — 들여쓰기 없는 연속 줄이
+- **워크플로 YAML에 `python -c "` 멀티라인 인라인은 금지** — 들여쓰기 없는 연속 줄이
   YAML을 깨뜨려 워크플로가 조용히 죽는다(push마다 failure, 크론 미실행). 스크립트
   파일로 빼라. tests/test_workflows.py가 파싱 유효성을 검증한다.
-- **[설계문제] cron-job.org 트리거는 저장소 밖에 산다** — 스케줄 축소 시 함께 정리해야 한다.
+- **cron-job.org 트리거는 저장소 밖에 산다** — 스케줄 축소 시 함께 정리해야 한다.
   investment-scheduler.yml의 헌장 요일 가드(2026-07-09)가 축소안 밖 자동 트리거를
   발송 전에 스킵하지만, 불필요한 호출 자체는 cron-job.org에서 지워야 한다.
 - **Windows 콘솔은 cp949.** 스크립트 실행 시 `PYTHONUTF8=1`, 이모지 print 주의.
 - **텔레그램 4096자 제한**은 `send_message`가 자동 분할 처리 — 직접 자르지 마라.
 - **KIS 토큰**: 발급 실패 시 서킷 브레이커 있음(2026-07-03). KISClient 생성 실패가
   브리핑 전체를 죽이지 않도록 try/except 유지.
-- **[설계문제] 드로다운 자동매도 금지 (2026-07-09 사용자 승인 정책).** 드로다운 -44.4% 오판
+- **드로다운 자동매도 금지 (2026-07-09 사용자 승인 정책).** 드로다운 -44.4% 오판
   → 실계좌 전량 청산 자동 실행된 사고 (2026-07-08, 보유목록이 빈 값으로 와서
   주문 0건에 그침). 드로다운은 경보만 보낸다. tests/test_drawdown_policy.py가
   자동매도 재도입을 막는다. 재도입은 사용자 승인 필수.
-- **[버그] NAV 이상 판정은 총평가 원값이 아니라 평가배율(value/cost)로.** 위 -44.4%의
+- **NAV 이상 판정은 총평가 원값이 아니라 평가배율(value/cost)로.** 위 -44.4%의
   실원인은 시세 왜곡이 아니라 7/7 SK하이닉스 전량매도(매입 2,176만원)로 포트폴리오가
   실제로 준 것이었다 (2026-07-10 진단 정정). 원값 비교는 매매·입출금을 오염으로
   오판한다 — 7/9 데이터가드가 정상 NAV 기록을 막은 오탐도 같은 결함. record_nav의
   `_nav_data_suspicious` 가드와 `check_drawdown_defense` 모두 배율 기준으로 판정한다.
-- **[설계문제] 순차로 옮긴 노드는 `_parallel()`의 자동 무변화 감지를 안 받는다
-  (2026-09-11 발견, 사고로 이어지기 전 예방적 보강).** market_intelligence_team/
-  issue_stock_agent를 2026-09-10 병렬→순차로 옮기면서, `_parallel()`이 자동으로
-  기록해주던 "이 브랜치가 실제로 state를 바꿨는가"(branch:{name} job_ledger 기록)를
-  잃었다 — 예외 없이 그냥 빈 리포트를 반환해도 daily_health가 잡을 방법이 없어진
-  사각지대였다. `graph/investment_graph.py`의 `_track_sequential()`로 같은 규약을
-  순차 노드에도 다시 적용해 메웠다. `tests/test_track_sequential_wiring.py`가 회귀 테스트.
-  앞으로 병렬 노드를 순차로(또는 그 반대로) 옮길 때마다 감지 로직도 같이 옮겨졌는지 확인할 것.
 
 ## 장애 대응 런북
 
@@ -194,6 +176,5 @@ python main.py --type pre           # 장전 브리핑 수동 실행
 python main.py --research 005930    # 기업 딥리서치
 python main.py --portfolio list     # 보유 종목
 python scripts/backtest_gate_check.py  # 추천/목표가/손절가 로직 변경 전 확인 (CI 게이트 아님)
-python scripts/judgment_scenario_check.py  # 프롬프트·가드·그래프 배선 변경 전 판단 시나리오 체크리스트 (CI 게이트 아님, 2026-09-11 추가)
 git push origin master              # = 운영 배포 (Render 자동배포 + CI)
 ```

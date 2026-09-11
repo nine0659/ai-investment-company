@@ -248,8 +248,45 @@ node_event_risk    = _parallel(lambda state: event_risk_team.run(state), "event_
 # _parallel_state_wipe_bug와는 다른 함정 — state 상호소거가 아니라 애초에 데이터가 아직
 # 안 들어온 것). 순차로 옮긴 이상 다른 순차 노드처럼 _new_errors 델타 규약을 각 파일이
 # 직접 지켜야 한다(더 이상 _parallel()이 errors를 걸러주지 않음 — 각 파일 주석 참조).
-def node_intelligence(state): return market_intelligence_team.run(state)
-def node_issue_stocks(state): return issue_stock_agent.run(state)
+
+
+def _track_sequential(run_fn, name: str, field: str):
+    """순차 노드용 '조용한 무변화' 감지 래퍼 (2026-09-11 추가).
+
+    market_intelligence_team/issue_stock_agent를 병렬→순차로 옮기면서, _parallel()이
+    자동으로 해주던 "이 브랜치가 실제로 state를 바꿨는가" 기록(branch:{name} job_ledger
+    엔트리)을 잃었다 — 예외 없이 그냥 빈 리포트를 반환해도 잡아낼 방법이 없어진 사각지대였다
+    (2026-09-11 현황 점검에서 발견, 코드 자체는 아직 사고를 낸 적 없음 — 예방적 보강).
+    순차 노드는 이미 전체 state를 정상 반환하므로 _parallel()의 델타/리듀서 트릭은
+    필요 없다 — "실행 전후로 필드가 그대로거나 비어있는지"만 확인해 같은
+    branch:{name} 규약으로 기록한다. daily_health의 get_yesterday_branch_problems()가
+    이미 이 규약을 읽고 있어 job_ledger.py는 손대지 않고 바로 기존 경보에 편입된다.
+    예외 자체는 여기서 삼키지 않고 그대로 전파한다(그래프가 처리) — record_job 실패만 삼킨다.
+    """
+    def wrapper(state):
+        before = state.get(field, "")
+        result = run_fn(state)
+        after = (result or {}).get(field) if isinstance(result, dict) else None
+        try:
+            from services.job_ledger import record_job
+            if not after or after == before:
+                record_job(f"branch:{name}", "fail", "state 변경 없음 — 결과 미반영")
+            else:
+                record_job(f"branch:{name}", "success", f"{field} 갱신")
+        except Exception:
+            pass
+        return result
+    return wrapper
+
+
+node_intelligence = _track_sequential(
+    lambda state: market_intelligence_team.run(state),
+    "market_intelligence_team", "market_intelligence_report",
+)
+node_issue_stocks = _track_sequential(
+    lambda state: issue_stock_agent.run(state),
+    "issue_stock_agent", "issue_stocks_report",
+)
 
 def node_risk(state):         return risk_management_team.run(state)
 

@@ -7,19 +7,37 @@
 
 ## 시스템 구조
 
+> 이 문서는 신규 설치 가이드다. 현재 운영 중인 정확한 스케줄·아키텍처·알려진
+> 함정은 `CLAUDE.md`가 항상 최신 기준이니 그쪽을 먼저 확인할 것 (2026-09-11 갱신).
+
+에이전트는 30개(agents/), 계산·저장 로직은 31개(services/), 외부 연동은
+19개(clients/)로 구성돼 있다. 핵심 브리핑 파이프라인(`graph/investment_graph.py`)
+흐름은 다음과 같다:
+
 ```
-CEO Agent
-├─ Futures Market Team       선물/환율/금리 분석
-├─ US Market Team            미국 지수/반도체 분석
-├─ Korea Spot Market Team    KIS API 기반 실시간 종목 탐지
-├─ Global Market Team        글로벌 시장/아시아/달러 분석
-├─ News Analysis Team        뉴스 재료 분석
-├─ Sector & Theme Team       섹터 강도/순환매 분석
-├─ Money Flow Team           수급 집중 종목 점수화
-├─ Risk Management Team      리스크 경고/손절 기준
-├─ Review & Feedback Team    복기 및 개선점 생성
-└─ Investment Committee      팀 의견 점수화 → CEO 판단
+collect_raw_data (시장·KIS·뉴스·DART·컨센서스 수집)
+    │
+    ├─ [병렬] futures_market_team · us_global_team · news_analysis_team ·
+    │         bigfigure_agent · macro_team · event_risk_team
+    │         └─ l2_barrier(fan-in) → market_intelligence_team (순차)
+    │
+    ├─ [병렬] korea_flow_team (국내 수급/섹터/자금흐름 통합)
+    │         └─ l3_barrier(fan-in) → issue_stock_agent (순차)
+    │
+    └─ [순차] risk_management_team → review_feedback_team(CLOSE만) →
+              investment_committee → portfolio_manager_agent →
+              midterm_stock_agent → bull_case → bear_case → ceo_agent
+                  │
+                  ▼
+        save_report → deep_report → record_nav(CLOSE만) → send_telegram
+                  (decision_guard 교차검증 → risk_gate 비중검사)
 ```
+
+이 외에 discovery_agent(종목발굴)·rebound_screener_agent(반등스크리너)·
+attribution_agent(귀인분석)·thesis_agent(월간 투자관) 등은 메인 그래프에
+배선되지 않고 스케줄러/CLI에서 개별 호출된다. 전체 30개 에이전트 목록과
+현재 어떤 게 자동 스케줄에 있고 어떤 게 수동 전용인지는 `CLAUDE.md`의
+"아키텍처 지도"·"일시 중단" 절 참조.
 
 ---
 
@@ -100,11 +118,18 @@ python main.py --type close
 python scheduler.py
 ```
 
-평일(월~금) 자동 실행:
-- `08:20` — 장전 CEO 브리핑
-- `10:00` — 장중 1차 점검
-- `13:00` — 장중 2차 점검
-- `15:50` — 장마감 복기
+현재 실제 운영 스케줄(2026-09 기준, 정기 발송 6통/주 + 조건부 1통):
+- `월·수·금 08:20` — 장전 브리핑
+- `금 16:30` — 주간 마감 브리핑
+- `일 20:00` — 주간 추천 (국내 중기 + 미국 통합)
+- `화 19:00` — 종목 발굴 (조건부 발송, 후보 있을 때만)
+- `금 15:00` — 반등 스크리너
+- `장중 15분마다` — 시장 모니터 (이상 신호 시에만)
+- `매일 08:05` — 헬스체크 (문제 있을 때만)
+
+이 스케줄은 자주 바뀐다 — 최신 표는 항상 `CLAUDE.md`의 "현재 스케줄" 절을 볼 것.
+장중 1차/2차(intra1/intra2)는 2026-06-23부터 자동 스케줄에서 빠졌고,
+`python main.py --type intra1` 등으로 수동 실행만 가능하다.
 
 ---
 
@@ -215,46 +240,33 @@ python -m pytest tests/test_agents.py -v
 
 ```
 ai-investment-company/
-├─ README.md
+├─ README.md                  설치·실행 가이드 (이 문서)
+├─ CLAUDE.md                  운영 가이드 — 최신 아키텍처·스케줄·알려진 함정 (항상 최신)
 ├─ .env.example
 ├─ requirements.txt
-├─ main.py                    수동 실행
-├─ scheduler.py               자동 스케줄 실행
+├─ main.py                    수동 실행 (브리핑·리서치·포트폴리오·주문·워치리스트)
+├─ scheduler.py                자동 스케줄 실행 (Render 상주 프로세스)
 ├─ config/
 │  └─ settings.py             환경변수 및 전역 설정
-├─ data/
-│  ├─ database.sqlite3         (자동 생성)
-│  └─ logs/
-├─ clients/
-│  ├─ kis_client.py           한국투자증권 OpenAPI
-│  ├─ openai_client.py        OpenAI API
-│  ├─ telegram_client.py      텔레그램 봇
-│  ├─ news_client.py          RSS 뉴스 수집
-│  └─ market_data_client.py   글로벌 시장 데이터 (Yahoo Finance)
-├─ agents/
-│  ├─ ceo_agent.py
-│  ├─ futures_market_team.py
-│  ├─ us_market_team.py
-│  ├─ korea_spot_market_team.py
-│  ├─ global_market_team.py
-│  ├─ news_analysis_team.py
-│  ├─ sector_theme_team.py
-│  ├─ money_flow_team.py
-│  ├─ risk_management_team.py
-│  ├─ review_feedback_team.py
-│  └─ investment_committee.py
+├─ data/logs/                 로그 파일
+├─ db/
+│  └─ database.py             SQLAlchemy 테이블 정의 (Neon Postgres / SQLite 폴백)
+├─ clients/                   외부 연동 19개 — kis/dart/openai/telegram(client+bot)/
+│                             yfinance 계열/뉴스/증권사리포트/카카오 등
+├─ agents/                    분석·판단 에이전트 30개 — ceo_agent가 핵심,
+│                             나머지는 그래프에 배선된 것과 스케줄러/CLI에서
+│                             개별 호출되는 것으로 나뉜다 (CLAUDE.md 참조)
 ├─ graph/
 │  ├─ state.py                LangGraph 상태 정의
-│  └─ investment_graph.py     메인 분석 플로우
-├─ services/
-│  ├─ report_service.py       리포트 DB 저장
-│  ├─ review_service.py       복기 기록 DB
-│  └─ scoring_service.py      종목/섹터 점수화
-├─ prompts/
-│  └─ ceo_prompt.md           CEO 프롬프트 가이드
-└─ tests/
-   ├─ test_kis_client.py
-   └─ test_agents.py
+│  └─ investment_graph.py     메인 분석 파이프라인 (병렬 수집 → 순차 심의 → 발송)
+├─ services/                  계산·저장 로직 31개(LLM 미사용) — data_guard·
+│                             decision_guard·risk_gate·job_ledger가 핵심 가드레일
+├─ scripts/                   운영 보조 스크립트 — backtest_gate_check.py(추천 로직
+│                             변경 전 점검), judgment_scenario_check.py(판단 로직
+│                             변경 전 시나리오 체크리스트) 등
+├─ web/
+│  └─ app.py                  FastAPI 24/7 웹 대시보드
+└─ tests/                     회귀 테스트 48개 — 전부 과거 실제 사고 재발 방지용
 ```
 
 ---
@@ -270,6 +282,14 @@ ai-investment-company/
 
 ## 면책 조항
 
-> 본 시스템은 투자 참고용 정보 수집 및 분석 도구입니다.  
-> 본 리포트를 기반으로 한 투자 결정과 그에 따른 손익은 전적으로 투자자 본인의 책임입니다.  
-> 자동 주문/매매 기능은 포함되어 있지 않습니다.
+> 본 시스템은 투자 참고용 정보 수집 및 분석 도구입니다.
+> 본 리포트를 기반으로 한 투자 결정과 그에 따른 손익은 전적으로 투자자 본인의 책임입니다.
+>
+> **브리핑 판단에 따른 자동 매매(자동 주문 실행)는 없습니다.** 드로다운 등 위기
+> 상황에서도 시스템은 경보만 보내고 절대 스스로 매도하지 않습니다(2026-07-09
+> 사용자 승인 정책, `tests/test_drawdown_policy.py`가 강제).
+>
+> 다만 `python main.py --order buy/sell ...`로 **사용자가 직접 명령을 입력하면**
+> KIS API를 통해 실제 계좌에 주문이 들어갑니다 — 이건 AI의 자동 판단이 아니라
+> 사용자가 그 순간 명시적으로 실행한 수동 명령입니다. 이 명령을 스크립트나
+> 다른 자동화에 연결하지 않도록 주의하세요.
