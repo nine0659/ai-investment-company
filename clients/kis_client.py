@@ -401,6 +401,15 @@ class KISClient:
           'mode': 'real' | 'paper'
         }
         """
+        from config.settings import ENABLE_KIS_TRADING
+        if not ENABLE_KIS_TRADING:
+            return {
+                "success": False,
+                "order_no": "",
+                "message": "KIS 주문 API는 비활성화되어 있습니다. KIS는 조회용으로만 사용합니다.",
+                "mode": "disabled",
+            }
+
         cano, prod = self._account()
         tr_id      = self._tr(side)
         ord_dvsn   = "00" if price > 0 else "01"  # 00=지정가, 01=시장가
@@ -480,6 +489,14 @@ class KISClient:
         price: int = 0,
     ) -> dict:
         """미체결 주문 취소."""
+        from config.settings import ENABLE_KIS_TRADING
+        if not ENABLE_KIS_TRADING:
+            return {
+                "success": False,
+                "order_no": "",
+                "message": "KIS 주문 취소 API는 비활성화되어 있습니다.",
+            }
+
         cano, prod = self._account()
         tr_id    = "TTTC0803U" if KIS_IS_REAL else "VTTC0803U"
         sll_buy  = "02" if side == "buy" else "01"

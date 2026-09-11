@@ -35,17 +35,22 @@ def test_target_price_uses_parsed_risk_reward_ratio():
     assert recs[0]["target_price"] == 145_000
 
 
-def test_unparseable_risk_reward_uses_default_ratio():
+def test_unparseable_risk_reward_discards_position():
     d = _decisions([{"code": "005930", "name": "삼성전자", "risk_reward": "확신도 높음"}])
     recs = recs_from_cio_decisions(d, price_fn=lambda code: 100_000)
-    # 기본 비율 2.5 * 15,000 = 37,500
-    assert recs[0]["target_price"] == 137_500
+    assert recs == []
 
 
-def test_missing_risk_reward_field_uses_default_ratio():
+def test_missing_risk_reward_field_discards_position():
     d = _decisions([{"code": "005930", "name": "삼성전자"}])
     recs = recs_from_cio_decisions(d, price_fn=lambda code: 100_000)
-    assert recs[0]["target_price"] == 137_500
+    assert recs == []
+
+
+def test_below_minimum_risk_reward_discards_position():
+    d = _decisions([{"code": "005930", "name": "삼성전자", "risk_reward": "2.5:1"}])
+    recs = recs_from_cio_decisions(d, price_fn=lambda code: 100_000)
+    assert recs == []
 
 
 def test_duplicate_code_skipped():

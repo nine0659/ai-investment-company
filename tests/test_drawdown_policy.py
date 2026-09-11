@@ -28,6 +28,21 @@ def test_scheduler_never_auto_liquidates():
     )
 
 
+def test_drawdown_defense_function_is_alert_only(monkeypatch):
+    """함수 자체가 호출돼도 KIS 조회나 매도 주문을 시도하지 않아야 한다."""
+    import services.auto_execute_service as auto_execute_service
+
+    class _ExplodingKIS:
+        def get_holdings(self):
+            raise AssertionError("KIS 보유 조회를 호출하면 안 됨")
+
+    result = auto_execute_service.execute_drawdown_defense("all", kis=_ExplodingKIS())
+
+    assert result["success"] is False
+    assert result["mode"] == "alert_only"
+    assert "경보만" in result["reason"]
+
+
 def test_guard_detects_missing_price():
     pnl = [
         {"name": "삼성전자", "invested": 10_000_000, "current_val": 11_000_000},

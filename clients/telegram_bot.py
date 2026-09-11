@@ -14,10 +14,10 @@
   /watchlist                        — 관심종목 목록
   /watchlist add CODE 회사명 [목표가] — 관심종목 추가
   /watchlist remove CODE            — 관심종목 제거
-  /buy CODE QTY [PRICE]             — 매수 주문
-  /sell CODE QTY [PRICE]            — 매도 주문
-  /orders                           — 미체결 주문 조회
-  /cancel ORDER_NO CODE SIDE QTY    — 주문 취소
+  /buy CODE QTY [PRICE]             — 비활성: 직접 실행 후 기록 안내
+  /sell CODE QTY [PRICE]            — 비활성: 직접 실행 후 기록 안내
+  /orders                           — KIS 미체결 조회
+  /cancel ORDER_NO CODE SIDE QTY    — 비활성: 직접 처리 안내
   /history                          — 최근 주문 이력
   /thesis                           — 현재 월간 투자관
   /strategy                         — 현재 주간 전략
@@ -111,7 +111,8 @@ def _cmd_start(chat_id: str, _args: str) -> None:
         "저는 한국 주식 시장을 분석하고 중장기 투자 방향을 제시하는 AI 투자 분석 시스템입니다.\n\n"
         "📌 *이용 안내*\n"
         "• 이 봇은 시장 분석·투자 참고 정보 제공 목적입니다\n"
-        "• 실시간 매매 주문 실행은 지원하지 않습니다\n"
+        "• KIS API는 조회용이며, 실제 매수·매도는 미래에셋증권 계좌에서 직접 실행합니다\n"
+        "• 실행 결과는 `/holdings add` 등으로 기록해 학습 데이터로 쌓습니다\n"
         "• 제공되는 분석은 투자 참고용이며, 최종 투자 결정은 본인 책임입니다\n\n"
         "아래 명령어 또는 자유롭게 질문해보세요:\n"
         "• `삼성전자 중장기 전망이 어때?`\n"
@@ -136,14 +137,10 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/holdings remove CODE` — 등록된 보유종목 제거\n"
         "`/portfolio` — 포트폴리오 손익 현황\n"
         "`/profile` — 투자자 프로필 (목표·기간·리스크 감내) 조회/수정\n\n"
-        "📋 *주문*\n"
-        "`/buy CODE QTY [PRICE]` — 매수\n"
-        "  예: `/buy 005930 10 80000` 또는 `/buy 005930 10` (시장가)\n"
-        "`/sell CODE QTY [PRICE]` — 매도 (QTY=0 전량)\n"
-        "  예: `/sell 005930 5` 또는 `/sell 005930 0` (전량)\n"
-        "`/orders` — 미체결 주문 목록\n"
-        "`/cancel ORDER_NO CODE SIDE QTY` — 주문 취소\n"
-        "`/history` — 최근 주문 이력\n\n"
+        "📝 *수동 실행 기록*\n"
+        "`/holdings add CODE QTY AVG_PRICE [회사명]` — 미래에셋에서 직접 매수한 결과 기록\n"
+        "`/holdings remove CODE` — 직접 매도/정리한 결과 기록\n"
+        "`/history` — 시스템에 기록된 과거 주문/실행 이력\n\n"
         "🔍 *심층 분석*\n"
         "`/discover` — 탑다운 종목 발굴 (시장 흐름→주도 산업→종목, 워치리스트 자동 등록)\n"
         "`/rebound` — 기술적·추세적 반등 스크리너 (하락률 상위 종목군 차트 분석, LLM 미사용)\n"
@@ -159,13 +156,9 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/watchlist` — 관심종목 목록\n"
         "`/watchlist add CODE 회사명 [목표가]` — 추가\n"
         "`/watchlist remove CODE` — 제거\n\n"
-        "🤖 *자동 실행 제어*\n"
-        "`/auto` — 자동 실행 상태 + 오늘 내역\n"
-        "`/auto on` / `/auto off` — 전체 활성화/비활성화\n"
-        "`/auto buy_on` / `/auto buy_off` — 자동 매수만\n"
-        "`/auto stop_on` / `/auto stop_off` — 자동 손절만\n"
-        "`/exposure` — 오늘 노출도 + 드로다운 현황\n"
-        "`/pause [일수]` — 자동 실행 N일 일시 중단\n\n"
+        "🛡 *리스크 확인*\n"
+        "`/auto` — 자동매매 비활성 상태 확인\n"
+        "`/exposure` — 오늘 노출도 + 드로다운 현황\n\n"
         "💬 *AI 대화*\n"
         "명령어 없이 자유롭게 질문하세요!\n"
         "예: '삼성전자 지금 살만해?', '오늘 시장 어때?'"
@@ -445,6 +438,15 @@ def _cmd_buy(chat_id: str, args: str) -> None:
         /buy 005930 10 (시장가)
         /buy 005930 10 80000 mid 반도체 반등 기대
     """
+    _send(
+        chat_id,
+        "⛔ *실주문 기능은 비활성화되어 있습니다.*\n\n"
+        "현재 운영 방식은 KIS API로 시세·잔고 정보를 참고하고, 실제 매수는 "
+        "미래에셋증권 계좌에서 직접 실행하는 방식입니다.\n"
+        "체결 후 `/holdings add CODE QTY AVG_PRICE [회사명]`으로 기록해주세요."
+    )
+    return
+
     parts = args.split()
     if len(parts) < 2:
         _send(chat_id,
@@ -503,6 +505,14 @@ def _cmd_sell(chat_id: str, args: str) -> None:
     예: /sell 005930 5 82000
         /sell 005930 0 (전량 시장가)
     """
+    _send(
+        chat_id,
+        "⛔ *실주문 기능은 비활성화되어 있습니다.*\n\n"
+        "실제 매도는 미래에셋증권 계좌에서 직접 실행하고, 이후 "
+        "`/holdings remove CODE` 또는 포트폴리오 기록 기능으로 반영해주세요."
+    )
+    return
+
     parts = args.split()
     if len(parts) < 2:
         _send(chat_id,
@@ -576,6 +586,9 @@ def _cmd_cancel(chat_id: str, args: str) -> None:
     /cancel ORDER_NO CODE SIDE QTY [PRICE]
     예: /cancel 0012345 005930 buy 10
     """
+    _send(chat_id, "⛔ KIS 주문/취소 기능은 비활성화되어 있습니다. 실제 주문 관리는 미래에셋증권에서 직접 처리해주세요.")
+    return
+
     parts = args.split()
     if len(parts) < 4:
         _send(chat_id,
@@ -753,13 +766,21 @@ def _cmd_tracker(chat_id: str, _args: str) -> None:
 def _cmd_auto(chat_id: str, args: str) -> None:
     """
     /auto                   — 자동 실행 현재 상태 + 오늘 자동 실행 내역
-    /auto on                — 모두 활성화
+    /auto on                — 비활성 운영 안내
     /auto off               — 모두 비활성화
-    /auto stop_on/stop_off  — 자동 손절만 제어
-    /auto buy_on/buy_off    — 자동 진입만 제어
+    /auto stop_on/stop_off  — stop_on은 차단, stop_off는 설정 정리
+    /auto buy_on/buy_off    — buy_on은 차단, buy_off는 설정 정리
     """
     import os
     sub = args.strip().lower()
+
+    if sub in ("on", "stop_on", "buy_on"):
+        _send(
+            chat_id,
+            "⛔ 자동매매는 이 프로젝트의 현재 운영 범위가 아닙니다.\n"
+            "에이전트는 매수·매도 사인과 기록/추적을 제공하고, 실제 실행은 사용자가 직접 합니다."
+        )
+        return
 
     # ── 상태 토글 (DB에 저장 → 모든 프로세스에서 즉시 반영) ──────
     from config.settings import set_auto_setting
@@ -776,17 +797,9 @@ def _cmd_auto(chat_id: str, args: str) -> None:
               f"  _(재시작 없이 스케줄러에 즉시 반영됩니다)_")
         return
 
-    if sub == "stop_on":
-        set_auto_setting("AUTO_EXECUTE_STOP", True)
-        _send(chat_id, "✅ 자동 손절 활성화 (DB 저장 완료)")
-        return
     if sub == "stop_off":
         set_auto_setting("AUTO_EXECUTE_STOP", False)
         _send(chat_id, "⏸️ 자동 손절 비활성화 (DB 저장 완료)")
-        return
-    if sub == "buy_on":
-        set_auto_setting("AUTO_EXECUTE_BUY", True)
-        _send(chat_id, "✅ 자동 매수 진입 활성화 (DB 저장 완료)")
         return
     if sub == "buy_off":
         set_auto_setting("AUTO_EXECUTE_BUY", False)
@@ -840,7 +853,7 @@ def _cmd_auto(chat_id: str, args: str) -> None:
     else:
         lines.append("\n📋 오늘 자동 실행 내역 없음")
 
-    lines.append("\n`/auto on` | `/auto off` | `/auto buy_on` | `/auto stop_on`")
+    lines.append("\n자동매매는 비활성 운영입니다. 실제 매수·매도는 직접 실행 후 기록해주세요.")
     _send(chat_id, "\n".join(lines))
 
 
@@ -969,73 +982,15 @@ def _handle_callback(chat_id: str, data: str, callback_query_id: str = "") -> No
             return
 
         if action == "buy":
-            if len(parts) < 3:
-                _send(chat_id, "❌ buy 콜백 데이터 오류")
-                return
-            code  = parts[1].zfill(6)
-            qty   = int(parts[2]) if parts[2].isdigit() else 0
-            price = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
-            if qty <= 0:
-                _send(chat_id, "❌ 수량 오류 (0주 이하)")
-                return
-            _send(chat_id, f"📤 매수 처리 중... {code} {qty:,}주")
-            try:
-                from services.trading_service import execute_buy
-                result = execute_buy(code=code, qty=qty, price=price, memo="인라인버튼 즉시매수")
-                if result["success"]:
-                    _send(chat_id, f"✅ 매수 완료: {result['name']}({code}) {qty:,}주")
-                else:
-                    _send(chat_id, f"❌ 매수 실패: {result['message']}")
-            except Exception as e:
-                _send(chat_id, f"❌ 매수 오류: {e}")
+            _send(chat_id, "⛔ 실주문 버튼은 비활성화되어 있습니다. 미래에셋증권에서 직접 실행 후 기록해주세요.")
             return
 
         if action == "sell":
-            if len(parts) < 3:
-                _send(chat_id, "❌ sell 콜백 데이터 오류")
-                return
-            code  = parts[1].zfill(6)
-            qty   = int(parts[2]) if parts[2].isdigit() else 0
-            price = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
-            _send(chat_id, f"📤 매도 처리 중... {code} {qty or '전량'}")
-            try:
-                from services.trading_service import execute_sell
-                result = execute_sell(code=code, qty=qty, price=price, memo="인라인버튼 즉시매도")
-                if result["success"]:
-                    _send(chat_id, f"✅ 매도 완료: {result['name']}({code})")
-                else:
-                    _send(chat_id, f"❌ 매도 실패: {result['message']}")
-            except Exception as e:
-                _send(chat_id, f"❌ 매도 오류: {e}")
+            _send(chat_id, "⛔ 실주문 버튼은 비활성화되어 있습니다. 미래에셋증권에서 직접 실행 후 기록해주세요.")
             return
 
         if action == "sell_half":
-            if len(parts) < 2:
-                _send(chat_id, "❌ sell_half 콜백 데이터 오류")
-                return
-            code = parts[1].zfill(6)
-            _send(chat_id, f"📤 절반 매도 처리 중... {code}")
-            try:
-                from clients.kis_client import KISClient
-                from services.trading_service import execute_sell
-                _kis = KISClient()
-                holdings = _kis.get_holdings()
-                holding  = next((h for h in holdings if h.get("code") == code), None)
-                if not holding:
-                    _send(chat_id, f"❌ {code} 보유 내역 없음")
-                    return
-                owned = holding.get("qty", 0)
-                half_qty = owned // 2
-                if half_qty <= 0:
-                    _send(chat_id, f"❌ {code} 절반 매도 불가 (보유 {owned}주)")
-                    return
-                result = execute_sell(code=code, qty=half_qty, price=0, memo="인라인버튼 절반익절")
-                if result["success"]:
-                    _send(chat_id, f"✅ 절반 매도 완료: {result['name']}({code}) {half_qty:,}주")
-                else:
-                    _send(chat_id, f"❌ 절반 매도 실패: {result['message']}")
-            except Exception as e:
-                _send(chat_id, f"❌ 절반 매도 오류: {e}")
+            _send(chat_id, "⛔ 실주문 버튼은 비활성화되어 있습니다. 미래에셋증권에서 직접 실행 후 기록해주세요.")
             return
 
         if action == "napp":

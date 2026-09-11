@@ -84,12 +84,20 @@ AUTO_EXECUTE_TARGET_HALF  = os.getenv("AUTO_EXECUTE_TARGET_HALF", "false").lower
 AUTO_MAX_DAILY_EXPOSURE   = float(os.getenv("AUTO_MAX_DAILY_EXPOSURE", "0.10"))
 AUTO_SIZE_MAP: dict[str, float] = {"상": 0.05, "중": 0.03, "하": 0.01}
 
+# KIS는 이 프로젝트에서 시세/잔고 조회용으로만 사용한다.
+# 실제 계좌는 미래에셋증권이므로, 주문 API는 명시적으로 허용하지 않는 한 잠근다.
+ENABLE_KIS_TRADING = os.getenv("ENABLE_KIS_TRADING", "false").lower() == "true"
+BROKER_ACCOUNT_LABEL = os.getenv("BROKER_ACCOUNT_LABEL", "미래에셋증권")
+DATA_BROKER_LABEL = os.getenv("DATA_BROKER_LABEL", "한국투자증권(KIS)")
+
 # DB 기반 설정 헬퍼 — 프로세스 경계를 넘어 설정 공유
 _SETTING_KEYS = ("AUTO_EXECUTE_BUY", "AUTO_EXECUTE_STOP", "AUTO_EXECUTE_TARGET_HALF")
 
 
 def get_auto_setting(key: str) -> bool:
     """DB system_settings → 환경변수 순으로 자동실행 설정값 반환."""
+    if key in _SETTING_KEYS and not ENABLE_KIS_TRADING:
+        return False
     try:
         from db.database import get_conn
         from sqlalchemy import text
@@ -106,6 +114,8 @@ def get_auto_setting(key: str) -> bool:
 
 def set_auto_setting(key: str, value: bool) -> None:
     """DB system_settings에 자동실행 설정 저장 (프로세스 간 공유)."""
+    if key in _SETTING_KEYS and value and not ENABLE_KIS_TRADING:
+        value = False
     val_str = "true" if value else "false"
     try:
         from db.database import get_conn

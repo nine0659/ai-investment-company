@@ -1,10 +1,10 @@
 """
 services/auto_execute_service.py
-AI 추천 자동 실행 서비스
+AI 추천 자동 실행 서비스 (현재 운영에서는 기본 비활성)
 
+- KIS는 조회용이고 실제 계좌는 미래에셋증권이므로 주문 실행은 기본 차단
 - 5단계 게이트 체크 (장시간·드로다운·노출도·단일종목·중복)
-- 자동 매수 실행 (confidence 기반 포지션 사이징)
-- 드로다운 방어 실행 (50% 청산 / 전량 청산 + 차단)
+- 과거 자동매매 실험 코드의 안전 회귀 테스트 대상
 - 자동 실행 요약 생성 (CEO 피드백 루프)
 """
 import logging
@@ -287,70 +287,24 @@ def pause_auto_execute(reason: str, days: int = 1) -> None:
 # ── 드로다운 방어 실행 (P4-3) ─────────────────────────────────────
 
 def execute_drawdown_defense(action: str, kis=None) -> dict:
-    """드로다운 임계 초과 시 포지션 청산.
+    """드로다운 임계 초과 시 자동 청산 차단.
 
     Args:
-        action: "half" (50% 청산) 또는 "all" (전량 청산 + 7일 차단)
-        kis: KISClient 인스턴스 (None이면 새로 생성)
+        action: "half" 또는 "all"
+        kis: 호환성용 인자. 현재 정책에서는 사용하지 않는다.
 
     Returns:
-        실행 결과 딕셔너리
+        정책상 차단 결과 딕셔너리
     """
     if action not in ("half", "all"):
         return {"success": False, "reason": f"알 수 없는 action: {action}"}
 
-    logger.warning("[드로다운방어] %s 실행 시작", action)
-
-    try:
-        if kis is None:
-            from clients.kis_client import KISClient
-            kis = KISClient()
-        holdings = kis.get_holdings()
-    except Exception as e:
-        logger.error("[드로다운방어] KIS 연결 실패: %s", e)
-        return {"success": False, "reason": f"KIS 연결 실패: {e}"}
-
-    from services.trading_service import execute_sell
-    from clients.telegram_client import send_message
-
-    results = []
-    for h in holdings:
-        code  = h.get("code", "")
-        name  = h.get("name", code)
-        owned = h.get("qty", 0)
-        if not code or owned <= 0:
-            continue
-        try:
-            sell_qty = owned // 2 if action == "half" else owned
-            if sell_qty <= 0:
-                continue
-            r = execute_sell(code=code, qty=sell_qty, price=0, memo=f"드로다운방어_{action}")
-            results.append({"code": code, "name": name, "qty": sell_qty, "success": r.get("success", False)})
-        except Exception as e:
-            logger.error("[드로다운방어] %s(%s) 매도 실패: %s", name, code, e)
-            results.append({"code": code, "name": name, "qty": 0, "success": False, "error": str(e)})
-
-    # 전량 청산이면 7일 AUTO_EXECUTE_BUY 차단
-    if action == "all":
-        pause_auto_execute("드로다운 -15% 전량청산 자동 차단", days=7)
-
-    success_count = sum(1 for r in results if r.get("success"))
-    total_count   = len(results)
-
-    summary_lines = [f"🚨 *드로다운 방어 실행 완료* ({action.upper()})\n"]
-    for r in results:
-        icon = "✅" if r.get("success") else "❌"
-        summary_lines.append(f"  {icon} {r['name']}({r['code']}) {r.get('qty', 0):,}주")
-    summary_lines.append(f"\n총 {total_count}개 종목, {success_count}개 성공")
-    if action == "all":
-        summary_lines.append("⏸️ AUTO_EXECUTE_BUY 7일 차단 적용")
-
-    try:
-        send_message("\n".join(summary_lines))
-    except Exception:
-        pass
-
-    return {"success": True, "action": action, "total": total_count, "success_count": success_count, "results": results}
+    reason = (
+        "드로다운은 경보만 발송합니다. 실제 매수·매도는 미래에셋증권 계좌에서 "
+        "사용자가 직접 실행하고, 실행 결과만 기록합니다."
+    )
+    logger.warning("[드로다운방어] 자동 청산 차단 (%s): %s", action, reason)
+    return {"success": False, "action": action, "mode": "alert_only", "reason": reason}
 
 
 # ── 자동 실행 요약 (P5-2) ─────────────────────────────────────────

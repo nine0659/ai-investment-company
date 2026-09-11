@@ -4,7 +4,11 @@
 '기록'으로 굳어질 수 있는 유일한 경로다. 실데이터 교차검증이 무너지면
 존재하지 않는 종목·가격이 성과 통계를 오염시킨다.
 """
-from services.recommendation_service import recs_from_weekly_picks, has_open_recommendation
+from services.recommendation_service import (
+    has_open_recommendation,
+    recs_from_weekly_picks,
+    save_recommendations,
+)
 
 PRICES = {"005930": 309500, "000660": 2425000, "033780": 175100}
 
@@ -120,3 +124,69 @@ def test_dedup_window_covers_tracker_expiry_gap():
             {"d": stale_date},
         )
     assert has_open_recommendation("005930") is True
+
+
+def test_save_recommendations_preserves_other_same_day_records():
+    # 같은 날짜 전체 DELETE는 장전 CIO 추천과 주간/수동 기록이 서로를 지울 수 있다.
+    from db.database import init_db, get_conn
+    from sqlalchemy import text
+
+    init_db()
+    with get_conn() as conn:
+        conn.execute(text("DELETE FROM stock_recommendations"))
+        conn.execute(
+            text(
+                "INSERT INTO stock_recommendations "
+                "(date, code, name, entry_price, stop_price, target_price, rationale) "
+                "VALUES ('2026-09-11', '000660', 'SK하이닉스', 200000, 170000, 260000, '기존')"
+            )
+        )
+
+    save_recommendations("2026-09-11", [{
+        "code": "005930",
+        "name": "삼성전자",
+        "entry_price": 70000,
+        "stop_price": 63000,
+        "target_price": 84000,
+        "rationale": "신규",
+    }])
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            text("SELECT code FROM stock_recommendations WHERE date='2026-09-11' ORDER BY code")
+        ).fetchall()
+    assert [r[0] for r in rows] == ["000660", "005930"]
+
+
+def test_save_recommendations_replaces_same_day_same_code_only():
+    from db.database import init_db, get_conn
+    from sqlalchemy import text
+
+    init_db()
+    with get_conn() as conn:
+        conn.execute(text("DELETE FROM stock_recommendations"))
+        conn.execute(
+            text(
+                "INSERT INTO stock_recommendations "
+                "(date, code, name, entry_price, stop_price, target_price, rationale) "
+                "VALUES ('2026-09-11', '005930', '삼성전자', 60000, 54000, 72000, '기존')"
+            )
+        )
+
+    save_recommendations("2026-09-11", [{
+        "code": "005930",
+        "name": "삼성전자",
+        "entry_price": 70000,
+        "stop_price": 63000,
+        "target_price": 84000,
+        "rationale": "교체",
+    }])
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT entry_price, rationale FROM stock_recommendations "
+                "WHERE date='2026-09-11' AND code='005930'"
+            )
+        ).fetchall()
+    assert rows == [(70000.0, "교체")]

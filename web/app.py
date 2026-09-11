@@ -5,10 +5,12 @@ FastAPI 기반 — 브라우저(PC/모바일)에서 24시간 접근 가능
 실행: uvicorn web.app:app --host 0.0.0.0 --port 8000
 """
 import asyncio
+import base64
 import json
 import logging
 import os
 import queue
+import secrets
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,8 +30,10 @@ logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
 
-# ── 웹 암호 보호 (환경변수 WEB_PASSWORD 설정 시 활성화) ──────────
+# ── 웹 암호 보호 ────────────────────────────────────────────────
 _WEB_PASSWORD = os.getenv("WEB_PASSWORD", "")
+_PUBLIC_PATHS = {"/health", "/api/status"}
+_AUTH_HEADER = {"WWW-Authenticate": "Basic realm='AI Investment Assistant'"}
 
 app = FastAPI(title="AI 투자 어시스턴트", docs_url=None, redoc_url=None)
 app.add_middleware(
@@ -46,16 +50,50 @@ _security  = HTTPBasic(auto_error=False)
 
 def _check_auth(credentials: HTTPBasicCredentials | None = Depends(_security)):
     if not _WEB_PASSWORD:
-        return  # 비밀번호 미설정 시 인증 없이 접근 허용
-    if credentials is None or credentials.password != _WEB_PASSWORD:
+        raise HTTPException(status_code=503, detail="WEB_PASSWORD 미설정")
+    if credentials is None or not secrets.compare_digest(credentials.password, _WEB_PASSWORD):
         raise HTTPException(
             status_code=401,
             detail="인증이 필요합니다",
-            headers={"WWW-Authenticate": "Basic realm='AI 투자 어시스턴트'"},
+            headers=_AUTH_HEADER,
         )
 
 
 # ── 유틸 ────────────────────────────────────────────────────────
+
+@app.middleware("http")
+async def _require_auth_for_private_routes(request: Request, call_next):
+    """헬스체크를 제외한 모든 웹/API 접근은 Basic 인증으로 보호한다."""
+    if request.method == "OPTIONS" or request.url.path in _PUBLIC_PATHS:
+        return await call_next(request)
+
+    if not _WEB_PASSWORD:
+        return JSONResponse(
+            {"ok": False, "error": "WEB_PASSWORD 미설정 — 비공개 화면/API 접근 차단"},
+            status_code=503,
+        )
+
+    header = request.headers.get("authorization", "")
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() != "basic" or not value:
+        return JSONResponse(
+            {"detail": "인증이 필요합니다"},
+            status_code=401,
+            headers=_AUTH_HEADER,
+        )
+    try:
+        decoded = base64.b64decode(value).decode("utf-8")
+        _, _, password = decoded.partition(":")
+    except Exception:
+        password = ""
+
+    if not secrets.compare_digest(password, _WEB_PASSWORD):
+        return JSONResponse(
+            {"detail": "인증이 필요합니다"},
+            status_code=401,
+            headers=_AUTH_HEADER,
+        )
+    return await call_next(request)
 
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -126,6 +164,12 @@ async def status():
         "trading_day": is_trading_day,
         "holiday": holiday or None,
     }
+
+
+@app.get("/health")
+async def health():
+    """배포 플랫폼용 공개 헬스체크."""
+    return await status()
 
 
 @app.get("/api/briefings")

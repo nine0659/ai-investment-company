@@ -25,6 +25,18 @@ class TradingError(Exception):
     """주문 실행 불가 오류."""
 
 
+def _assert_trading_enabled() -> None:
+    from config.settings import BROKER_ACCOUNT_LABEL, DATA_BROKER_LABEL, ENABLE_KIS_TRADING
+
+    if not ENABLE_KIS_TRADING:
+        raise TradingError(
+            "실주문 기능은 비활성화되어 있습니다. "
+            f"현재 운영 방식은 {DATA_BROKER_LABEL} API로 정보를 조회하고, "
+            f"실제 매수·매도는 {BROKER_ACCOUNT_LABEL} 계좌에서 사용자가 직접 실행한 뒤 "
+            "체결 결과를 보유종목/추천 추적에 기록하는 방식입니다."
+        )
+
+
 def _save_order(
     code: str, name: str, side: str,
     qty: int, price: int, order_no: str,
@@ -85,6 +97,8 @@ def execute_buy(
     Returns:
         {'success': bool, 'order_no': str, 'message': str, 'name': str, 'amount': int}
     """
+    _assert_trading_enabled()
+
     from clients.kis_client import KISClient
     from config.settings import KIS_IS_REAL
 
@@ -194,6 +208,8 @@ def execute_sell(
     Returns:
         {'success': bool, 'order_no': str, 'message': str, 'name': str}
     """
+    _assert_trading_enabled()
+
     from clients.kis_client import KISClient
     from config.settings import KIS_IS_REAL
 
@@ -289,6 +305,10 @@ def get_pending_orders() -> list[dict]:
 
 def cancel_order(order_no: str, code: str, side: str, qty: int, price: int = 0) -> dict:
     """주문 취소."""
+    try:
+        _assert_trading_enabled()
+    except TradingError as e:
+        return {"success": False, "message": str(e)}
     from clients.kis_client import KISClient
     try:
         kis = KISClient()

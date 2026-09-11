@@ -17,7 +17,6 @@ _TZ = ZoneInfo("Asia/Seoul")
 # "X:Y" 손익비 문자열(예: "3.5:1") 파싱 — ceo_decisions.new_positions의 risk_reward 필드
 _RR_RE = re.compile(r"([\d.]+)\s*[:：]\s*([\d.]+)")
 _CIO_DEFAULT_STOP_PCT = 15.0   # CEO 헌장(agents/ceo_agent.py)의 "재검토 의무 발동" 기준
-_CIO_DEFAULT_RR_RATIO = 2.5    # risk_reward 파싱 실패 시 보수적 기본값(헌장 "3:1 미만 보류"보다 낮게)
 # 아래 recs_from_weekly_picks 전용 _DEFAULT_STOP_PCT(10.0)와 이름이 겹치면 모듈 로드 시
 # 나중 정의가 앞 정의를 덮어써 조용히 잘못된 값이 쓰인다 — 반드시 접두사로 구분할 것.
 
@@ -38,7 +37,7 @@ def recs_from_cio_decisions(
     - 손절가: CEO 헌장에 이미 명문화된 "-15% 이상 손실 시 보유 근거 재검토 의무" 규칙을
       기본 손절 기준으로 사용 → entry * 0.85
     - 목표가: new_positions의 risk_reward 문자열("X:Y")을 손절폭에 곱해 산출.
-      파싱 실패 시 보수적 기본 비율(_DEFAULT_RR_RATIO) 사용.
+      손익비가 없거나 3:1 미만이면 헌장 위반이므로 추적 추천으로 저장하지 않는다.
     """
     results: list[dict] = []
     seen: set[str] = set()
@@ -56,15 +55,21 @@ def recs_from_cio_decisions(
 
         stop = entry * (1 - _CIO_DEFAULT_STOP_PCT / 100)
 
-        ratio = _CIO_DEFAULT_RR_RATIO
         m = _RR_RE.search(pos.get("risk_reward", "") or "")
-        if m:
-            try:
-                up, down = float(m.group(1)), float(m.group(2))
-                if down > 0:
-                    ratio = up / down
-            except (ValueError, ZeroDivisionError):
-                pass
+        if not m:
+            logger.warning("[CIO추천파싱] %s(%s) 손익비 미명시/파싱 실패 — 폐기", name, code)
+            continue
+
+        try:
+            up, down = float(m.group(1)), float(m.group(2))
+            ratio = up / down if down > 0 else 0
+        except (ValueError, ZeroDivisionError):
+            logger.warning("[CIO추천파싱] %s(%s) 손익비 계산 실패 — 폐기", name, code)
+            continue
+
+        if ratio < 3.0:
+            logger.warning("[CIO추천파싱] %s(%s) 손익비 %.2f:1 < 3:1 — 폐기", name, code, ratio)
+            continue
 
         target = entry + (entry - stop) * ratio
 
@@ -256,15 +261,20 @@ def has_open_recommendation(code: str, days: int = 45) -> bool:
 # ── 저장 / 조회 ──────────────────────────────────────────────────
 
 def save_recommendations(date: str, recs: list[dict]) -> int:
-    """추천 종목 저장 (같은 날 기존 데이터는 삭제 후 재저장)."""
+    """추천 종목 저장.
+
+    같은 날짜 전체를 지우지 않고 같은 (date, code)만 교체한다. 장전 CIO 판단,
+    주간 추천, 수동 승인 큐가 같은 날짜에 함께 남을 수 있어야 학습 데이터가
+    서로를 덮어쓰지 않는다.
+    """
     if not recs:
         return 0
     with get_conn() as conn:
-        conn.execute(
-            text("DELETE FROM stock_recommendations WHERE date=:date"),
-            {"date": date},
-        )
         for r in recs:
+            conn.execute(
+                text("DELETE FROM stock_recommendations WHERE date=:date AND code=:code"),
+                {"date": date, "code": r["code"]},
+            )
             conn.execute(
                 text(
                     "INSERT INTO stock_recommendations "

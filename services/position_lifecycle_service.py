@@ -232,13 +232,18 @@ def check_rr_warnings(decisions: dict) -> list[str]:
             )
             continue
         try:
-            rr_num = float(rr_raw.split(":")[0].replace("R", "").strip())
+            up_raw, down_raw = rr_raw.split(":", 1)
+            up = float(up_raw.replace("R", "").strip())
+            down = float(down_raw.replace("R", "").strip())
+            rr_num = up / down if down > 0 else 0
             if rr_num < 3.0:
                 warnings.append(
                     f"⚠️ R/R 미달: {name} R/R={rr_raw} < 3:1 → 헌장 위반, 진입 보류 권고"
                 )
         except (ValueError, IndexError):
-            pass
+            warnings.append(
+                f"⚠️ R/R 형식 오류: {name} R/R={rr_raw} — 진입 재검토 권고"
+            )
     return warnings
 
 

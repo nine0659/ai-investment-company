@@ -244,7 +244,7 @@ ai-investment-company/
 ├─ CLAUDE.md                  운영 가이드 — 최신 아키텍처·스케줄·알려진 함정 (항상 최신)
 ├─ .env.example
 ├─ requirements.txt
-├─ main.py                    수동 실행 (브리핑·리서치·포트폴리오·주문·워치리스트)
+├─ main.py                    수동 실행 (브리핑·리서치·포트폴리오·워치리스트·기록)
 ├─ scheduler.py                자동 스케줄 실행 (Render 상주 프로세스)
 ├─ config/
 │  └─ settings.py             환경변수 및 전역 설정
@@ -274,9 +274,11 @@ ai-investment-company/
 ## 보안 주의사항
 
 - `.env` 파일은 절대 커밋하지 마세요 (`.gitignore`에 포함됨)
+- `data/kakao_tokens.json`, `data/kakao_pkce.json`, `*.session` 파일도 커밋하지 마세요
 - `.env.example`만 커밋합니다
 - API Key는 코드에 직접 입력하지 마세요
 - 로그에 민감정보가 출력되지 않도록 설계되어 있습니다
+- 웹 대시보드는 `/health`, `/api/status`를 제외하고 `WEB_PASSWORD`가 있어야 접근됩니다
 
 ---
 
@@ -289,7 +291,6 @@ ai-investment-company/
 > 상황에서도 시스템은 경보만 보내고 절대 스스로 매도하지 않습니다(2026-07-09
 > 사용자 승인 정책, `tests/test_drawdown_policy.py`가 강제).
 >
-> 다만 `python main.py --order buy/sell ...`로 **사용자가 직접 명령을 입력하면**
-> KIS API를 통해 실제 계좌에 주문이 들어갑니다 — 이건 AI의 자동 판단이 아니라
-> 사용자가 그 순간 명시적으로 실행한 수동 명령입니다. 이 명령을 스크립트나
-> 다른 자동화에 연결하지 않도록 주의하세요.
+> 현재 운영 원칙은 **KIS API로 시세·잔고 정보를 참고하고, 실제 매수·매도는
+> 미래에셋증권 계좌에서 사용자가 직접 실행한 뒤 결과를 기록**하는 방식입니다.
+> `ENABLE_KIS_TRADING=true`를 명시하지 않으면 KIS 주문 API는 코드 레벨에서 차단됩니다.

@@ -42,11 +42,13 @@ main.py
   python main.py --watchlist remove CODE                      # 관심종목 제거
   python main.py --watchlist check                            # 진입 조건 점검 (텔레그램 발송)
 
-  # 주문 실행 (KIS API 연동)
-  python main.py --order buy CODE QTY [PRICE] [timeframe] [memo...]  # 매수
-  python main.py --order sell CODE QTY [PRICE] [memo...]             # 매도 (QTY=0 전량)
-  python main.py --order pending                                     # 미체결 주문 조회
-  python main.py --order cancel ORDER_NO CODE SIDE QTY [PRICE]      # 주문 취소
+  # 주문 관련 명령
+  # 기본 운영은 KIS 조회 + 미래에셋 직접 실행 + 결과 기록 방식이다.
+  # ENABLE_KIS_TRADING=true가 아니면 buy/sell/cancel은 실제 주문을 내지 않는다.
+  python main.py --order buy CODE QTY [PRICE] [timeframe] [memo...]  # 기본 차단
+  python main.py --order sell CODE QTY [PRICE] [memo...]             # 기본 차단
+  python main.py --order pending                                     # KIS 미체결 조회
+  python main.py --order cancel ORDER_NO CODE SIDE QTY [PRICE]      # 기본 차단
   python main.py --order history                                     # 최근 주문 이력
 
   python main.py --check             # 환경변수 검증만
@@ -118,7 +120,7 @@ def _run_order_cmd(args):
 
         memo = " ".join(args.order[idx:]) if len(args.order) > idx else ""
         price_label = f"{price:,}원 지정가" if price > 0 else "시장가"
-        console.print(f"[cyan]📤 매수 주문: {code} {qty:,}주 @{price_label} [{timeframe}][/cyan]")
+        console.print(f"[cyan]🧾 매수 기록 요청: {code} {qty:,}주 @{price_label} [{timeframe}][/cyan]")
 
         try:
             from services.trading_service import execute_buy, TradingError
@@ -156,7 +158,7 @@ def _run_order_cmd(args):
         memo = " ".join(args.order[idx:]) if len(args.order) > idx else ""
         qty_label = "전량" if qty == 0 else f"{qty:,}주"
         price_label = f"{price:,}원 지정가" if price > 0 else "시장가"
-        console.print(f"[cyan]📤 매도 주문: {code} {qty_label} @{price_label}[/cyan]")
+        console.print(f"[cyan]🧾 매도 기록 요청: {code} {qty_label} @{price_label}[/cyan]")
 
         try:
             from services.trading_service import execute_sell, TradingError
@@ -419,7 +421,7 @@ def main():
     )
     parser.add_argument(
         "--order", nargs="+", metavar="CMD",
-        help="주문 실행: buy CODE QTY [PRICE] [timeframe] [memo] | sell CODE QTY [PRICE] [memo] | pending | cancel ORDER_NO CODE SIDE QTY [PRICE] | history"
+        help="주문 관련: buy/sell/cancel은 ENABLE_KIS_TRADING=true가 아니면 차단 | pending | history"
     )
     parser.add_argument(
         "--tracker", action="store_true",

@@ -7,6 +7,10 @@
 # DB / 데이터
 data/database.sqlite3
 data/logs/
+data/kakao_tokens.json
+data/kakao_pkce.json
+*.session
+*.session-journal
 
 # Python
 __pycache__/
