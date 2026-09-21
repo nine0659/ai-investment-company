@@ -29,6 +29,19 @@ def record_nav(kis=None) -> dict | None:
         pnl_data = calculate_pnl(kis)
         if not pnl_data:
             logger.debug("[NAV] 보유 종목 없음 — NAV 기록 건너뜀")
+            # 2026-09-21 발견: 이 분기가 조용히(경보 없이) 스킵돼, 2026-08-14
+            # KIS 자동종료 사고로 실보유가 0개였던 5주 내내 job_runs엔 "success"만
+            # 찍히고 portfolio_nav엔 아무것도 안 쌓였다 — daily_health가 job_runs
+            # 상태만 보므로 이 공백을 잡지 못했다. 아래 "이상치 감지" 분기(오염 의심)엔
+            # 이미 경보가 있는데 이 분기만 없던 비대칭을 맞춘다.
+            try:
+                from clients.telegram_client import send_error_alert
+                send_error_alert(
+                    "[NAV] 오늘 보유 종목이 0개라 NAV 기록을 건너뜀 — "
+                    "실보유가 있다면 KIS 동기화/DB 상태 점검 필요"
+                )
+            except Exception:
+                pass
             return None
 
         # calculate_pnl 반환 필드: current_val(평가금액), invested(매입금액)

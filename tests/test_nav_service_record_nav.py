@@ -112,3 +112,22 @@ def test_record_nav_falls_back_to_old_formula_when_baseline_has_no_cost_data(mon
     assert result is not None
     # 폴백: total_pnl_pct(5.0) - baseline pnl_pct(10.0) = -5.0
     assert result["nav_pct_ytd"] == -5.0
+
+
+def test_record_nav_alerts_when_portfolio_empty(monkeypatch):
+    """2026-09-21 발견: 보유 종목이 0개면 record_nav가 경보 없이 조용히 스킵돼,
+    2026-08-14 KIS 자동종료 사고로 실보유가 0개였던 5주 내내 job_runs엔 "success"만
+    찍히고 portfolio_nav엔 아무것도 안 쌓였다(daily_health가 못 잡는 사각지대).
+    "오염 의심" 분기(_nav_data_suspicious)엔 이미 경보가 있으므로 이 분기도 맞춘다."""
+    import services.portfolio_service as portfolio_service
+    monkeypatch.setattr(portfolio_service, "calculate_pnl", lambda kis=None: [])
+
+    alerts = []
+    import clients.telegram_client as telegram_client
+    monkeypatch.setattr(telegram_client, "send_error_alert", lambda msg: alerts.append(msg))
+
+    result = nav_service.record_nav()
+
+    assert result is None
+    assert len(alerts) == 1
+    assert "보유 종목이 0개" in alerts[0]

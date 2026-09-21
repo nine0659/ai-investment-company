@@ -201,6 +201,14 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   파괴하지 않는다.** `scheduler.py`의 호출을 제거해 영구 비활성화(사용자 승인),
   함수 자체는 보존. `tests/test_portfolio_kis_sync.py::test_scheduler_never_calls_sync_from_kis`가
   재도입을 막는다. 새 자동화가 "이 사용자는 KIS로 실거래한다"고 가정하지 않도록 주의할 것.
+  **연쇄 사각지대(같은 날 발견, [버그]):** 위 사고로 보유가 0개였던 5주 동안
+  `services/nav_service.record_nav()`가 "보유 종목 없음"이면 경보 없이 조용히
+  스킵하도록 짜여 있어 `portfolio_nav`도 같은 기간 완전히 비었다. `job_runs`엔
+  매일 daily_nav "success"만 찍혀 daily_health도 못 잡는 사각지대였다(같은 함수의
+  "오염 의심" 분기엔 이미 `send_error_alert`가 있었는데 "보유 0개" 분기만
+  빠져 있던 비대칭). 경보 추가로 수정. `tests/test_nav_service_record_nav.py::test_record_nav_alerts_when_portfolio_empty`가
+  회귀 테스트. 교훈: 자동화의 한쪽 실패 분기에 경보를 달았다고 안심하지 말고
+  "성공도 실패도 아닌 조용한 스킵" 분기가 더 없는지 항상 같이 점검할 것.
 
 ## 장애 대응 런북
 
