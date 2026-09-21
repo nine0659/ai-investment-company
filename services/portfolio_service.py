@@ -259,6 +259,15 @@ def sync_from_kis(kis) -> dict:
     - DB엔 holding인데 실계좌엔 없음(시스템 밖에서 매도됨) → status='sold' 처리
       (실제 매도가를 알 수 없으므로 portfolio_history에 허구 수익률을 남기지 않는다)
     status='draft'인 행(CIO 검토 대기 등)은 건드리지 않는다.
+
+    ⚠️ 2026-09-21부터 scheduler.py에서 호출하지 않음 (영구 비활성화, 사용자 승인).
+    이 함수의 전제("KIS에 없으면 실계좌에서 매도됨")가 이 사용자에게는 성립하지
+    않는다 — 실거래는 KIS가 아니라 미래에셋증권을 통해 이뤄지고 KIS 잔고는 항상
+    0원이 정상이다. 그 결과 2026-08-14 daily_nav 실행에서 실보유 4종목이 전부
+    "실계좌에서 확인 안 됨"으로 오판·자동종료됐다(5주간 실보유 미인식 상태로
+    브리핑 발송). 함수 자체는 향후 KIS를 실제로 쓰게 될 가능성을 위해 남겨두되,
+    scheduler.py에서 다시 호출하려면 사용자 승인 필수
+    (tests/test_portfolio_kis_sync.py::test_scheduler_never_calls_sync_from_kis).
     """
     changes = {"new": [], "updated": [], "closed": []}
     try:

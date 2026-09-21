@@ -287,22 +287,17 @@ def job_daily_nav():
         record_job("daily_nav", "skipped", "KRX 비거래일")
         return
 
-    # KIS 실계좌 잔고를 portfolio_positions에 반영(읽기 전용) — NAV 계산이
-    # 이 테이블을 그대로 쓰므로, 동기화가 record_nav보다 먼저 돌아야 한다.
-    # 그동안 이 테이블은 수동 입력에 의존해 실계좌와 어긋나도 몰랐다(2026-08 발견).
-    try:
-        kis = _get_kis()
-        if kis:
-            from services.portfolio_service import sync_from_kis
-            changes = sync_from_kis(kis)
-            if changes.get("new") or changes.get("closed"):
-                send_error_alert(
-                    "[KIS 계좌 동기화] 실계좌 기준 반영: "
-                    f"신규 {len(changes['new'])}건 {changes['new']} | "
-                    f"종료 {len(changes['closed'])}건 {changes['closed']}"
-                )
-    except Exception as e:
-        logger.warning("KIS 계좌 동기화 실패 (NAV는 계속 진행): %s", e)
+    # KIS 실계좌 기준 보유종목 동기화는 영구 비활성화 (2026-09-21).
+    # 이 사용자의 실거래는 KIS가 아니라 미래에셋증권을 통해 이뤄지며 KIS 잔고는
+    # 항상 0원이 정상이다(2026-07-02 확립). "KIS에 없으면 실계좌에서 매도됨"이라는
+    # 그 동기화 로직의 전제 자체가 이 사용자에게는 구조적으로 성립하지 않아, 2026-08-14
+    # daily_nav 실행에서 실보유 4종목(현대차·삼성전자·삼성전기·SK하이닉스)을 전부
+    # status='sold'로 오판·자동종료했다 — 5주 넘게 시스템이 실보유를 모르는 채로
+    # 브리핑을 내보낸 사고. 드로다운 자동매도 금지와 같은 계열의 교훈: 신뢰할 수
+    # 없는 신호로 실보유 데이터를 자동으로 파괴하지 않는다. 함수 자체는
+    # services/portfolio_service.py에 남아있지만 여기서 호출하지 않는다
+    # (tests/test_drawdown_policy.py와 같은 방식으로 tests/test_portfolio_kis_sync.py가
+    # 재배선을 막는다). 재도입은 사용자 승인 필수.
 
     try:
         from services.nav_service import record_nav

@@ -186,6 +186,21 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   다른 실시간 조회 지점에도 있을 수 있으니 새로 추가할 때 이 구조를 기본으로
   고려할 것. `tests/test_reversal_leader_data.py`, `tests/test_market_data_client.py`가
   회귀 테스트.
+- **[설계문제] KIS 잔고 기준 자동종료가 이 사용자의 실보유를 5주간 지워버렸다
+  (2026-09-21 발견).** 2026-08 `services/portfolio_service.sync_from_kis()`가
+  "KIS 실계좌를 진실 소스로 삼아 없는 종목은 자동 매도 처리"하도록 추가돼
+  `job_daily_nav`(평일 16:10)에서 호출됐는데, 이 사용자의 실거래는 KIS가 아니라
+  **미래에셋증권**을 통해 이뤄지고 KIS 잔고는 항상 0원이 정상이라는 사실
+  (2026-07-02 확립, `services/portfolio_service.py`에도 원래 "portfolio_positions는
+  사람이 직접 갱신해왔다"는 주석이 있었음)과 정면으로 모순됐다. 결과: 2026-08-14
+  daily_nav 1회 실행에서 실보유 4종목(현대차·삼성전자·삼성전기·SK하이닉스) 전부가
+  "실계좌에서 확인 안 됨"으로 오판·자동종료(status='sold')됐고, portfolio_history엔
+  기록되지 않아(실제 매도가 아니므로) 발견이 더 늦어졌다 — 5주 넘게 이 "전속 투자
+  자문 AI"가 실보유를 전혀 모르는 채로 브리핑을 내보냄. 드로다운 자동청산
+  (2026-07-08)과 같은 교훈: **신뢰할 수 없는 신호로 실보유 데이터를 자동으로
+  파괴하지 않는다.** `scheduler.py`의 호출을 제거해 영구 비활성화(사용자 승인),
+  함수 자체는 보존. `tests/test_portfolio_kis_sync.py::test_scheduler_never_calls_sync_from_kis`가
+  재도입을 막는다. 새 자동화가 "이 사용자는 KIS로 실거래한다"고 가정하지 않도록 주의할 것.
 
 ## 장애 대응 런북
 
