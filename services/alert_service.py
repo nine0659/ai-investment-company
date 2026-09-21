@@ -580,6 +580,7 @@ REVERSAL_MIN_SWING  = 1.3   # 저점↔고점 대비 최소 반전폭 (%p)
 REVERSAL_TROUGH_MAX = -1.0  # 반등 인정을 위한 최소 저점 (이 이하로 빠졌어야 "반등"으로 인정)
 REVERSAL_PEAK_MIN   = 1.0   # 반락 인정을 위한 최소 고점
 REVERSAL_LEADERS    = [("005930", "삼성전자"), ("000660", "SK하이닉스")]
+REVERSAL_LEADER_MAX_CHANGE = 32.0  # 한국 개별종목 상하한(±30%) 대비 여유를 둔 이상치 컷
 
 _REVERSAL_SYSTEM = """당신은 시장 반전 원인 분석 전문가입니다.
 오늘 장중 KOSPI가 뚜렷한 트렌드 반전(저점·고점 대비 큰 반등 또는 반락)을 보였습니다.
@@ -593,6 +594,35 @@ _REVERSAL_SYSTEM = """당신은 시장 반전 원인 분석 전문가입니다.
 
 근거가 부족하면 "데이터 부족으로 명확한 원인 특정 어려움. 추가 모니터링 필요"라고 명시할 것.
 매매 신호 발생 아님 — 투자 판단을 위한 정보 제공."""
+
+
+def _get_reversal_leader_change(kis, code: str, name: str) -> float | None:
+    """반도체 대형주 1종목의 당일 등락률 조회 — KIS 1회 재시도 후 yfinance로 폴백.
+    두 소스 모두 실패하면 None을 반환해 호출부가 종목별로 "조회 실패"를 명시하게
+    한다(전체를 뭉뚱그려 "조회 실패"로 처리하면 한 종목만 실패해도 나머지 종목
+    데이터까지 조용히 묻힌다).
+    2026-09-21 09:30 발송분: 두 종목 모두 KIS 조회 실패로 "데이터 부재로 정확한
+    분석 어려움"만 나간 사고 이후 추가."""
+    import time as _time
+
+    for attempt in range(2):
+        pd = kis.get_stock_price(code, market="J")
+        chg = pd.get("change_pct")
+        if pd.get("price") and chg is not None and abs(chg) <= REVERSAL_LEADER_MAX_CHANGE:
+            return chg
+        if attempt == 0:
+            _time.sleep(1)
+
+    try:
+        from clients.market_data_client import fetch_kr_stock_realtime
+        fb = fetch_kr_stock_realtime(f"{code}.KS", max_daily_change=REVERSAL_LEADER_MAX_CHANGE)
+        if fb.get("change_pct") is not None:
+            logger.info("[반전감지] %s KIS 조회 실패 — yfinance 폴백 사용", name)
+            return fb["change_pct"]
+    except Exception as e:
+        logger.debug("[반전감지] %s yfinance 폴백 실패: %s", name, e)
+
+    return None
 
 
 def _fmt_reversal_news(news_data: dict) -> str:
@@ -665,16 +695,20 @@ def check_intraday_reversal(market_data: dict, news_data: dict, today: str) -> N
     direction = "반등" if is_rebound else "반락"
     swing     = swing_up if is_rebound else swing_down
 
-    # 반도체 대형주 동향 (반전 원인 추정 보조 데이터)
+    # 반도체 대형주 동향 (반전 원인 추정 보조 데이터) — 종목별로 KIS 실패 시
+    # yfinance로 폴백해, 일시적 KIS 장애가 "데이터 부재" 분석 한계로 그대로
+    # 새 나가지 않게 한다 (_get_reversal_leader_change 참조).
     try:
         from clients.kis_client import KISClient
         kis = KISClient()
         leader_lines = []
         for code, name in REVERSAL_LEADERS:
-            pd = kis.get_stock_price(code, market="J")
-            if pd.get("price"):
-                leader_lines.append(f"  {name}({code}): {pd.get('change_pct', 0):+.2f}%")
-        leaders_text = "\n".join(leader_lines) if leader_lines else "조회 실패"
+            chg = _get_reversal_leader_change(kis, code, name)
+            leader_lines.append(
+                f"  {name}({code}): {chg:+.2f}%" if chg is not None
+                else f"  {name}({code}): 조회 실패"
+            )
+        leaders_text = "\n".join(leader_lines)
     except Exception as e:
         logger.debug("[반전감지] 반도체 대형주 조회 실패: %s", e)
         leaders_text = "조회 실패"

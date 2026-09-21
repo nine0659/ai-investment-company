@@ -174,6 +174,18 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   사각지대였다. `graph/investment_graph.py`의 `_track_sequential()`로 같은 규약을
   순차 노드에도 다시 적용해 메웠다. `tests/test_track_sequential_wiring.py`가 회귀 테스트.
   앞으로 병렬 노드를 순차로(또는 그 반대로) 옮길 때마다 감지 로직도 같이 옮겨졌는지 확인할 것.
+- **[설계문제] 장중 반전 분석(`check_intraday_reversal`)의 반도체 대형주 동향이 KIS
+  단일 소스·종목 단위 실패 구분 없이 전부-아니면-전무로 짜여 있었다 (2026-09-21
+  09:30 발송분: KIS 조회 실패 → leaders_text가 통째로 "조회 실패" → LLM이 "반도체
+  대형주 등락 데이터 부재로 정확한 대형주 영향 분석 어려움"이라고만 서술).
+  `services/alert_service._get_reversal_leader_change()`로 분리해 ① KIS 1회
+  재시도 ② 실패 시 `clients/market_data_client.fetch_kr_stock_realtime()`(같은
+  파일의 `fetch_kr_index_realtime` 검증 패턴 재사용)로 yfinance 폴백 ③ 두 소스
+  모두 실패해도 종목별로 "조회 실패"를 명시(한 종목만 실패해도 나머지 종목 데이터가
+  묻히던 문제 동시 수정). 같은 전부-아니면-전무 패턴(단일 API·통짜 실패 문구)이
+  다른 실시간 조회 지점에도 있을 수 있으니 새로 추가할 때 이 구조를 기본으로
+  고려할 것. `tests/test_reversal_leader_data.py`, `tests/test_market_data_client.py`가
+  회귀 테스트.
 
 ## 장애 대응 런북
 

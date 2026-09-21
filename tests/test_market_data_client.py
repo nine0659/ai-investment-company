@@ -115,3 +115,33 @@ def test_parse_passes_normal_values():
     rows = _hist([350.0, 355.0])
     result = mdc._parse(_FakeTicker(rows))
     assert result and result["close"] == 355.0
+
+
+# ── fetch_kr_stock_realtime (2026-09-21 추가) ──────────────────────
+# 반전 원인 분석용 반도체 대형주 등락률이 KIS 장애로 "조회 실패"만
+# 나가던 사고 이후, KIS 폴백 소스로 추가된 개별종목 실시간 조회.
+
+def test_kr_stock_realtime_passes_normal_change(monkeypatch):
+    ticker = _MultiIntervalTicker(_hist([71000.0, 72500.0]), _hist([72500.0]))
+    monkeypatch.setattr(mdc.yf, "Ticker", lambda sym: ticker)
+    result = mdc.fetch_kr_stock_realtime("005930.KS")
+    assert result["price"] == 72500.0
+    assert result["change_pct"] == pytest.approx((72500.0 - 71000.0) / 71000.0 * 100, abs=0.01)
+
+
+def test_kr_stock_realtime_rejects_extreme_change(monkeypatch):
+    ticker = _MultiIntervalTicker(_hist([71000.0, 72500.0]), _hist([710000.0]))
+    monkeypatch.setattr(mdc.yf, "Ticker", lambda sym: ticker)
+    assert mdc.fetch_kr_stock_realtime("005930.KS") == {}
+
+
+def test_kr_stock_realtime_rejects_nan(monkeypatch):
+    ticker = _MultiIntervalTicker(_hist([71000.0, math.nan]), _hist([math.nan]))
+    monkeypatch.setattr(mdc.yf, "Ticker", lambda sym: ticker)
+    assert mdc.fetch_kr_stock_realtime("005930.KS") == {}
+
+
+def test_kr_stock_realtime_rejects_missing_history(monkeypatch):
+    ticker = _MultiIntervalTicker(_hist([71000.0]), _hist([71000.0]))
+    monkeypatch.setattr(mdc.yf, "Ticker", lambda sym: ticker)
+    assert mdc.fetch_kr_stock_realtime("005930.KS") == {}

@@ -201,6 +201,42 @@ def fetch_kr_index_realtime() -> dict:
     return result
 
 
+def fetch_kr_stock_realtime(symbol: str, max_daily_change: float = 32.0) -> dict:
+    """한국 개별 종목 장중 실시간 등락률 수집 — KIS 장애 시 대체 소스.
+    symbol: yfinance 심볼 (예: "005930.KS")
+    fetch_kr_index_realtime과 동일한 검증(전일종가는 일봉, 현재가는 5분봉,
+    NaN·변동률 상한 컷)을 개별 종목에 적용.
+    반환: {"price", "prev_close", "change_pct"} 또는 실패 시 {}
+    """
+    try:
+        daily = yf.Ticker(symbol).history(period="5d", interval="1d")
+        if len(daily) < 2:
+            return {}
+        prev_close = float(daily.iloc[-2]["Close"])
+
+        intra = yf.Ticker(symbol).history(period="1d", interval="5m")
+        raw_current = float(intra.iloc[-1]["Close"]) if not intra.empty else float(daily.iloc[-1]["Close"])
+
+        if math.isnan(raw_current) or math.isnan(prev_close) or prev_close <= 0:
+            return {}
+
+        chg_pct = (raw_current - prev_close) / prev_close * 100
+        if abs(chg_pct) > max_daily_change:
+            logger.warning(
+                "한국 개별종목 실시간 변동률 비정상 (%s): %.2f%% — 수집 제외", symbol, chg_pct
+            )
+            return {}
+
+        return {
+            "price":      round(raw_current, 2),
+            "prev_close": round(prev_close, 2),
+            "change_pct": round(chg_pct, 2),
+        }
+    except Exception as e:
+        logger.debug("한국 개별종목 실시간 조회 실패 (%s): %s", symbol, e)
+        return {}
+
+
 def fetch_futures_realtime() -> dict:
     """S&P500·나스닥 선물 오버나잇 실시간 수준 수집 (30분봉 최근 1일).
     장전 브리핑(08:20 KST)에서 야간 선물 방향 파악용.
