@@ -32,6 +32,7 @@
   [자유 텍스트]                     — AI 투자 어드바이저 대화
 """
 import logging
+import os
 import time
 import threading
 from datetime import datetime
@@ -45,6 +46,22 @@ logger = logging.getLogger(__name__)
 _BASE    = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 _KST     = ZoneInfo("Asia/Seoul")
 _RUNNING = threading.Event()
+
+# 웹 대시보드 — 보유종목 수정(매도가·부분매도 등)을 명령어 대신 폼으로 처리.
+# /api/portfolio/close가 exit_price·partial_qty를 이미 지원하는데 /holdings remove
+# 명령어는 못 받아 부분매도를 텔레그램에서 아예 기록할 수 없었다(2026-09-21 발견).
+# 새 명령어 문법을 만드는 대신 이미 있는 웹 폼으로 보내는 버튼을 붙인다.
+_WEB_BASE_URL = os.getenv("WEB_BASE_URL", "https://ai-investment-company.onrender.com")
+
+
+def _web_dashboard_buttons() -> list[list[dict]]:
+    return [[{"text": "📊 웹에서 보유종목 관리", "url": _WEB_BASE_URL}]]
+
+
+def _send_with_web_button(chat_id: str, text: str) -> None:
+    from clients.telegram_client import send_message_with_buttons
+    if not send_message_with_buttons(text, _web_dashboard_buttons(), chat_id):
+        _send(chat_id, text)  # 버튼 전송 실패 시 텍스트만이라도 전달
 
 # 허용된 chat_id (설정된 TELEGRAM_CHAT_ID만 수신)
 _ALLOWED = {TELEGRAM_CHAT_ID} if TELEGRAM_CHAT_ID else set()
@@ -304,9 +321,10 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
     # KIS 계좌 API와 무관 — 신규 매수 주문을 내지 않는다 (/buy 와 다름).
     if sub == "add":
         if len(parts) < 4:
-            _send(chat_id,
+            _send_with_web_button(chat_id,
                 "❌ 사용법: `/holdings add CODE QTY AVG_PRICE [회사명]`\n"
-                "예: `/holdings add 005930 91 233138 삼성전자`")
+                "예: `/holdings add 005930 91 233138 삼성전자`\n\n"
+                "숫자 입력이 번거로우면 아래 버튼으로 폼에서 등록할 수도 있습니다.")
             return
         code = parts[1].zfill(6)
         try:
@@ -319,7 +337,7 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
         try:
             from services.portfolio_service import add_position
             add_position(code, name, qty, avg_price, timeframe="mid")
-            _send(chat_id,
+            _send_with_web_button(chat_id,
                 f"✅ 보유종목 등록: *{name}*({code})\n"
                 f"{qty:,}주 | 평균단가 {avg_price:,.0f}원 | 매입금액 {qty * avg_price:,.0f}원")
         except Exception as e:
@@ -328,15 +346,25 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
         return
 
     # ── /holdings remove CODE ───────────────────────────────────────
+    # 이 명령어는 전량매도·평단가 기준(0% 수익률)으로만 기록한다 — 실제 매도가나
+    # 부분매도가 필요하면 웹 폼(/api/portfolio/close가 이미 지원)을 쓸 것.
     if sub == "remove":
         if len(parts) < 2:
-            _send(chat_id, "❌ 사용법: `/holdings remove CODE`\n예: `/holdings remove 005930`")
+            _send_with_web_button(chat_id,
+                "❌ 사용법: `/holdings remove CODE`\n예: `/holdings remove 005930`\n\n"
+                "⚠️ 이 명령어는 전량매도·평단가 기준으로만 기록됩니다(실현손익 0%).\n"
+                "실제 매도가나 부분매도를 정확히 남기려면 아래 버튼으로 웹에서 처리하세요.")
             return
         code = parts[1].zfill(6)
         try:
             from services.portfolio_service import close_position
             result = close_position(code)
-            _send(chat_id, f"{'✅ 보유종목 제거 완료' if result else '❌ 해당 종목 없음'}: `{code}`")
+            _send_with_web_button(
+                chat_id,
+                f"{'✅ 보유종목 제거 완료' if result else '❌ 해당 종목 없음'}: `{code}`\n"
+                + ("(전량매도·평단가 기준으로 기록 — 실제 매도가를 남기려면 웹에서 수정)"
+                   if result else "")
+            )
         except Exception as e:
             logger.error("[Bot] /holdings remove 오류: %s", e)
             _send(chat_id, f"❌ 제거 실패: {e}")
@@ -425,7 +453,7 @@ def _cmd_portfolio(chat_id: str, _args: str) -> None:
         except Exception:
             kis = None
         text = format_portfolio_for_briefing(kis)
-        _send(chat_id, text or "📋 포트폴리오 없음")
+        _send_with_web_button(chat_id, text or "📋 포트폴리오 없음")
     except Exception as e:
         logger.error("[Bot] /portfolio 오류: %s", e)
         _send(chat_id, f"❌ 포트폴리오 조회 오류: {e}")
