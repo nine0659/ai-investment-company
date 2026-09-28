@@ -231,6 +231,38 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   Render 환경변수 설정(WEB_PASSWORD 등록)이었다 — 이런 종류의 사고는 테스트로도
   못 잡는다(로컬 CI엔 Render 환경변수가 없어 이 실패 자체가 재현되지 않음).
   Render 대시보드의 배포 실패 알림(이메일 등)을 켜두는 걸 권장.
+- **[버그] DATABASE_URL이 psycopg(v3, "+psycopg") 드라이버 스킴이면 즉시 SQLite
+  폴백 (2026-09-29 발견).** Render의 DATABASE_URL이 `postgresql+psycopg://` 형식
+  이었는데 requirements.txt엔 psycopg2-binary(v2)만 있어 접속 시도 즉시
+  `No module named 'psycopg'` → SQLite 폴백 → 그 세션 보유종목 0건 오판 → NAV
+  기록 스킵 경보. 실제 Neon DB는 훼손되지 않았음(로컬에서 직접 접속해 실보유
+  4종목 `status='holding'` 온전함 확인) — 해당 실행 1회의 연결 실패였다.
+  `db/database.py`의 `_make_engine()`에서 create_engine에 넘기기 전 URL 스킴을
+  항상 순수 `postgresql://`로 정규화(드라이버 힌트 제거)해 기본값인 psycopg2를
+  강제하도록 수정. `tests/test_database_env.py::test_driver_scheme_normalized_to_plain_postgresql`가
+  회귀 테스트.
+- **[설계문제] daily_tracker(학습 루프의 핵심 잡)도 nav_service와 같은 "조용한
+  스킵" 사각지대를 갖고 있었다 (2026-09-29 코드 전수감사에서 발견).**
+  `services/recommendation_tracker_service.py`가 ① 추천 종목 DB 조회 실패
+  ② 추적 대상 0건, 두 분기 모두 경보 없이 조용히 빈 결과를 반환하도록 짜여
+  있었다 — `job_runs`엔 daily_tracker "success"만 찍혀 학습 루프(추천→추적→
+  recommendation_tracking→귀인분석 재개 기준)가 몇 주째 멈춰도 daily_health가
+  못 잡는 구조. `nav_service.record_nav()`의 "보유 0개" 사각지대(2f3738b, 같은 날
+  오전 발견)와 동형 구조 — 두 분기 모두 `send_error_alert` 추가.
+  `tests/test_recommendation_tracker_alerts.py`가 회귀 테스트.
+- **[메타 패턴] 위 두 건은 같은 유형의 사고가 하루에 두 번 발견된 사례다 — "한
+  분기에 경보를 달면 안심하고 넘어간다"는 습관 자체가 반복 사고의 원인이다.**
+  fix: 커밋이 전체 커밋의 46%(2026-09 기준)에 달하는 근본원인을 데이터로 보면
+  크게 세 클러스터로 나뉜다: ① 프롬프트 지시-정규식 파서 계약 불일치(예:
+  db5effc·245a633·7e599e3·4098d31 — 프롬프트 문구를 고치면 파서가 조용히
+  깨지는데 그 계약을 강제하는 장치가 없음), ② 조용한 스킵/사각지대(위 두 건,
+  8/14 KIS자동종료 5주 공백, daily_health 자체가 2주간 죽어있던 사고 — "실패도
+  성공도 아닌 분기"에 경보가 비대칭적으로만 존재), ③ 외부 데이터소스 전부-
+  아니면-전무(`clients/kis_client.py`의 조회 메서드 8개 중 폴백 있는 게 0개 —
+  `clients/market_data_client.py`의 KIS→yfinance 폴백 패턴이 실제로 쓰인 곳은
+  2026-09-21 반전분석 수정 단 한 곳뿐). 새 코드를 추가하거나 기존 분기를 고칠
+  때 이 세 패턴에 해당하는지 스스로 점검할 것 — 사고가 나야만 발견되는 게 아니라
+  구조적으로 반복되도록 짜여 있다는 뜻이다.
 
 ## 장애 대응 런북
 

@@ -1,0 +1,58 @@
+"""services/recommendation_tracker_service.py의 조용한 스킵 사각지대 회귀 테스트.
+
+2026-09-29 코드 감사에서 발견: daily_tracker(평일 16:20, 학습 루프의 핵심 잡 —
+추천→추적→recommendation_tracking→귀인분석 재개 기준)가 DB 조회 실패나 추적
+대상 0건일 때 경보 없이 조용히 스킵하도록 짜여 있었다. job_runs엔 "success"만
+찍혀 daily_health가 못 잡는 사각지대 — 같은 날 오전에 고친 nav_service.record_nav()의
+"보유 0개" 사각지대(2f3738b)와 동형 구조였다.
+"""
+import services.recommendation_tracker_service as tracker_service
+
+
+def test_get_active_recommendations_alerts_on_db_failure(monkeypatch):
+    def _raise_conn():
+        raise RuntimeError("DB 연결 실패 (테스트)")
+
+    monkeypatch.setattr(tracker_service, "get_conn", _raise_conn)
+
+    alerts = []
+    import clients.telegram_client as telegram_client
+    monkeypatch.setattr(telegram_client, "send_error_alert", lambda msg: alerts.append(msg))
+
+    result = tracker_service._get_active_recommendations()
+
+    assert result == []
+    assert len(alerts) == 1
+    assert "추천 종목 조회 실패" in alerts[0]
+
+
+def test_run_daily_tracker_alerts_when_no_active_recs(monkeypatch):
+    monkeypatch.setattr(tracker_service, "_get_active_recommendations", lambda: [])
+
+    alerts = []
+    import clients.telegram_client as telegram_client
+    monkeypatch.setattr(telegram_client, "send_error_alert", lambda msg: alerts.append(msg))
+
+    result = tracker_service.run_daily_tracker()
+
+    assert result == {"processed": 0, "target_hit": 0, "stop_hit": 0, "expired": 0}
+    assert len(alerts) == 1
+    assert "추적 대상 추천 종목이 0건" in alerts[0]
+
+
+def test_run_daily_tracker_no_alert_when_recs_present(monkeypatch):
+    # 정상 케이스(추적 대상이 있음)엔 이 경보가 오발동하면 안 된다.
+    monkeypatch.setattr(tracker_service, "_get_active_recommendations", lambda: [
+        {"id": 1, "date": "2026-09-01", "code": "005930", "name": "삼성전자",
+         "entry_price": 70000, "stop_price": 60000, "target_price": 90000},
+    ])
+    monkeypatch.setattr(tracker_service, "_get_today_tracking", lambda today: {1})  # 이미 처리됨
+
+    alerts = []
+    import clients.telegram_client as telegram_client
+    monkeypatch.setattr(telegram_client, "send_error_alert", lambda msg: alerts.append(msg))
+
+    result = tracker_service.run_daily_tracker()
+
+    assert result["processed"] == 0  # 이미 처리돼 skip
+    assert alerts == []

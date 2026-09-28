@@ -83,6 +83,15 @@ def _get_active_recommendations() -> list[dict]:
         ]
     except Exception as e:
         logger.warning("[Tracker] 추천 종목 조회 실패: %s", e)
+        # 2026-09-29 발견: 이 분기가 조용히(경보 없이) []를 반환하면 run_daily_tracker가
+        # "추적 대상 없음"과 구분 못 하고 그냥 넘어간다 — job_runs엔 daily_tracker
+        # "success"만 찍혀 daily_health가 못 잡는다. nav_service.record_nav()의
+        # "보유 0개" 사각지대(2f3738b)와 동형 구조라 같은 방식으로 경보를 단다.
+        try:
+            from clients.telegram_client import send_error_alert
+            send_error_alert(f"[Tracker] 추천 종목 조회 실패(DB) — 추적 스킵됨: {e}")
+        except Exception:
+            pass
         return []
 
 
@@ -186,6 +195,18 @@ def run_daily_tracker(kis=None) -> dict:
     recs  = _get_active_recommendations()
     if not recs:
         logger.info("[Tracker] 추적 대상 없음")
+        # 2026-09-29 발견: daily_tracker는 학습 루프의 핵심 잡(추천→추적→
+        # recommendation_tracking→귀인분석 재개 기준)인데, 이 분기가 조용히
+        # {"processed":0,...}만 반환하면 job_runs엔 "success"만 찍혀 daily_health가
+        # 학습 루프가 몇 주째 멈춰있어도 못 잡는다. nav_service.record_nav()의
+        # "보유 0개" 사각지대(2f3738b)와 같은 이유로 경보를 단다.
+        try:
+            from clients.telegram_client import send_error_alert
+            send_error_alert(
+                "[Tracker] 추적 대상 추천 종목이 0건 — 학습 루프(추천→추적) 중단 여부 점검 필요"
+            )
+        except Exception:
+            pass
         return {"processed": 0, "target_hit": 0, "stop_hit": 0, "expired": 0}
 
     already_done  = _get_today_tracking(today)
