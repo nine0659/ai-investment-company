@@ -48,3 +48,40 @@ def test_missing_url_falls_back_loudly(monkeypatch):
 
     assert eng.dialect.name == "sqlite"
     assert alerts and "DATABASE_URL" in alerts[0]
+
+
+def test_driver_scheme_normalized_to_plain_postgresql(monkeypatch):
+    # Neon 콘솔이 psycopg(v3, "+psycopg") 연결문자열을 주면 psycopg2-binary만 설치된
+    # 환경에서 "No module named 'psycopg'" → 즉시 SQLite 폴백 → 보유종목 0건 오판
+    # (2026-09-29 사고). create_engine에 넘어가는 URL은 항상 드라이버 스킴이 없는
+    # 순수 postgresql:// 여야 한다 (기본값인 psycopg2로 연결).
+    monkeypatch.delenv("DB_FORCE_SQLITE", raising=False)
+    captured = {}
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, *a, **kw):
+            return None
+
+    class _FakeEngine:
+        dialect = type("D", (), {"name": "postgresql"})()
+
+        def connect(self):
+            return _FakeConn()
+
+    def _fake_create_engine(url, **kwargs):
+        captured["url"] = url
+        return _FakeEngine()
+
+    monkeypatch.setattr(database, "create_engine", _fake_create_engine)
+
+    eng = database._make_engine("postgresql+psycopg://user:pw@db.invalid/prod")
+
+    assert captured["url"].startswith("postgresql://")
+    assert "+psycopg" not in captured["url"]
+    assert eng.dialect.name == "postgresql"

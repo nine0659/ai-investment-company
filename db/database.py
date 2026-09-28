@@ -74,6 +74,13 @@ def _make_engine(database_url: str = None) -> "Engine":
     if url:
         # Neon / Heroku: postgres:// → postgresql://
         url = url.replace("postgres://", "postgresql://", 1)
+        # 드라이버 스킴 정규화: Neon 콘솔이 psycopg(v3, "+psycopg") 연결문자열을 줄 때가
+        # 있는데 requirements.txt엔 psycopg2-binary(v2)만 있어 즉시 "No module named
+        # 'psycopg'"로 SQLite 폴백 → 보유종목 0건 오판 (2026-09-29 사고). 항상 설치돼
+        # 있는 psycopg2로 강제한다.
+        scheme, _, rest = url.partition("://")
+        if "+" in scheme:
+            url = f"postgresql://{rest}"
         logger.info("[DB] PostgreSQL 연결 시도: %s", url[:40] + "...")
         try:
             engine = create_engine(
