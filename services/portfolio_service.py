@@ -385,11 +385,11 @@ def calculate_pnl(kis=None) -> list[dict]:
         price_label = "평균단가(기준)"
         if kis:
             try:
-                data = kis.get_stock_price(p["code"], market=None)
+                data = kis.get_stock_price_with_fallback(p["code"], market=None)
                 cp = data.get("price", 0)
                 if cp:
                     current_price = cp
-                    price_label = "현재가"
+                    price_label = "현재가" if not data.get("price_source") else "현재가(대체소스)"
             except Exception as e:
                 logger.debug("현재가 조회 실패 (%s): %s", p["code"], e)
 

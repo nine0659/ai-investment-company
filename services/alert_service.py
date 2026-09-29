@@ -293,7 +293,7 @@ def check_watchlist_opportunity(today: str) -> None:
             if _already_sent(today, code, alert_key):
                 continue
             try:
-                pd      = kis.get_stock_price(code, market=None)
+                pd      = kis.get_stock_price_with_fallback(code, market=None)
                 price   = pd.get("price", 0)
                 chg_pct = pd.get("change_pct", 0) or 0
                 if not price:
@@ -512,7 +512,7 @@ def check_portfolio_risk(today: str, market_data: dict = None, news_data: dict =
         holdings = []
         for code, name, avg_price, quantity in rows:
             try:
-                pd = kis.get_stock_price(code, market=None)
+                pd = kis.get_stock_price_with_fallback(code, market=None)
                 price = pd.get("price", 0)
                 chg_pct = pd.get("change_pct", 0) or 0
             except Exception as e:

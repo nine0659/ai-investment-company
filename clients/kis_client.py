@@ -289,6 +289,35 @@ class KISClient:
                 logger.warning("KIS 주가 조회 실패 (%s/%s): %s", stock_code, m, e)
         return {}
 
+    def get_stock_price_with_fallback(self, stock_code: str, market: str | None = None) -> dict:
+        """get_stock_price 실패 시 yfinance로 폴백 (2026-09-29 추가).
+
+        8개 KIS 조회 메서드 중 폴백이 있는 게 하나도 없어 KIS 장애 시 포트폴리오
+        평가금액·시장감시 알림이 통째로 죽던 문제(전수감사에서 발견) 중 "가격류"만
+        범위로 잡아 대응한다. PER/PBR 등 KIS 전용 필드는 폴백에 없다 — yfinance는
+        가격·등락률만 대체 가능하고 그 이상은 원천적으로 불가능. 등락률순위·수급
+        순위류(get_fluctuation_rank 등)는 yfinance에 동등한 데이터가 없어 대상 아님.
+        """
+        data = self.get_stock_price(stock_code, market=market)
+        if data.get("price"):
+            return data
+        try:
+            from clients.market_data_client import fetch_kr_stock_realtime
+            for suffix in (".KS", ".KQ"):
+                fb = fetch_kr_stock_realtime(f"{stock_code}{suffix}")
+                if fb.get("price"):
+                    logger.info(
+                        "[KIS폴백] %s 가격 조회를 yfinance로 대체 (%s)", stock_code, suffix
+                    )
+                    return {
+                        "price": fb["price"],
+                        "change_pct": fb.get("change_pct", 0),
+                        "price_source": "yfinance_fallback",
+                    }
+        except Exception as e:
+            logger.debug("[KIS폴백] yfinance 대체 조회 실패 (%s): %s", stock_code, e)
+        return data
+
     # ── 계좌 유틸 ─────────────────────────────────────────────────
 
     def _account(self) -> tuple[str, str]:

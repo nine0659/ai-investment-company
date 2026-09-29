@@ -263,6 +263,16 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   2026-09-21 반전분석 수정 단 한 곳뿐). 새 코드를 추가하거나 기존 분기를 고칠
   때 이 세 패턴에 해당하는지 스스로 점검할 것 — 사고가 나야만 발견되는 게 아니라
   구조적으로 반복되도록 짜여 있다는 뜻이다.
+- **[개선, 2026-09-29] 위 메타 패턴의 클러스터 ③(KIS 단일장애점) 중 "가격류"만
+  범위로 잡아 폴백 확대.** `clients/kis_client.py`에 `get_stock_price_with_fallback()`
+  추가 — KIS 실패 시 `market_data_client.fetch_kr_stock_realtime()`(9/21 반전분석
+  수정에 쓰인 것과 같은 KIS→yfinance 패턴)으로 가격·등락률만 대체, PER/PBR 등
+  KIS 전용 필드는 대체 불가(범위 밖). `portfolio_service.calculate_pnl()`(NAV·
+  보유평가 전반의 기반)과 `alert_service.py`의 시장감시·위험관리 현재가 조회
+  2곳에 적용. 등락률순위·수급순위류(`get_fluctuation_rank` 등 나머지 KIS 메서드)는
+  yfinance에 동등 데이터가 없어 대상에서 제외 — 사용자 승인(사고 비용 대비 낮은
+  리스크만 우선 처리, 나머지는 필요시 별도 요청). `tests/test_kis_client_price_fallback.py`가
+  회귀 테스트.
 
 ## 장애 대응 런북
 
