@@ -126,7 +126,9 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
                     "action":           key,
                     "code":             parts[1],
                     "name":             parts[2],
-                    "size_change_pct":  float(parts[3]) if len(parts) > 3 else 0,
+                    # exit 줄은 프롬프트가 이 칸을 빈 값으로 지시한다(exit|코드|종목명||이유).
+                    # 빈 문자열을 float()하면 예외→조용히 무시돼 청산 결정이 통째로 버려졌다.
+                    "size_change_pct":  float(parts[3]) if len(parts) > 3 and parts[3] else 0,
                     "reason":           parts[4] if len(parts) > 4 else "",
                 })
             elif key == "hold" and len(parts) >= 3:
