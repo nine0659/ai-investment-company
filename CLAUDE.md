@@ -273,6 +273,24 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   yfinance에 동등 데이터가 없어 대상에서 제외 — 사용자 승인(사고 비용 대비 낮은
   리스크만 우선 처리, 나머지는 필요시 별도 요청). `tests/test_kis_client_price_fallback.py`가
   회귀 테스트.
+- **[개선, 2026-09-29] 메타 패턴 대응 4종 — 구조로 막는 방식으로 전환.**
+  ① **배포 실패 감지**: `/api/status`가 `commit`(RENDER_GIT_COMMIT)을 노출하고
+  `.github/workflows/deploy-check.yml`(push 시 + 평일 07:30)이 `scripts/check_deploy.py`로
+  master HEAD와 비교, 20분 대기 후에도 다르면 텔레그램 경보. 절대원칙 1번의 수동
+  curl 확인을 자동화한 것 — 단 `commit` 필드가 아직 없던 첫 배포 직후엔 일시 불일치가
+  정상. `tests/test_check_deploy.py`. ② **`job_runs.status='empty'`**: 예외는 없었으나
+  산출 0건인 잡(daily_nav의 NAV 0건, daily_tracker의 처리 0건)은 success 대신 empty로
+  기록하고 daily_health가 경보 — 분기마다 경보를 따로 다는 대신 공통 규약. 새 잡을
+  추가할 때 "0건이면 empty"를 적용할 것. ③ **프롬프트↔파서 계약 테스트**
+  (`tests/test_ceo_prompt_parser_contract.py`, `test_weekly_picks_prompt_parser_contract.py`):
+  프롬프트에서 스키마를 직접 추출해 파서와 대조. 도입 즉시 **실버그 발견 — CEO `exit`
+  결정이 프롬프트의 빈 비중 칸(`exit|코드|종목명||이유`) 때문에 `float('')` 예외→`except: pass`로
+  항상 조용히 버려지고 있었다**(decision_guard 고신뢰도 액션·생애주기 반영 무력화).
+  프롬프트의 출력 스키마를 바꾸면 이 테스트의 `_EXPECTED_FIELDS`와 파서를 함께 갱신할 것.
+  ④ **보유 원장 신선도**: 실거래가 미래에셋이라 원장은 사람이 맞춘다. `/holdings confirm`
+  (add/remove도 확인으로 간주)이 `holdings.confirmed_at`을 기록, 35일 넘게 확인이 없으면
+  월요일 헬스체크에 넛지(최초 실행은 조용히 기준점만 기록). `tests/test_holdings_freshness.py`.
+  KIS 나머지 조회(순위·수급류) yfinance 폴백은 동등 데이터가 없어 범위 밖 유지.
 
 ## 장애 대응 런북
 
