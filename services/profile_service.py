@@ -63,6 +63,71 @@ def set_profile_field(field: str, value: str) -> bool:
         return False
 
 
+_HOLDINGS_CONFIRMED_KEY = "holdings.confirmed_at"
+HOLDINGS_STALE_DAYS = 35
+
+
+def confirm_holdings() -> bool:
+    """사용자가 '보유 원장이 실제와 맞다'고 확인한 시각을 기록.
+
+    portfolio_positions.updated_at은 position_lifecycle_service가 자동으로도 갱신해서
+    사용자 확인 시점의 근거가 못 된다. 실거래가 미래에셋이라 원장은 사람이 직접
+    맞춰야 하고, 안 맞으면 조언 전체가 틀린다(2026-08-14 5주 공백 사고).
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    return set_setting_raw(_HOLDINGS_CONFIRMED_KEY, today)
+
+
+def set_setting_raw(key: str, value: str) -> bool:
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO system_settings (key, value) VALUES (:k, :v) "
+                    "ON CONFLICT (key) DO UPDATE SET value=:v, updated_at=CURRENT_TIMESTAMP"
+                ),
+                {"k": key, "v": value},
+            )
+        return True
+    except Exception as e:
+        logger.error("[설정] 저장 실패 (%s): %s", key, e)
+        return False
+
+
+def get_holdings_stale_warning(today=None) -> str:
+    """보유 원장 확인이 오래됐으면 경고 문구, 아니면 빈 문자열.
+
+    최초 실행(기록 없음)은 오늘을 기준점으로 조용히 기록한다 — 알 수 없는 상태에
+    경보를 울리지 않고, 이후 HOLDINGS_STALE_DAYS일 넘게 확인이 없을 때만 알린다.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    today = today or datetime.now(ZoneInfo("Asia/Seoul")).date()
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT value FROM system_settings WHERE key=:k"),
+                {"k": _HOLDINGS_CONFIRMED_KEY},
+            ).fetchone()
+    except Exception as e:
+        logger.warning("[보유원장] 확인일 조회 실패: %s", e)
+        return ""
+    if not row or not row[0]:
+        set_setting_raw(_HOLDINGS_CONFIRMED_KEY, today.strftime("%Y-%m-%d"))
+        return ""
+    try:
+        last = datetime.strptime(row[0], "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    age = (today - last).days
+    if age > HOLDINGS_STALE_DAYS:
+        return (f"📒 보유 원장이 {age}일째 확인되지 않았습니다 — 미래에셋 실보유와 다르면 "
+                f"모든 조언이 틀립니다. 맞으면 /holdings confirm, 다르면 /holdings add·remove로 반영하세요.")
+    return ""
+
+
 def _format_holdings(kis=None) -> str:
     """실보유 포트폴리오 실시간 평가 텍스트. 보유 없으면 그 사실을 명시."""
     try:

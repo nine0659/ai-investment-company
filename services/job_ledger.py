@@ -79,7 +79,7 @@ def _has_trace(conn, date_str: str, job_name: str) -> bool:
     """해당 날짜에 잡 실행 흔적(job_runs 성공/스킵 또는 report_claims)이 있는가."""
     row = conn.execute(
         text("SELECT 1 FROM job_runs WHERE date=:d AND job_name=:j "
-             "AND status IN ('success','skipped') LIMIT 1"),
+             "AND status IN ('success','skipped','empty') LIMIT 1"),
         {"d": date_str, "j": job_name},
     ).fetchone()
     if row:
@@ -113,6 +113,14 @@ def get_yesterday_problems() -> list[str]:
             ).fetchall()
             for job_name, detail in rows:
                 problems.append(f"⚠️ {job_name}: 실행 실패 — {(detail or '')[:120]}")
+            # 예외는 없었지만 산출이 0건인 "조용한 스킵" — 실행 흔적은 있어도 일은 안 한 것
+            empty_rows = conn.execute(
+                text("SELECT job_name, detail FROM job_runs "
+                     "WHERE date=:d AND status='empty' AND job_name NOT LIKE 'branch:%'"),
+                {"d": date_str},
+            ).fetchall()
+            for job_name, detail in empty_rows:
+                problems.append(f"⚠️ {job_name}: 실행은 됐으나 산출 0건 — {(detail or '')[:120]}")
     except Exception as e:
         logger.warning("[잡대장] 헬스체크 조회 실패: %s", e)
         problems.append(f"⚠️ 헬스체크 자체가 DB 조회에 실패: {str(e)[:120]}")
@@ -151,6 +159,15 @@ def run_daily_health_check() -> None:
     성립하려면 이 헬스체크 자체가 매일 돌아야 하므로, 헬스체크 실행 기록도 남긴다.
     """
     problems = get_yesterday_problems()
+    # 보유 원장 신선도 — 매일 울리면 피로하므로 월요일에만(주 1회 넛지)
+    if datetime.now(_KST).weekday() == 0:
+        try:
+            from services.profile_service import get_holdings_stale_warning
+            warning = get_holdings_stale_warning()
+            if warning:
+                problems.append(warning)
+        except Exception as e:
+            logger.warning("[헬스체크] 보유원장 신선도 확인 실패: %s", e)
     record_job("daily_health", "success", f"문제 {len(problems)}건")
     if not problems:
         logger.info("[헬스체크] 어제 예정 잡 모두 정상")

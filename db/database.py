@@ -439,7 +439,7 @@ job_runs = Table("job_runs", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
     Column("date",       Text,    nullable=False),   # YYYY-MM-DD (KST)
     Column("job_name",   Text,    nullable=False),   # daily_nav, weekly_strategy ...
-    Column("status",     Text,    nullable=False),   # success | fail | skipped
+    Column("status",     Text,    nullable=False),   # success | fail | skipped | empty(실행됐으나 산출 0건)
     Column("detail",     Text),                      # 실패 사유·스킵 사유
     Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
 )

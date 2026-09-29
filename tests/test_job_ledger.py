@@ -31,6 +31,39 @@ def test_saturday_expects_nothing():
     assert job_ledger._EXPECTED_BY_WEEKDAY[5] == []
 
 
+def test_empty_status_is_flagged_by_health_check(monkeypatch):
+    """예외 없이 산출 0건인 잡('조용한 스킵')은 흔적은 있어도 헬스체크가 경보해야 한다.
+
+    2026-09-21(NAV 5주 공백)·09-29(tracker) 사고: job_runs엔 success만 찍혀 못 잡았다.
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import text
+    from db.database import get_conn, init_db
+    init_db()
+
+    yesterday = datetime.now(job_ledger._KST) - timedelta(days=1)
+    date_str = yesterday.strftime("%Y-%m-%d")
+    monkeypatch.setitem(job_ledger._EXPECTED_BY_WEEKDAY, yesterday.weekday(), ["empty_probe_job"])
+    with get_conn() as conn:
+        conn.execute(
+            text("INSERT INTO job_runs (date, job_name, status, detail) "
+                 "VALUES (:d, 'empty_probe_job', 'empty', 'NAV 기록 0건')"),
+            {"d": date_str},
+        )
+    problems = job_ledger.get_yesterday_problems()
+    assert any("empty_probe_job" in p and "산출 0건" in p for p in problems)
+    # 흔적으로는 인정 — '실행 흔적 없음'과 중복 경보하지 않는다
+    assert not any("실행 흔적 없음" in p and "empty_probe_job" in p for p in problems)
+
+
+def test_scheduler_records_empty_when_nav_or_tracker_produce_nothing():
+    """daily_nav/daily_tracker가 산출 0건을 success로 기록하면 사각지대가 재발한다."""
+    import inspect
+    import scheduler
+    assert '"daily_nav", "empty"' in inspect.getsource(scheduler.job_daily_nav)
+    assert '"daily_tracker", "empty"' in inspect.getsource(scheduler.job_daily_tracker)
+
+
 def test_has_trace_today_roundtrip():
     """GH 백업 실행기의 중복 방지 가드 — 기록 전 False, 기록 후 True."""
     import uuid

@@ -10,6 +10,7 @@
   /holdings                         — 보유 종목 현황
   /holdings add CODE QTY AVG_PRICE [회사명] — 기존 보유종목 수동 등록 (매수 주문 아님)
   /holdings remove CODE             — 등록된 보유종목 제거
+  /holdings confirm                 — 보유 원장이 실보유와 일치함을 확인(월요일 넛지 리셋)
   /portfolio                        — 포트폴리오 손익 현황
   /watchlist                        — 관심종목 목록
   /watchlist add CODE 회사명 [목표가] — 관심종목 추가
@@ -337,6 +338,8 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
         try:
             from services.portfolio_service import add_position
             add_position(code, name, qty, avg_price, timeframe="mid")
+            from services.profile_service import confirm_holdings
+            confirm_holdings()  # 사용자가 원장을 직접 손봤다 = 확인한 것
             _send_with_web_button(chat_id,
                 f"✅ 보유종목 등록: *{name}*({code})\n"
                 f"{qty:,}주 | 평균단가 {avg_price:,.0f}원 | 매입금액 {qty * avg_price:,.0f}원")
@@ -359,6 +362,9 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
         try:
             from services.portfolio_service import close_position
             result = close_position(code)
+            if result:
+                from services.profile_service import confirm_holdings
+                confirm_holdings()
             _send_with_web_button(
                 chat_id,
                 f"{'✅ 보유종목 제거 완료' if result else '❌ 해당 종목 없음'}: `{code}`\n"
@@ -368,6 +374,14 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
         except Exception as e:
             logger.error("[Bot] /holdings remove 오류: %s", e)
             _send(chat_id, f"❌ 제거 실패: {e}")
+        return
+
+    # ── /holdings confirm ───────────────────────────────────────────
+    # 등록된 보유 원장이 미래에셋 실보유와 일치함을 확인 — 신선도 넛지(daily_health)를 리셋.
+    if sub == "confirm":
+        from services.profile_service import confirm_holdings
+        ok = confirm_holdings()
+        _send(chat_id, "✅ 보유 원장 확인 기록 완료" if ok else "❌ 확인 기록 실패 (DB 점검 필요)")
         return
 
     # ── 기본: 잔고 조회 ──────────────────────────────────────────

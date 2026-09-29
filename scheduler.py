@@ -304,7 +304,11 @@ def job_daily_nav():
         nav = record_nav(_get_kis())
         if nav:
             logger.info("NAV 기록 완료: 총자산 %s원", f"{nav.get('total_value', 0):,}")
-        record_job("daily_nav", "success")
+            record_job("daily_nav", "success")
+        else:
+            # record_nav는 보유 0개·데이터가드·예외 모두 None을 돌려준다. 예전엔 이 경우도
+            # "success"로 찍혀 5주간 NAV 공백을 daily_health가 못 잡았다(2026-09-21).
+            record_job("daily_nav", "empty", "NAV 기록 0건 (보유 0개/데이터가드/오류)")
     except Exception as e:
         logger.warning("NAV 기록 실패 (무시): %s", e)
         record_job("daily_nav", "fail", str(e))
@@ -351,7 +355,11 @@ def job_daily_tracker():
             stats.get("processed", 0), stats.get("target_hit", 0),
             stats.get("stop_hit", 0), stats.get("expired", 0), verified,
         )
-        record_job("daily_tracker", "success")
+        if stats.get("processed", 0) > 0:
+            record_job("daily_tracker", "success", f"처리 {stats.get('processed', 0)}건")
+        else:
+            # 추적 대상 0건/조회 실패도 예전엔 "success"로 찍혀 학습 루프 정지를 못 잡았다.
+            record_job("daily_tracker", "empty", "추적 처리 0건")
     except Exception as e:
         logger.warning("성과 추적 실패 (무시): %s", e)
         record_job("daily_tracker", "fail", str(e))
