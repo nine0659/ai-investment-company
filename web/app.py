@@ -163,6 +163,9 @@ async def status():
         "market": "open" if market_open else "closed",
         "trading_day": is_trading_day,
         "holiday": holiday or None,
+        # Render가 런타임에 주입하는 배포 커밋 — scripts/check_deploy.py가 저장소 최신과 비교해
+        # 배포 실패(옛 컨테이너 지속 운영)를 감지한다.
+        "commit": os.getenv("RENDER_GIT_COMMIT") or None,
     }
 
 

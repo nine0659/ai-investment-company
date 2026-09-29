@@ -1,0 +1,40 @@
+name: Deploy Check
+
+# Render 배포 실패 감지 (2026-09-21 사고 재발 방지).
+# Render는 배포가 실패하면 옛 컨테이너를 계속 서비스하고 아무 경보도 없다.
+# push 후 운영 /api/status의 commit이 저장소 최신과 일치하는지 확인하고,
+# 최대 20분 기다려도 다르면 텔레그램 경보. 평일 아침에도 1회 점검한다.
+# (스크립트 파일로 분리 — python -c 인라인 금지, tests/test_workflows.py 참조)
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '30 22 * * 0-4'   # 07:30 KST 월-금
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-check
+  cancel-in-progress: true   # 연속 push 시 최신 커밋 기준으로만 검사
+
+jobs:
+  check:
+    name: 운영 배포 커밋 확인
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master   # 스케줄/수동 실행에서도 항상 master 최신 SHA 기준
+
+      - name: Compare deployed commit with master HEAD
+        env:
+          RENDER_URL:         ${{ secrets.RENDER_URL }}
+          WAIT_MINUTES:       "20"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          EXPECTED_SHA=$(git rev-parse HEAD) python scripts/check_deploy.py
