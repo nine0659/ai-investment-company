@@ -77,10 +77,13 @@ def _make_engine(database_url: str = None) -> "Engine":
         # 드라이버 스킴 정규화: Neon 콘솔이 psycopg(v3, "+psycopg") 연결문자열을 줄 때가
         # 있는데 requirements.txt엔 psycopg2-binary(v2)만 있어 즉시 "No module named
         # 'psycopg'"로 SQLite 폴백 → 보유종목 0건 오판 (2026-09-29 사고). 항상 설치돼
-        # 있는 psycopg2로 강제한다.
+        # 있는 psycopg2로 강제한다. ⚠️ 순수 "postgresql://"로 두면 안 된다:
+        # SQLAlchemy 2.1부터 기본 드라이버가 psycopg(v3)로 바뀌어(requirements가
+        # sqlalchemy>=2.0.0이라 GH Actions·Render 재빌드 시 2.1.x가 깔림) 같은 오류가
+        # 재발한다 (2026-09-29 밤 GH 백업 실행에서 확인). 드라이버를 명시한다.
         scheme, _, rest = url.partition("://")
-        if "+" in scheme:
-            url = f"postgresql://{rest}"
+        if scheme.startswith("postgresql"):
+            url = f"postgresql+psycopg2://{rest}"
         logger.info("[DB] PostgreSQL 연결 시도: %s", url[:40] + "...")
         try:
             engine = create_engine(

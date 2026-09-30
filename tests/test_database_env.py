@@ -82,6 +82,10 @@ def test_driver_scheme_normalized_to_plain_postgresql(monkeypatch):
 
     eng = database._make_engine("postgresql+psycopg://user:pw@db.invalid/prod")
 
-    assert captured["url"].startswith("postgresql://")
-    assert "+psycopg" not in captured["url"]
+    assert captured["url"].startswith("postgresql+psycopg2://")
     assert eng.dialect.name == "postgresql"
+
+    # 순수 스킴도 드라이버를 명시해야 한다 — SQLAlchemy 2.1+는 기본이 psycopg(v3)다.
+    for raw in ("postgresql://u:p@h/db", "postgres://u:p@h/db"):
+        database._make_engine(raw)
+        assert captured["url"] == "postgresql+psycopg2://u:p@h/db"
