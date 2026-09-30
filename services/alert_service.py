@@ -489,6 +489,51 @@ def _send_core_holding_analysis(
     return _send_telegram(f"🚨 *핵심 보유종목 급{direction} 분석*\n\n{analysis}")
 
 
+def _stop_tier_already_sent(code: str, tier: float, days: int = 60) -> bool:
+    """같은 종목·같은 손실 구간의 손절 권고가 최근 days일 내 이미 나갔는지 (날짜 무관)."""
+    try:
+        from datetime import timedelta
+        since = (datetime.now(_KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT 1 FROM price_alert_log WHERE code=:c AND type=:t AND date>=:d LIMIT 1"),
+                {"c": code, "t": f"stop_advice_{int(abs(tier))}", "d": since},
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _send_stop_advice(today: str, h: dict, pnl: float) -> None:
+    """평단 대비 누적손실이 손절선(-15%)을 넘은 보유종목에 결론·수량이 담긴 권고 발송.
+
+    check_portfolio_risk의 기존 조건('하루 -7%' 급락)은 서서히 빠지는 종목을 못 잡았다.
+    구간(-15/-20/-25/-30%)을 새로 넘을 때마다 1회만 발송한다.
+    """
+    from services.stop_advice import build_advice, format_stop_alert, loss_tier
+    tier = loss_tier(pnl)
+    advice = build_advice(h["quantity"], h["avg_price"], h["price"])
+    if tier is None or advice is None:
+        return
+    if _stop_tier_already_sent(h["code"], tier):
+        return
+    thesis_note = ""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                text("SELECT falsification FROM portfolio_positions "
+                     "WHERE code=:c AND status='holding'"), {"c": h["code"]},
+            ).fetchone()
+        if row and row[0]:
+            thesis_note = f"논지 무효화 조건(투자 당시 기록): {str(row[0])[:120]} — 해당되면 전량 정리"
+    except Exception:
+        pass
+    msg = format_stop_alert(h["name"], h["code"], h["quantity"], h["avg_price"],
+                            h["price"], advice, thesis_note)
+    if _send_telegram(msg):
+        _mark_sent(today, h["code"], f"stop_advice_{int(abs(tier))}")
+
+
 def check_portfolio_risk(today: str, market_data: dict = None, news_data: dict = None) -> None:
     """보유 종목 단일일 급락 감지 + 핵심 비중 종목 급변동 원인·대응 분석."""
     try:
@@ -534,6 +579,12 @@ def check_portfolio_risk(today: str, market_data: dict = None, news_data: dict =
 
             weight = round(price * h["quantity"] / total_val * 100, 1) if total_val else 0
             pnl = (price - avg_price) / avg_price * 100 if avg_price else 0
+
+            # 평단 대비 누적손실이 손절선을 넘었으면 (하루 등락과 무관) 권고 발송
+            try:
+                _send_stop_advice(today, h, pnl)
+            except Exception as e:
+                logger.warning("[위험] 손절 권고 실패 (%s): %s", code, e)
 
             is_core    = weight >= CORE_HOLDING_WEIGHT_MIN
             core_swing = is_core and abs(chg_pct) >= CORE_HOLDING_MOVE_MIN

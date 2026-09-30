@@ -170,6 +170,34 @@ def _send_status_alert(
         price_ref = target_price if status == "target_hit" else stop_price
         price_str = f"{price_ref:,.0f}원" if price_ref else "-"
 
+        if status == "stop_hit":
+            # 실제 보유 중이면 수량 기반 권고(결론·행동 우선), 미보유면 신규진입 금지 안내
+            with get_conn() as conn:
+                pos = conn.execute(
+                    text("SELECT quantity, avg_price FROM portfolio_positions "
+                         "WHERE code=:c AND status='holding' AND quantity > 0"),
+                    {"c": code},
+                ).fetchone()
+            from clients.telegram_client import send_message
+            from services.stop_advice import build_advice, format_stop_alert
+            if pos:
+                adv = build_advice(pos[0], pos[1], current_price)
+                if adv:
+                    send_message(format_stop_alert(name, code, pos[0], pos[1], current_price, adv))
+                    logger.info("[Tracker] 손절 권고(보유) 발송: %s(%s) %+.2f%%", name, code, return_pct)
+                    return
+            else:
+                send_message(
+                    f"🛑 *[추천 손절선 도달] {name}({code})  {return_pct:+.1f}%*\n\n"
+                    f"▶ 결론: 추천 진입가 {entry_price:,.0f}원 → 현재 {current_price:,.0f}원, "
+                    f"손절선({price_str})을 이탈했습니다. 이 추천은 종료합니다.\n"
+                    f"▶ 행동: 미보유 종목이므로 *신규 진입 금지*. 새 근거가 나오기 전에는 "
+                    f"반등해도 재진입하지 마세요.\n"
+                    f"추천일 {rec_date} ({days_held}일 경과)"
+                )
+                logger.info("[Tracker] 손절 안내(미보유) 발송: %s(%s) %+.2f%%", name, code, return_pct)
+                return
+
         msg = (
             f"{emoji} *[추천 추적] {label}*\n\n"
             f"종목: {name} ({code})\n"
