@@ -225,6 +225,9 @@ def run_portfolio_monitor(today: str, kis: KISClient) -> tuple[list[str], list[s
 
 # ── 추적 종목 기준가격 도달 통보 ───────────────────────────────────
 
+from services.recommendation_tracker_service import basis_line  # noqa: E402
+
+
 def run_ai_rec_monitor(today: str, kis: KISClient) -> tuple[list[str], list[str]]:
     """추적 중인 종목의 리스크/수익 기준선 도달 통보 (투자 검토 참고 자료)."""
     try:
@@ -258,7 +261,7 @@ def run_ai_rec_monitor(today: str, kis: KISClient) -> tuple[list[str], list[str]
                     msg = (
                         f"📋 *[추적 중] 리스크 기준선 도달* {name}({code})\n"
                         f"  현재: {price:,}원  |  리스크 기준선: {stop_price:,.0f}원\n"
-                        f"  진입 기준가: {entry_price:,.0f}원  |  등락: {ret_pct:+.1f}%\n"
+                        f"{basis_line(code, price, entry_price)}\n"
                         f"  → 투자 재검토 필요 (장마감 후 트래커에서 종합 확인)"
                     )
                     stop_alerts.append(msg)
@@ -271,7 +274,7 @@ def run_ai_rec_monitor(today: str, kis: KISClient) -> tuple[list[str], list[str]
                     msg = (
                         f"📋 *[추적 중] 수익 기준선 도달* {name}({code})\n"
                         f"  현재: {price:,}원  |  수익 기준선: {target_price:,.0f}원\n"
-                        f"  진입 기준가: {entry_price:,.0f}원  |  등락: {ret_pct:+.1f}%\n"
+                        f"{basis_line(code, price, entry_price)}\n"
                         f"  → 포트폴리오 검토 구간 진입 (장마감 후 트래커에서 종합 확인)"
                     )
                     target_alerts.append(msg)

@@ -88,3 +88,17 @@ def test_tracker_report_labels_virtual_and_held(monkeypatch):
     out = tracker_service.format_tracker_report()
     assert "가상 성과" in out
     assert "실보유" in out
+
+
+def test_basis_line_held_uses_real_avg(monkeypatch):
+    monkeypatch.setattr(tracker_service, "get_held_position", lambda code: (19, 1_935_965.0))
+    out = tracker_service.basis_line("000660", 1_828_000, 1_653_000)
+    assert "내 수익률 -5.58%" in out
+    assert "실제 매매 아님" in out
+
+
+def test_basis_line_not_held_marks_virtual(monkeypatch):
+    monkeypatch.setattr(tracker_service, "get_held_position", lambda code: None)
+    out = tracker_service.basis_line("000660", 1_828_000, 1_653_000)
+    assert "미보유" in out and "가상" in out
+    assert "내 수익률" not in out

@@ -139,6 +139,38 @@ def _determine_status(current_price: float, entry_price: float,
     return "tracking"
 
 
+def get_held_position(code: str) -> tuple[int, float] | None:
+    """실제 보유 중이면 (수량, 평단), 아니면 None (조회 실패도 None)."""
+    try:
+        with get_conn() as conn:
+            pos = conn.execute(
+                text("SELECT quantity, avg_price FROM portfolio_positions "
+                     "WHERE code=:c AND status='holding' AND quantity > 0"),
+                {"c": code},
+            ).fetchone()
+        if pos and pos[1] and pos[1] > 0:
+            return int(pos[0]), float(pos[1])
+    except Exception:
+        pass
+    return None
+
+
+def basis_line(code: str, current_price: float, entry_price: float | None) -> str:
+    """알림용 손익 기준 문구. 실보유면 실제 평단 기준 손익, 아니면 가상 추적임을 명시.
+    추천 진입가 기준 등락을 '내 수익률'처럼 보이게 하지 않는다(2026-10-02 사고)."""
+    pos = get_held_position(code)
+    ref = ""
+    if entry_price:
+        ref = (f"  (추천 기준가 {entry_price:,.0f}원 대비 {(current_price - entry_price) / entry_price * 100:+.1f}%"
+               f" — 참고용, 실제 매매 아님)")
+    if pos:
+        qty, avg = pos
+        return (f"  내 보유: {qty:,}주 @ 평단 {avg:,.0f}원 → *내 수익률 {(current_price - avg) / avg * 100:+.2f}%*\n" + ref).rstrip()
+    if ref:
+        return "  미보유 종목 — 아래는 내 계좌와 무관한 가상 추적 수치\n" + ref
+    return "  미보유 종목 (가상 추적)"
+
+
 def format_target_alert(
     name: str, code: str, rec_date: str, days_held: int,
     entry_price: float, current_price: float, return_pct: float, price_str: str,

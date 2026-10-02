@@ -617,6 +617,16 @@ async def tracker_api(days: int = 30, _: None = Depends(_check_auth)):
         )
         summary = get_tracking_summary(days=days)
         active  = get_active_tracking_list()
+        # 실보유 종목은 실제 평단 기준 수익률을 함께 내려준다(추천가 기준은 가상 성과)
+        from services.recommendation_tracker_service import get_held_position
+        for it in list(summary.get("items", [])) + active:
+            pos = get_held_position(it["code"])
+            it["held"] = bool(pos)
+            cur = it.get("current_price")
+            it["my_return_pct"] = (
+                round((cur - pos[1]) / pos[1] * 100, 2) if pos and cur else None
+            )
+            it["my_avg_price"] = pos[1] if pos else None
         return {"summary": summary, "active": active}
     except Exception as e:
         return {"summary": {"items": [], "total": 0}, "active": [], "error": str(e)}

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from clients.kis_client import KISClient
 from clients.telegram_client import send_message
 from services.recommendation_service import get_recommendations
+from services.recommendation_tracker_service import basis_line
 from db.database import get_conn
 from sqlalchemy import text
 
@@ -89,9 +90,9 @@ def check_alerts() -> int:
             if target and cur >= target and not _already_alerted(date, code, "target"):
                 alerts.append(("target", f"🎯 *목표가 도달!*\n{name}({code})\n현재가 {cur:,}원 ≥ 목표 {target:,}원\n→ 수익 실현 검토"))
             if chg_from_entry >= 5 and not _already_alerted(date, code, "surge"):
-                alerts.append(("surge", f"🚀 *급등 중!*\n{name}({code})\n현재가 {cur:,}원  (+{chg_from_entry:.1f}%)\n→ 목표가 확인 후 분할 매도 검토"))
+                alerts.append(("surge", f"🚀 *급등 중!*\n{name}({code})\n현재가 {cur:,}원\n{basis_line(code, cur, entry)}\n→ 목표가 확인 후 분할 매도 검토"))
             if chg_from_entry <= -5 and not _already_alerted(date, code, "drop"):
-                alerts.append(("drop", f"🔴 *급락!*\n{name}({code})\n현재가 {cur:,}원  ({chg_from_entry:.1f}%)\n→ 손절선 확인 후 대응"))
+                alerts.append(("drop", f"🔴 *급락!*\n{name}({code})\n현재가 {cur:,}원\n{basis_line(code, cur, entry)}\n→ 손절선 확인 후 대응"))
 
             for alert_type, msg in alerts:
                 try:

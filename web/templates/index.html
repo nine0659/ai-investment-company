@@ -1187,6 +1187,9 @@
             </template>
             <template x-if="!btLoading && btStats">
               <div class="space-y-4">
+                <div class="bg-amber-900/30 border border-amber-700/50 text-amber-300 text-xs rounded-lg px-3 py-2">
+                  ⚠️ 추천 시점 가격 기준 가상 성과입니다. 내 실제 매매 손익이 아닙니다.
+                </div>
                 <!-- 통계 요약 -->
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div class="bg-slate-800 rounded-xl p-4 text-center">
@@ -1285,7 +1288,7 @@
               <div class="text-center py-12 text-slate-400">
                 <div class="text-4xl mb-3">📈</div>
                 <div class="text-sm">AI 추천 종목의 수익률을 검증합니다</div>
-                <div class="text-xs text-slate-500 mt-1">stock_recommendations 테이블의 추천 종목 기준</div>
+                <div class="text-xs text-slate-500 mt-1">stock_recommendations 테이블의 추천 종목 기준 — 추천 시점 가격 기준 가상 성과이며 내 실제 매매 손익이 아닙니다</div>
               </div>
             </template>
           </div>
@@ -1386,6 +1389,9 @@
             <h2 class="text-lg font-bold">📡 AI 추천 성과 추적</h2>
             <button @click="loadTracker()" class="text-xs text-blue-400 hover:text-blue-300">새로고침</button>
           </div>
+          <div class="bg-amber-900/30 border border-amber-700/50 text-amber-300 text-xs rounded-lg px-3 py-2">
+            ⚠️ 아래 수익률은 <b>추천 시점 가격 기준 가상 성과</b>입니다. 내 실제 매매 손익이 아닙니다. 실보유 종목은 내 평단 기준 수익률을 따로 표시합니다.
+          </div>
 
           <!-- 예측 정확도 카드 -->
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1459,10 +1465,12 @@
                       <td class="px-4 py-2.5">
                         <div class="font-medium text-slate-200" x-text="r.name"></div>
                         <div class="text-xs text-slate-500" x-text="r.code+' · '+r.rec_date"></div>
+                        <div x-show="r.held" class="text-xs text-amber-300"
+                          x-text="'📌 실보유 · 내 평단 '+(r.my_avg_price||0).toLocaleString()+'원 → 내 수익률 '+(r.my_return_pct!=null?((r.my_return_pct>=0?'+':'')+r.my_return_pct.toFixed(2)+'%'):'-')"></div>
                       </td>
                       <td class="px-4 py-2.5 text-right font-semibold"
                         :class="(r.return_pct||0)>=0?'text-green-400':'text-red-400'"
-                        x-text="r.return_pct!=null?(r.return_pct>=0?'+':'')+r.return_pct.toFixed(2)+'%':'-'"></td>
+                        x-text="r.return_pct!=null?(r.return_pct>=0?'+':'')+r.return_pct.toFixed(2)+'%(추천가 기준)':'-'"></td>
                       <td class="px-4 py-2.5 text-right text-xs text-green-300 hidden md:table-cell"
                         x-text="r.max_return!=null?(r.max_return>=0?'+':'')+r.max_return.toFixed(2)+'%':'-'"></td>
                       <td class="px-4 py-2.5 text-right text-xs text-slate-400 hidden md:table-cell"
