@@ -67,7 +67,7 @@ def _get_active_recommendations() -> list[dict]:
         with get_conn() as conn:
             rows = conn.execute(
                 text("""
-                    SELECT id, date, code, name, entry_price, stop_price, target_price
+                    SELECT id, date, code, name, entry_price, stop_price, target_price, fill_price
                     FROM stock_recommendations
                     WHERE date >= :cutoff
                       AND entry_price IS NOT NULL
@@ -78,7 +78,10 @@ def _get_active_recommendations() -> list[dict]:
             ).fetchall()
         return [
             {"id": r[0], "date": r[1], "code": r[2], "name": r[3],
-             "entry_price": r[4], "stop_price": r[5], "target_price": r[6]}
+             # 2026-10-02: 내가 채택해 체결한 추천은 내 체결가가 기준가(없으면 추천 시점 가상가)
+             "entry_price": (r[7] if r[7] and r[7] > 0 else r[4]),
+             "adopted": bool(r[7] and r[7] > 0),
+             "stop_price": r[5], "target_price": r[6]}
             for r in rows
         ]
     except Exception as e:
@@ -108,17 +111,18 @@ def _get_today_tracking(today: str) -> set[int]:
         return set()
 
 
-def _get_max_min_history(rec_id: int) -> tuple[float | None, float | None]:
-    """기존 추적 이력에서 최고/최저 수익률 조회."""
+def _get_max_min_history(rec_id: int, entry_price: float | None = None) -> tuple[float | None, float | None]:
+    """기존 추적 이력에서 최고/최저 수익률 조회. entry_price를 주면 같은 기준가의
+    이력만 본다(추천가→내 체결가로 기준이 바뀐 뒤 옛 기준의 최고/최저가 섞이지 않게)."""
     try:
+        sql = ("SELECT MAX(max_return), MIN(min_return) "
+               "FROM recommendation_tracking WHERE rec_id=:rid")
+        params = {"rid": rec_id}
+        if entry_price is not None:
+            sql += " AND entry_price=:ep"
+            params["ep"] = entry_price
         with get_conn() as conn:
-            row = conn.execute(
-                text("""
-                    SELECT MAX(max_return), MIN(min_return)
-                    FROM recommendation_tracking WHERE rec_id=:rid
-                """),
-                {"rid": rec_id},
-            ).fetchone()
+            row = conn.execute(text(sql), params).fetchone()
         if row:
             return row[0], row[1]
     except Exception:
@@ -343,7 +347,7 @@ def run_daily_tracker(kis=None) -> dict:
         days_held  = _count_trading_days(rec_date, today)
 
         # 최고/최저 수익률 갱신
-        hist_max, hist_min = _get_max_min_history(rec_id)
+        hist_max, hist_min = _get_max_min_history(rec_id, entry_price)
         max_return = max(return_pct, hist_max) if hist_max is not None else return_pct
         min_return = min(return_pct, hist_min) if hist_min is not None else return_pct
 
@@ -423,13 +427,14 @@ def get_tracking_summary(days: int = 30) -> dict:
                     SELECT rt.code, rt.name, rt.rec_date, rt.entry_price,
                            rt.target_price, rt.stop_price,
                            rt.return_pct, rt.max_return, rt.min_return,
-                           rt.days_held, rt.status
+                           rt.days_held, rt.status, sr.fill_price
                     FROM recommendation_tracking rt
                     INNER JOIN (
                         SELECT rec_id, MAX(date) AS max_date
                         FROM recommendation_tracking
                         GROUP BY rec_id
                     ) latest ON rt.rec_id = latest.rec_id AND rt.date = latest.max_date
+                    LEFT JOIN stock_recommendations sr ON sr.id = rt.rec_id
                     WHERE rt.rec_date >= :cutoff
                     ORDER BY rt.rec_date DESC
                 """),
@@ -442,6 +447,7 @@ def get_tracking_summary(days: int = 30) -> dict:
                 "entry_price": r[3], "target_price": r[4], "stop_price": r[5],
                 "return_pct": r[6], "max_return": r[7], "min_return": r[8],
                 "days_held": r[9], "status": r[10],
+                "adopted": bool(r[11] and r[11] > 0),
             }
             for r in rows
         ]
@@ -483,13 +489,14 @@ def get_active_tracking_list() -> list[dict]:
                     SELECT rt.code, rt.name, rt.rec_date, rt.entry_price,
                            rt.target_price, rt.stop_price,
                            rt.current_price, rt.return_pct, rt.max_return,
-                           rt.days_held, rt.status, rt.date AS last_update
+                           rt.days_held, rt.status, rt.date AS last_update, sr.fill_price
                     FROM recommendation_tracking rt
                     INNER JOIN (
                         SELECT rec_id, MAX(date) AS max_date
                         FROM recommendation_tracking
                         GROUP BY rec_id
                     ) latest ON rt.rec_id = latest.rec_id AND rt.date = latest.max_date
+                    LEFT JOIN stock_recommendations sr ON sr.id = rt.rec_id
                     WHERE rt.status = 'tracking'
                     ORDER BY rt.rec_date DESC
                 """)
@@ -500,6 +507,7 @@ def get_active_tracking_list() -> list[dict]:
                 "entry_price": r[3], "target_price": r[4], "stop_price": r[5],
                 "current_price": r[6], "return_pct": r[7], "max_return": r[8],
                 "days_held": r[9], "status": r[10], "last_update": r[11],
+                "adopted": bool(r[12] and r[12] > 0),
             }
             for r in rows
         ]
@@ -521,7 +529,7 @@ def _get_held_codes() -> set[str]:
 
 
 def format_tracker_report() -> str:
-    """추적 리포트 텔레그램 메시지 포맷."""
+    """추적 리포트 텔레그램 메시지 포맷 — 내가 채택(매수)한 추천과 미채택 가상 성과를 분리."""
     summary = get_tracking_summary(days=30)
     items   = summary.get("items", [])
     if not items:
@@ -533,25 +541,35 @@ def format_tracker_report() -> str:
         "stop_hit":   "🛑 손절",
         "expired":    "⏰ 만료",
     }
+    held = _get_held_codes()
 
+    def _line(item):
+        st    = status_map.get(item["status"], item["status"])
+        ret   = item["return_pct"] or 0
+        emoji = "🔺" if ret > 0 else ("🔻" if ret < 0 else "➖")
+        return (f"{st} {item['name']}({item['code']}) "
+                f"{emoji}{ret:+.2f}% ({item['days_held']}일) [{item['rec_date']}]"
+                + (" 📌실보유" if item["code"] in held else ""))
+
+    adopted = [i for i in items if i.get("adopted")]
+    virtual = [i for i in items if not i.get("adopted")]
     lines = [
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "📊 AI 추천 종목 성과 추적 (최근 30일)",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"총 {summary['total']}건 | 승률 {summary['win_rate']}% | "
-        f"평균수익 {summary['avg_return']:+.2f}% | 목표달성 {summary['target_rate']}%",
-        "⚠️ 추천 시점 가격 기준 *가상 성과*입니다. 내 실제 매매 손익이 아닙니다.",
         "",
+        f"✅ *내가 매수한 추천 ({len(adopted)}건) — 내 체결가 기준*",
     ]
-    held = _get_held_codes()
-    for item in items[:15]:  # 최대 15건
-        st    = status_map.get(item["status"], item["status"])
-        ret   = item["return_pct"] or 0
-        emoji = "🔺" if ret > 0 else ("🔻" if ret < 0 else "➖")
-        lines.append(
-            f"{st} {item['name']}({item['code']}) "
-            f"{emoji}{ret:+.2f}% ({item['days_held']}일) "
-            f"[{item['rec_date']}]" + (" 📌실보유(내 평단 기준 아님)" if item["code"] in held else "")
-        )
-
+    if adopted:
+        rets = [i["return_pct"] for i in adopted if i["return_pct"] is not None]
+        if rets:
+            lines.append(f"평균 {sum(rets) / len(rets):+.2f}% | 수익 {sum(1 for r in rets if r > 0)}/{len(rets)}건")
+        lines += [_line(i) for i in adopted[:15]]
+    else:
+        lines.append("아직 없음 (추천 종목을 매수하고 `/holdings add`로 기록하면 여기서 추적됩니다)")
+    lines += [
+        "",
+        f"⚪ *미채택 추천 ({len(virtual)}건) — 추천 시점 가격 기준 가상 성과 (내 손익 아님, 참고용)*",
+    ]
+    lines += [_line(i) for i in virtual[:10]]
     return "\n".join(lines)

@@ -205,12 +205,67 @@ def approve_draft_position(code: str, date: str, qty: int, fill_price: float,
             {"code": code, "date": date},
         ).fetchone()
         conn.execute(
-            text("UPDATE stock_recommendations SET user_action='approved' "
+            text("UPDATE stock_recommendations SET user_action='approved', "
+                 "fill_price=:fp, fill_qty=:fq, fill_date=:fd "
                  "WHERE date=:date AND code=:code"),
-            {"date": date, "code": code},
+            {"date": date, "code": code, "fp": fill_price, "fq": qty, "fd": now},
         )
     logger.info("[승인큐] %s(%s) draft→holding 전환: %d주 @%.0f원", row[0] if row else "", code, qty, fill_price)
     return {"code": code, "name": row[0] if row else code, "qty": qty, "fill_price": fill_price}
+
+
+_LINK_WINDOW_DAYS = 45
+
+
+def link_recommendation_fill(code: str, fill_price: float, qty: int,
+                             fill_date: str | None = None) -> dict | None:
+    """내 실제 매수를 가장 최근 미연결 추천에 연결 (2026-10-02 추천→체결 추적).
+
+    승인 버튼 없이 `/holdings add`로 직접 기록한 매수도 같은 추천으로 이어준다.
+    조건: 같은 종목, 추천일이 체결일 이전(미래 추천에 연결 금지)·45일 이내, 아직
+    체결이 연결 안 됐고 기각(rejected)되지 않은 것. 해당 없으면 None(= 추천과 무관한 매수).
+    연결된 추천은 이후 이 체결가 기준으로 추적된다.
+    """
+    if not code or not fill_price or fill_price <= 0 or not qty or qty <= 0:
+        return None
+    fd = fill_date or datetime.now(_TZ).strftime("%Y-%m-%d")
+    cutoff = (datetime.strptime(fd, "%Y-%m-%d") - timedelta(days=_LINK_WINDOW_DAYS)).strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        row = conn.execute(
+            text("SELECT id, date FROM stock_recommendations "
+                 "WHERE code=:c AND date<=:fd AND date>=:cut AND fill_price IS NULL "
+                 "AND (user_action IS NULL OR user_action IN ('approved','deferred')) "
+                 "ORDER BY date DESC, id DESC LIMIT 1"),
+            {"c": code, "fd": fd, "cut": cutoff},
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            text("UPDATE stock_recommendations SET user_action='approved', "
+                 "fill_price=:fp, fill_qty=:fq, fill_date=:fd WHERE id=:id"),
+            {"fp": fill_price, "fq": qty, "fd": fd, "id": row[0]},
+        )
+    logger.info("[추천연결] %s 매수 @%.0f원 ×%d → 추천 #%s(%s)와 연결", code, fill_price, qty, row[0], row[1])
+    return {"rec_id": row[0], "rec_date": row[1], "fill_price": fill_price, "qty": qty}
+
+
+def unlink_recommendation_fill(code: str) -> bool:
+    """가장 최근에 연결된 추천의 체결 연결을 해제 (잘못 자동연결된 경우)."""
+    cutoff = (datetime.now(_TZ) - timedelta(days=_LINK_WINDOW_DAYS)).strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        row = conn.execute(
+            text("SELECT id FROM stock_recommendations WHERE code=:c AND fill_price IS NOT NULL "
+                 "AND date>=:cut ORDER BY date DESC, id DESC LIMIT 1"),
+            {"c": code, "cut": cutoff},
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute(
+            text("UPDATE stock_recommendations SET user_action=NULL, fill_price=NULL, "
+                 "fill_qty=NULL, fill_date=NULL WHERE id=:id"),
+            {"id": row[0]},
+        )
+    return True
 
 
 def reject_new_position(code: str, date: str) -> bool:

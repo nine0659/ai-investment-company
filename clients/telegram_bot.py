@@ -153,6 +153,7 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/holdings add CODE QTY AVG_PRICE [회사명]` — 기존 보유종목 수동 등록 (매수 주문 아님)\n"
         "  예: `/holdings add 005930 91 233138 삼성전자`\n"
         "`/holdings remove CODE` — 등록된 보유종목 제거\n"
+        "`/holdings unlink CODE` — 잘못 연결된 AI 추천↔내 매수 연결 해제\n"
         "`/portfolio` — 포트폴리오 손익 현황\n"
         "`/profile` — 투자자 프로필 (목표·기간·리스크 감내) 조회/수정\n\n"
         "📝 *수동 실행 기록*\n"
@@ -340,12 +341,40 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
             add_position(code, name, qty, avg_price, timeframe="mid")
             from services.profile_service import confirm_holdings
             confirm_holdings()  # 사용자가 원장을 직접 손봤다 = 확인한 것
+            link_note = ""
+            try:
+                # 2026-10-02: 내 매수를 최근 AI 추천과 연결 → 이후 내 체결가 기준 추적
+                from services.portfolio_service import link_recommendation_fill
+                linked = link_recommendation_fill(code, avg_price, qty)
+                if linked:
+                    link_note = (
+                        f"\n🔗 {linked['rec_date']} AI 추천과 연결 — 이 체결가({avg_price:,.0f}원) 기준으로 "
+                        f"추적합니다.\n(추천과 무관한 기존 보유라면 `/holdings unlink {code}`)"
+                    )
+            except Exception as _le:
+                logger.warning("[Bot] 추천 연결 실패(등록은 정상): %s", _le)
             _send_with_web_button(chat_id,
                 f"✅ 보유종목 등록: *{name}*({code})\n"
-                f"{qty:,}주 | 평균단가 {avg_price:,.0f}원 | 매입금액 {qty * avg_price:,.0f}원")
+                f"{qty:,}주 | 평균단가 {avg_price:,.0f}원 | 매입금액 {qty * avg_price:,.0f}원" + link_note)
         except Exception as e:
             logger.error("[Bot] /holdings add 오류: %s", e)
             _send(chat_id, f"❌ 등록 실패: {e}")
+        return
+
+    # ── /holdings unlink CODE — 잘못 연결된 추천↔체결 해제 ────────────────
+    if sub == "unlink":
+        if len(parts) < 2:
+            _send(chat_id, "❌ 사용법: `/holdings unlink CODE`")
+            return
+        code = parts[1].zfill(6)
+        try:
+            from services.portfolio_service import unlink_recommendation_fill
+            ok = unlink_recommendation_fill(code)
+            _send(chat_id, f"✅ `{code}` 추천 연결 해제 — 다시 추천가 기준 가상 추적으로 돌아갑니다."
+                  if ok else f"연결된 추천이 없습니다: `{code}`")
+        except Exception as e:
+            logger.error("[Bot] /holdings unlink 오류: %s", e)
+            _send(chat_id, f"❌ 해제 실패: {e}")
         return
 
     # ── /holdings remove CODE ───────────────────────────────────────

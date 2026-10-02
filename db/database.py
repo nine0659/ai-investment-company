@@ -548,6 +548,12 @@ def _migrate_stock_recommendations():
             logger.info("[DB] stock_recommendations.user_action 컬럼 추가 완료")
         else:
             logger.debug("[DB] stock_recommendations.user_action 이미 존재 — 스킵")
+        # 2026-10-02: 추천→내 실제 체결 연결. 채택한 추천은 이 체결가를 기준으로 추적한다.
+        for col, typ in (("fill_price", "REAL"), ("fill_qty", "INTEGER"), ("fill_date", "TEXT")):
+            if col not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE stock_recommendations ADD COLUMN {col} {typ}"))
+                logger.info("[DB] stock_recommendations.%s 컬럼 추가 완료", col)
     except Exception as e:
         logger.warning("[DB] stock_recommendations 마이그레이션 실패: %s", e)
 

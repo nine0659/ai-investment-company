@@ -304,6 +304,16 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   `/tracker` 리포트·주간통계·웹 대시보드)에 가상 성과 표시 ③ **정책: 사용자가 매수하지
   않은(미보유) 추천 종목은 텔레그램 알림을 보내지 않는다** — 추적·기록은 조용히 계속해
   학습 루프(적중률·귀인분석 재개 기준)는 유지. 알림은 실보유 종목에만 의미가 있다.
+  ④ **추천→내 체결 연결(같은 날 추가)**: 의미 있는 추적은 "내가 추천을 보고 실제로 매수한
+  뒤"다. `stock_recommendations`에 `fill_price/fill_qty/fill_date` 컬럼을 추가하고, 승인큐
+  승인(`approve_draft_position`) 또는 `/holdings add`(`link_recommendation_fill`: 같은 종목·
+  추천일≤체결일·45일 이내·미연결·기각 아님인 최근 추천에 자동 연결, 응답에 연결 사실 표시,
+  잘못 연결되면 `/holdings unlink CODE`)로 내 체결을 연결한다. 연결된 추천은 `daily_tracker`가
+  **내 체결가를 기준가**로 추적(`adopted`)하고, `/tracker` 리포트·웹은 "내가 매수한 추천(내 체결가
+  기준)"과 "미채택(가상 성과)"을 분리 표시한다. 기준가가 바뀐 뒤 옛 기준의 최고/최저 수익률이
+  섞이지 않게 `_get_max_min_history`는 같은 entry_price 이력만 본다. `/holdings add`로 기존
+  보유를 등록할 때 최근 추천과 우연히 연결될 수 있어 unlink를 둠 — 적중률·귀인분석 재개 시
+  "채택한 추천의 내 성과"가 핵심 지표(`tests/test_recommendation_fill_link.py`).
   교훈: 새 알림·리포트에 수익률을 넣을 땐 "누구의 매매 기준인가(내 평단 vs 추천 시점
   가상)"를 먼저 정하고 라벨로 구분할 것. `tests/test_recommendation_tracker_alerts.py`가 회귀 테스트.
 
