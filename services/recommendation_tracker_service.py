@@ -211,6 +211,11 @@ def _send_status_alert(
 ) -> None:
     """목표가/손절 도달 첫 발생 시 텔레그램 알림 발송 (하루 1회 중복 방지)."""
     try:
+        # 2026-10-02 정책: 내가 매수하지 않은 추천 종목은 텔레그램으로 알리지 않는다
+        # (추적·기록은 조용히 계속 — 학습 루프용). 알림은 실보유 종목만 의미가 있다.
+        if not get_held_position(code):
+            logger.info("[Tracker] 미보유 종목 알림 생략(기록만): %s(%s) %s", name, code, status)
+            return
         # price_alert_log로 중복 발송 방지 (date + code + type 조합)
         today = datetime.now(_KST).strftime("%Y-%m-%d")
         alert_type = "track_target" if status == "target_hit" else "track_stop"

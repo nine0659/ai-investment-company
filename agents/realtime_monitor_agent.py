@@ -225,7 +225,7 @@ def run_portfolio_monitor(today: str, kis: KISClient) -> tuple[list[str], list[s
 
 # ── 추적 종목 기준가격 도달 통보 ───────────────────────────────────
 
-from services.recommendation_tracker_service import basis_line  # noqa: E402
+from services.recommendation_tracker_service import basis_line, get_held_position  # noqa: E402
 
 
 def run_ai_rec_monitor(today: str, kis: KISClient) -> tuple[list[str], list[str]]:
@@ -250,6 +250,9 @@ def run_ai_rec_monitor(today: str, kis: KISClient) -> tuple[list[str], list[str]
     stop_alerts, target_alerts = [], []
     for rec_id, code, name, entry_price, stop_price, target_price in rows:
         try:
+            # 2026-10-02 정책: 미보유 추천 종목은 알림 없음(트래커가 조용히 기록만)
+            if not get_held_position(code):
+                continue
             pd = kis.get_stock_price(code, market=None)
             price = pd.get("price", 0)
             if not price:

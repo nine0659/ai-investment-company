@@ -102,3 +102,21 @@ def test_basis_line_not_held_marks_virtual(monkeypatch):
     out = tracker_service.basis_line("000660", 1_828_000, 1_653_000)
     assert "미보유" in out and "가상" in out
     assert "내 수익률" not in out
+
+
+def test_status_alert_silent_when_not_held(monkeypatch):
+    # 2026-10-02 정책: 미보유 추천 종목은 텔레그램 알림을 보내지 않는다(기록만).
+    monkeypatch.setattr(tracker_service, "get_held_position", lambda code: None)
+    sent = []
+    import clients.telegram_client as telegram_client
+    monkeypatch.setattr(telegram_client, "send_message", lambda m, *a, **k: sent.append(m))
+
+    def _no_db():
+        raise AssertionError("미보유면 DB(중복가드)도 건드리지 않고 즉시 반환해야 한다")
+    monkeypatch.setattr(tracker_service, "get_conn", _no_db)
+
+    for st in ("target_hit", "stop_hit"):
+        tracker_service._send_status_alert(
+            st, "SK하이닉스", "000660", 1_653_000, 1_828_000, 10.59,
+            1_820_000, 1_487_700, 21, "2026-08-30")
+    assert sent == []

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from clients.kis_client import KISClient
 from clients.telegram_client import send_message
 from services.recommendation_service import get_recommendations
-from services.recommendation_tracker_service import basis_line
+from services.recommendation_tracker_service import basis_line, get_held_position
 from db.database import get_conn
 from sqlalchemy import text
 
@@ -76,6 +76,9 @@ def check_alerts() -> int:
         target = rec.get("target_price") or 0
 
         try:
+            # 2026-10-02 정책: 미보유 추천 종목은 알림 없음
+            if not get_held_position(code):
+                continue
             price_data = kis.get_stock_price(code)
             cur = price_data.get("price", 0)
             if not cur:
