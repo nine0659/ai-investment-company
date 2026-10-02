@@ -56,3 +56,24 @@ def test_run_daily_tracker_no_alert_when_recs_present(monkeypatch):
 
     assert result["processed"] == 0  # 이미 처리돼 skip
     assert alerts == []
+
+
+# 2026-10-02: 목표가 알림이 추천 진입가 기준 +10.59%만 보여줘 실제 평단(-5.6%)을 가린 사고
+def test_target_alert_shows_real_avg_loss_when_held():
+    msg = tracker_service.format_target_alert(
+        "SK하이닉스", "000660", "2026-08-30", 21, 1_653_000, 1_828_000, 10.59,
+        "1,820,000원", 19, 1_935_965,
+    )
+    assert "내 수익률 -5.58%" in msg
+    assert "1,935,965" in msg
+    assert "손실 구간" in msg
+    assert "실제 매매 아님" in msg
+
+
+def test_target_alert_marks_virtual_when_not_held():
+    msg = tracker_service.format_target_alert(
+        "SK하이닉스", "000660", "2026-08-30", 21, 1_653_000, 1_828_000, 10.59,
+        "1,820,000원", None, None,
+    )
+    assert "미보유·가상 추적" in msg
+    assert "내 수익률" not in msg

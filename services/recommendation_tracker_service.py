@@ -139,6 +139,38 @@ def _determine_status(current_price: float, entry_price: float,
     return "tracking"
 
 
+def format_target_alert(
+    name: str, code: str, rec_date: str, days_held: int,
+    entry_price: float, current_price: float, return_pct: float, price_str: str,
+    held_qty: int | None, held_avg: float | None,
+) -> str:
+    """목표가 달성 알림 본문. 실보유면 실제 평단 기준 손익을 먼저, 추천가 기준은 참고로."""
+    ref = (
+        f"추천 기준가(참고용, 실제 매매 아님): {entry_price:,.0f}원 → {return_pct:+.2f}%\n"
+        f"추천일 {rec_date} ({days_held}일 경과) · 추천 목표가 {price_str}"
+    )
+    if held_qty and held_avg and held_avg > 0:
+        my_pct = (current_price - held_avg) / held_avg * 100
+        pnl = (current_price - held_avg) * held_qty
+        note = (
+            "추천 목표가에는 도달했지만 내 평단 기준으로는 아직 손실 구간입니다."
+            if my_pct < 0 else "추천 목표가에 도달했고 내 평단 기준으로도 수익 구간입니다."
+        )
+        return (
+            f"🎯 *[추천 목표가 도달] {name}({code})*\n\n"
+            f"▶ *내 실제 보유*: {held_qty:,}주 @ 평단 {held_avg:,.0f}원\n"
+            f"▶ 현재가 {current_price:,.0f}원 → *내 수익률 {my_pct:+.2f}%* "
+            f"({pnl:+,.0f}원)\n"
+            f"{note}\n\n{ref}"
+        )
+    return (
+        f"🎯 *[추천 목표가 도달 — 미보유·가상 추적] {name}({code})*\n\n"
+        f"실제로 보유하지 않은 종목입니다. 아래 수익률은 내 계좌와 무관한 "
+        f"추천 시점 기준 가상 수치입니다.\n"
+        f"현재가 {current_price:,.0f}원\n\n{ref}"
+    )
+
+
 def _send_status_alert(
     status: str, name: str, code: str,
     entry_price: float, current_price: float, return_pct: float,
@@ -198,14 +230,18 @@ def _send_status_alert(
                 logger.info("[Tracker] 손절 안내(미보유) 발송: %s(%s) %+.2f%%", name, code, return_pct)
                 return
 
-        msg = (
-            f"{emoji} *[추천 추적] {label}*\n\n"
-            f"종목: {name} ({code})\n"
-            f"추천일: {rec_date} ({days_held}일 경과)\n"
-            f"진입가: {entry_price:,.0f}원\n"
-            f"현재가: {current_price:,.0f}원\n"
-            f"기준가: {price_str}\n"
-            f"수익률: `{return_pct:+.2f}%`"
+        # 2026-10-02: 목표가 알림이 시스템이 기록한 '추천 진입가' 기준 수익률만 보여줘
+        # 실제 평단(-5.6% 손실)과 무관한 +10.6%를 자축하듯 발송한 사고 — 실보유는
+        # 반드시 portfolio_positions의 실제 평단으로 보여준다(손절 분기와 동일 원칙).
+        with get_conn() as conn:
+            pos = conn.execute(
+                text("SELECT quantity, avg_price FROM portfolio_positions "
+                     "WHERE code=:c AND status='holding' AND quantity > 0"),
+                {"c": code},
+            ).fetchone()
+        msg = format_target_alert(
+            name, code, rec_date, days_held, entry_price, current_price,
+            return_pct, price_str, pos[0] if pos else None, pos[1] if pos else None,
         )
         from clients.telegram_client import send_message
         send_message(msg)
