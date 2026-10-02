@@ -471,6 +471,18 @@ def get_active_tracking_list() -> list[dict]:
         return []
 
 
+def _get_held_codes() -> set[str]:
+    """실제 보유 중인 종목코드 집합 (조회 실패 시 빈 집합)."""
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                text("SELECT code FROM portfolio_positions WHERE status='holding' AND quantity > 0")
+            ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
 def format_tracker_report() -> str:
     """추적 리포트 텔레그램 메시지 포맷."""
     summary = get_tracking_summary(days=30)
@@ -491,8 +503,10 @@ def format_tracker_report() -> str:
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"총 {summary['total']}건 | 승률 {summary['win_rate']}% | "
         f"평균수익 {summary['avg_return']:+.2f}% | 목표달성 {summary['target_rate']}%",
+        "⚠️ 추천 시점 가격 기준 *가상 성과*입니다. 내 실제 매매 손익이 아닙니다.",
         "",
     ]
+    held = _get_held_codes()
     for item in items[:15]:  # 최대 15건
         st    = status_map.get(item["status"], item["status"])
         ret   = item["return_pct"] or 0
@@ -500,7 +514,7 @@ def format_tracker_report() -> str:
         lines.append(
             f"{st} {item['name']}({item['code']}) "
             f"{emoji}{ret:+.2f}% ({item['days_held']}일) "
-            f"[{item['rec_date']}]"
+            f"[{item['rec_date']}]" + (" 📌실보유(내 평단 기준 아님)" if item["code"] in held else "")
         )
 
     return "\n".join(lines)

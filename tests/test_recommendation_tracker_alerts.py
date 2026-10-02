@@ -77,3 +77,14 @@ def test_target_alert_marks_virtual_when_not_held():
     )
     assert "미보유·가상 추적" in msg
     assert "내 수익률" not in msg
+
+
+def test_tracker_report_labels_virtual_and_held(monkeypatch):
+    monkeypatch.setattr(tracker_service, "get_tracking_summary", lambda days=30: {
+        "total": 1, "win_rate": 100.0, "avg_return": 10.59, "target_rate": 100.0,
+        "items": [{"code": "000660", "name": "SK하이닉스", "rec_date": "2026-08-30",
+                   "return_pct": 10.59, "days_held": 21, "status": "target_hit"}]})
+    monkeypatch.setattr(tracker_service, "_get_held_codes", lambda: {"000660"})
+    out = tracker_service.format_tracker_report()
+    assert "가상 성과" in out
+    assert "실보유" in out
