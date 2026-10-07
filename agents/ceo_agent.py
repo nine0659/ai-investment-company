@@ -156,7 +156,22 @@ _THESIS_KR  = {"intact": "유지", "challenged": "도전받음", "reconsider": "
 _ACTION_KR  = {"reduce": "축소", "add": "확대", "exit": "청산"}
 
 
-def _build_summary_card(d: dict) -> str:
+def _load_holdings() -> list[tuple[str, str]]:
+    """실보유(status='holding', 수량>0) (code, name). 조회 실패 시 빈 목록 → 대조 생략."""
+    try:
+        from db.database import get_conn
+        from sqlalchemy import text
+        with get_conn() as conn:
+            rows = conn.execute(text(
+                "SELECT code, name FROM portfolio_positions "
+                "WHERE status='holding' AND quantity > 0")).fetchall()
+        return [(str(r[0]).strip(), r[1] or "") for r in rows]
+    except Exception as e:
+        logger.warning("[CIO] 보유 원장 조회 실패 — 누락 대조 생략: %s", e)
+        return []
+
+
+def _build_summary_card(d: dict, holdings: list[tuple[str, str]] | None = None) -> str:
     """ceo_decisions dict를 고정 포맷 3~6줄 요약으로 조립. 본문 맨 위에 붙인다.
 
     긴 서술형 본문에 결론이 묻혀 한눈에 안 들어온다는 사용자 피드백(2026-09-08)
@@ -191,6 +206,14 @@ def _build_summary_card(d: dict) -> str:
     holds = d.get("position_holds") or []
     if holds:
         lines.append(f"- 보유 유지 {len(holds)}종목: 특이 변화 없음")
+    # 실보유 원장과 대조 — CEO가 hold/조정 줄을 빠뜨린 종목을 코드가 드러낸다
+    # (2026-10-07: 실보유 4종목인데 "보유 유지 3종목"으로 나간 사고).
+    if holdings:
+        covered = {str(x.get("code", "")).strip()
+                   for x in (holds + (d.get("position_changes") or []))}
+        missing = [name or code for code, name in holdings if code not in covered]
+        if missing:
+            lines.append(f"- ⚠️ CEO 판단 누락 보유종목: {', '.join(missing)} (실보유 {len(holdings)}종목 중)")
 
     risks = d.get("key_risks") or []
     if risks:
