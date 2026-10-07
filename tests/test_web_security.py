@@ -41,3 +41,11 @@ def test_private_api_closed_when_password_missing(monkeypatch):
 
     assert client.get("/api/status").status_code == 200
     assert client.get("/api/briefings").status_code == 503
+
+
+def test_health_accepts_head_for_uptime_monitors(monkeypatch):
+    """슬립 방지 핑(UptimeRobot 기본 HEAD)이 405를 받으면 모니터가 오작동한다."""
+    monkeypatch.setenv("WEB_PASSWORD", "secret")
+    from web import app as web_app
+    client = TestClient(web_app.app)
+    assert client.head("/health").status_code == 200

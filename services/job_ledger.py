@@ -99,6 +99,16 @@ def get_yesterday_problems() -> list[str]:
     yesterday = datetime.now(_KST) - timedelta(days=1)
     date_str = yesterday.strftime("%Y-%m-%d")
     expected = _EXPECTED_BY_WEEKDAY.get(yesterday.weekday(), [])
+    # 평일인데 KRX 휴장(공휴일·대체공휴일)이면 거래일 잡이 돌지 않는 게 정상 —
+    # 2026-10-05 개천절 대체공휴일에 "pre_market/nav/tracker 흔적 없음" 오탐 경보가 나갔다.
+    # 일요일 주간 잡은 원래 비거래일에 도는 잡이라 평일(0~4)에만 적용한다.
+    if yesterday.weekday() < 5:
+        try:
+            from utils.market_calendar import is_krx_trading_day
+            if not is_krx_trading_day(yesterday.date()):
+                expected = []
+        except Exception as e:
+            logger.warning("[잡대장] 휴장일 판정 실패(전체 점검으로 진행): %s", e)
 
     problems: list[str] = []
     try:

@@ -169,7 +169,8 @@ async def status():
     }
 
 
-@app.get("/health")
+# UptimeRobot 등 외부 핑이 기본으로 HEAD를 쓰는데 GET 전용이면 405가 나와 모니터가 오작동한다.
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     """배포 플랫폼용 공개 헬스체크."""
     return await status()

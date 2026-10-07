@@ -78,3 +78,17 @@ def test_has_trace_today_roundtrip():
     fail_name = f"testjob_{uuid.uuid4().hex[:8]}"
     job_ledger.record_job(fail_name, "fail", "의도된 테스트 실패")
     assert job_ledger.has_trace_today(fail_name) is False
+
+
+def test_health_check_skips_expected_jobs_on_krx_holiday(monkeypatch):
+    """평일 공휴일(대체공휴일)엔 거래일 잡이 안 도는 게 정상 — 오탐 경보 금지 (2026-10-05 사고)."""
+    import pytest
+    from datetime import datetime, timedelta
+    from services import job_ledger
+    monkeypatch.setattr("utils.market_calendar.is_krx_trading_day", lambda d=None: False)
+    yesterday = datetime.now(job_ledger._KST) - timedelta(days=1)
+    if yesterday.weekday() >= 5:
+        pytest.skip("어제가 주말이면 평일 휴장 분기를 타지 않는다")
+    monkeypatch.setitem(job_ledger._EXPECTED_BY_WEEKDAY, yesterday.weekday(), ["holiday_probe_job"])
+    problems = job_ledger.get_yesterday_problems()
+    assert not any("holiday_probe_job" in p for p in problems)
