@@ -9,7 +9,7 @@ def _item(i, status="target_hit", ret=10.0, alpha=4.0, adopted=False):
 
 
 def test_prompt_is_empty_below_sample_gate(monkeypatch):
-    monkeypatch.setattr(dos, "get_outcomes", lambda: [_item(i) for i in range(4)])
+    monkeypatch.setattr(dos, "get_outcomes", lambda: [_item(i) for i in range(7)])
     assert dos.format_outcomes_for_prompt() == ""
 
 
@@ -19,17 +19,17 @@ def test_tracking_items_do_not_count_as_settled(monkeypatch):
 
 
 def test_prompt_labels_basis_and_computes_stats(monkeypatch):
-    items = [_item(i, adopted=(i == 0)) for i in range(5)]
+    items = [_item(i, adopted=(i == 0)) for i in range(8)]
     items[1].update(return_pct=-8.0, alpha=-14.0, status="stop_hit")
     monkeypatch.setattr(dos, "get_outcomes", lambda: items)
     out = dos.format_outcomes_for_prompt()
-    assert "적중률 80%" in out and "내 체결가 기준" in out and "가상 추적(내 매매 아님)" in out
+    assert "적중률 88%" in out and "내 체결가 기준" in out and "가상 추적(내 매매 아님)" in out
     assert "손절가 도달" in out and "새 수치를 만들지 마라" in out
 
 
 def test_alpha_na_when_kospi_missing(monkeypatch):
     it = _item(1, alpha=None)
-    monkeypatch.setattr(dos, "get_outcomes", lambda: [it] * 5)
+    monkeypatch.setattr(dos, "get_outcomes", lambda: [it] * 8)
     assert "알파 N/A" in dos.format_outcomes_for_prompt()
 
 

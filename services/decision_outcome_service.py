@@ -4,7 +4,7 @@ TradingAgents의 "결정 → 실현수익 정산 → 반성 주입" 루프를 �
 원칙 2(계산은 코드가, LLM은 서술만)에 따라 수익률·알파는 전부 여기서 계산하고
 LLM에는 계산이 끝난 숫자만 준다.
 
-**자동 표본 게이트**: 종료(목표/손절/만료)된 추천이 `MIN_SETTLED_FOR_PROMPT`건 미만이면
+**자동 표본 게이트**: 종료(목표/손절/만료)된 추천이 `MIN_SETTLED_FOR_PROMPT`(8)건 미만이면
 프롬프트 주입은 빈 문자열이라 CEO 입력이 전혀 바뀌지 않는다 — CLAUDE.md의 재개 기준
 (추천 8건+·추적 4주+)이 채워지기 전엔 완전 무동작, 데이터가 쌓이면 코드 수정 없이 켜진다.
 스냅샷용 요약(`summarize_for_snapshot`)은 게이트 없이 항상 계산해 시계열을 쌓는다.
@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-MIN_SETTLED_FOR_PROMPT = 5
+MIN_SETTLED_FOR_PROMPT = 8   # CLAUDE.md 재개 기준(추천 8건+)과 동일. 2026-10-07 기준 종료 6건(전부 8/30 같은 날 추천)이라 아직 무동작
 _TERMINAL = ("target_hit", "stop_hit", "expired")
 _STATUS_KR = {"target_hit": "목표가 도달", "stop_hit": "손절가 도달", "expired": "기간 만료",
               "tracking": "추적 중"}
