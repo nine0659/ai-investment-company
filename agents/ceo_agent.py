@@ -696,6 +696,15 @@ def run(state: InvestmentState) -> InvestmentState:
         except Exception as _ace:
             logger.debug("[CIO] 적중률 주입 실패: %s", _ace)
 
+        # 지난 추천의 실제 결과(KOSPI 대비 알파) — 종료 표본 5건 미만이면 자동으로 빈 문자열
+        try:
+            from services.decision_outcome_service import format_outcomes_for_prompt
+            _out_ctx = format_outcomes_for_prompt()
+            if _out_ctx:
+                context_parts.append("\n" + _out_ctx)
+        except Exception as _oce:
+            logger.debug("[CIO] 결과 채점 주입 실패: %s", _oce)
+
         # Phase B: 단계 전환 경고 — CLOSE 브리핑에서 평가 후 팩트 시트 주입
         if run_type == RUN_TYPE_CLOSE:
             try:
@@ -1167,6 +1176,11 @@ def _register_drafts(date: str, decisions: dict) -> None:
     try:
         from services.portfolio_service import register_draft_positions
         tf_map = {"mid": "mid", "long": "long", "short": "short"}
+        # 리스크게이트: 규칙(비중 밴드·중복 보유)을 어긴 제안은 승인 큐에 올리지 않는다.
+        # 조용한 스킵이 아니라 발송 시 경고 메시지에 "승인 큐 미등록"으로 명시된다.
+        from services.risk_gate import check_portfolio_rules
+        _, blocked = check_portfolio_rules(decisions, {c for c, _n in _load_holdings()})
+        positions = [p for p in positions if str(p.get("code", "")).strip() not in blocked]
         items = [{
             "code": pos.get("code", ""),
             "name": pos.get("name", ""),

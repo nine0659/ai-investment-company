@@ -114,7 +114,11 @@ def get_yesterday_problems() -> list[str]:
     try:
         with get_conn() as conn:
             for job in expected:
-                if not _has_trace(conn, date_str, job):
+                # 일요일 주간 잡이 자정을 넘겨 늦게 돌면 흔적이 월요일 날짜로 찍힌다
+                # (2026-10-04 잡이 10/5 00:35에 실행 → 누락 오탐). 일요일은 다음날도 본다.
+                next_day = (yesterday + timedelta(days=1)).strftime("%Y-%m-%d")
+                if not _has_trace(conn, date_str, job) and not (
+                        yesterday.weekday() == 6 and _has_trace(conn, next_day, job)):
                     problems.append(f"❌ {job}: 어제({date_str}) 실행 흔적 없음 — 스케줄러 점검 필요")
             rows = conn.execute(
                 text("SELECT job_name, detail FROM job_runs "

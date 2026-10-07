@@ -456,6 +456,11 @@ def job_backtest_snapshot():
             f"승률={r_stats.get('win_rate', 0)}% 평균수익={r_stats.get('avg_return', 0)}% | "
             f"실매매 n={p_stats.get('total_trades', 0)} 승률={p_stats.get('win_rate', 0)}%"
         )
+        try:
+            from services.decision_outcome_service import summarize_for_snapshot
+            detail += " | " + summarize_for_snapshot()
+        except Exception as _oe:
+            logger.debug("결과채점 요약 실패 (무시): %s", _oe)
         logger.info("[백테스트 스냅샷] %s", detail)
         record_job("backtest_snapshot", "success", detail)
     except Exception as e:

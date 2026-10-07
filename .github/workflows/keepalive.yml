@@ -1,0 +1,23 @@
+name: Keepalive
+
+# Render 무료 플랜 슬립 방지 보조 핑 (2026-10-07 진단: 9/22부터 상주 스케줄러 정시 잡이
+# 컨테이너 슬립으로 밀림). 1차 방어선은 UptimeRobot이고 이건 보조다 — GH cron은 지연되지만
+# 핑이 몇 분 늦어도 슬립 주기(15분) 안에 들어오는 경우가 대부분이다.
+# 공개 저장소라 Actions 분 소모 걱정 없음. 평일 07:00~17:00 KST(= UTC 22~08시) 위주.
+
+on:
+  schedule:
+    - cron: '*/10 22-23 * * 0-4'   # 07:00~08:59 KST 월-금
+    - cron: '*/10 0-8 * * 1-5'     # 09:00~17:59 KST 월-금
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /health
+        run: curl -fsS -m 60 --retry 2 --retry-delay 10 https://ai-investment-company.onrender.com/health > /dev/null

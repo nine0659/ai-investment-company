@@ -44,3 +44,37 @@ def check_position_sizing(ceo_decisions: dict) -> list[str]:
     if violations:
         logger.warning("[리스크게이트] 비중 밴드 위반 %d건: %s", len(violations), violations)
     return violations
+
+
+def check_portfolio_rules(ceo_decisions: dict, held_codes: set[str] | None = None) -> tuple[list[str], set[str]]:
+    """신규 편입 제안이 포트폴리오 차원 규칙을 어겼는지 검사.
+
+    반환: (경고 메시지 목록, 승인 큐에 올리면 안 되는 종목코드 집합).
+    - 확신도 비중 밴드 위반 → 차단 (규칙을 어긴 매수를 버튼 하나로 승인하게 두지 않는다)
+    - 이미 실보유 중인 종목을 '신규 편입'으로 제안 → 차단 (신규 편입이 아니라 추가매수 판단)
+    - 신규 비중 합계가 (100 - 현금목표)를 넘음 → 경고만 (어느 종목을 뺄지 코드가 정할 수 없음)
+    차단은 발송을 막는 게 아니라 승인 큐 등록만 건너뛴다 — 호출부가 경고 메시지에 명시할 것.
+    """
+    decisions = ceo_decisions or {}
+    held = {str(c).strip() for c in (held_codes or set())}
+    warnings: list[str] = []
+    blocked: set[str] = set()
+
+    for pos in decisions.get("new_positions", []) or []:
+        code = str(pos.get("code", "")).strip()
+        band = _BANDS.get(pos.get("conviction", ""))
+        size = pos.get("size_pct")
+        if band is not None and size is not None and not (band[0] <= size <= band[1]):
+            blocked.add(code)
+        if code and code in held:
+            blocked.add(code)
+            warnings.append(f"{pos.get('name', '')}({code}) 이미 보유 중 — '신규 편입'이 아니라 추가매수 판단이어야 함")
+
+    total_new = sum(p.get("size_pct") or 0 for p in decisions.get("new_positions", []) or [])
+    room = 100 - (decisions.get("cash_target_pct", 30) or 0)
+    if total_new > room:
+        warnings.append(f"신규 비중 합계 {total_new:g}%가 투자 가능 한도 {room:g}%(=100-현금목표)를 초과")
+
+    if blocked:
+        logger.warning("[리스크게이트] 승인 큐 차단 종목: %s", sorted(blocked))
+    return warnings, blocked

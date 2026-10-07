@@ -520,6 +520,13 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         try:
             from services.risk_gate import check_position_sizing
             violations = check_position_sizing(state.get("ceo_decisions", {}))
+            from services.risk_gate import check_portfolio_rules
+            from agents.ceo_agent import _load_holdings
+            rule_warns, blocked = check_portfolio_rules(
+                state.get("ceo_decisions", {}), {c for c, _n in _load_holdings()})
+            violations = violations + rule_warns
+            if blocked:
+                violations.append(f"→ 승인 큐 미등록 처리: {', '.join(sorted(blocked))} (직접 판단 후 필요하면 /holdings로 반영)")
             if violations:
                 send_message("⚠️ *리스크 게이트* (CEO 자체 비중 규칙 위반 감지)\n\n" + "\n".join(violations))
                 logger.info("[텔레그램] 리스크 게이트 경고 발송 완료")
