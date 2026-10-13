@@ -497,6 +497,18 @@ market_predictions = Table("market_predictions", metadata,
     Column("created_at",      Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# 학습 고리: 복기에서 얻은 교훈 저장소 (2026-10-13). 유효기간(expires_at) 지나면 주입 안 됨.
+learning_lessons = Table("learning_lessons", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("date",       Text,    nullable=False),
+    Column("kind",       Text),                     # market | stock
+    Column("lesson",     Text,    nullable=False),  # 다음엔 이렇게 한다(행동)
+    Column("evidence",   Text),                     # 근거 요약
+    Column("expires_at", Text),
+    Column("active",     Integer, server_default=text("1")),
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
+)
+
 # ── 초기화 ─────────────────────────────────────────────────────────
 
 def init_db():

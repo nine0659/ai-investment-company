@@ -57,7 +57,7 @@ tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지�
 | 금 15:00 | rebound_screener | 반등 스크리너 자동 발송 (LLM 미사용, 그 외엔 /rebound 온디맨드) |
 | 금 16:30 | close_market | 주간 마감 브리핑 |
 | 일 20:00 | weekly_picks | 주간 추천 1통 (국내 중기 + 미국 통합) |
-| 일 20:30 | backtest_snapshot | 추천/실매매 백테스트 스냅샷 기록 — **무발송**(LLM·텔레그램 없음, StockBench식) |
+| 일 20:30 | backtest_snapshot | 백테스트 스냅샷 기록 + **학습 고리**(`learning_loop.run_weekly`: 시장예측 소급채점→복기→교훈 저장). 교훈이 새로 생길 때만 `weekly_reflection` 1통 발송(claim 가드) |
 | 장중 매 15분 | market_monitor | 이상 신호 시에만 발송 |
 | 매일 08:05 | daily_health | 어제 잡 누락·실패 감지, 문제 시에만 경보 |
 | 매월 첫째 월 19:00 | monthly_thesis | 월간 투자관 (CEO 브리핑 근거 주입용) |
@@ -340,6 +340,17 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   이 칸에 파이프(`|`)를 넣지 말 것. 회귀 테스트: test_output_fact_check, test_review_facts,
   test_falsification_monitor, test_briefing_quality, test_data_guard·test_decision_guard·
   test_bull_bear_debate_team·test_decision_outcome_and_risk_rules 추가분.
+
+- **[개선, 2026-10-13] 학습 고리 — "결과를 기다리는" 구조에서 "과거 판단을 지금 채점하는" 구조로.**
+  `services/learning_loop.py`. 진단: 시장 방향 예측 50건 중 22건만 채점돼 있었다(마감 스냅샷이 금요일뿐이라
+  월·수 예측은 영영 미채점) + 복기는 매번 백지 시작 + 결과 주입은 종료 8건 게이트 뒤에 잠김.
+  ① yfinance ^KS11 일봉으로 미채점 예측 소급 채점(`backfill_market_outcomes`, daily_tracker·주간 잡에서 호출)
+  ② 코드가 성적표 계산(적중률, '최빈 방향만 찍기' 기준선, 방향별·확률대별, 큰 움직임) ③ LLM이 오답을 복기해
+  분석→사고→판단→교훈→의견 JSON 작성, 입력에 없는 숫자를 쓴 교훈은 코드가 폐기 ④ `learning_lessons`
+  테이블(유효 60일)에 저장, `format_for_prompt()`가 CEO 입력에 성적표+교훈 주입(표본 8건 미만이면 무동작).
+  첫 실측(50건): 적중 52% = 최빈 방향 기준선 52%와 동일, **'중립' 예측 10건 적중 0%**(KOSPI가 하루 ±1% 이상
+  움직인 날이 35/50). 아직 미구현: 종목추천·CEO 비중 결정의 소급 채점, 반증 발동/예측 이탈 시 자율 조사(④단계).
+  회귀 테스트: tests/test_learning_loop.py.
 
 ## 장애 대응 런북
 

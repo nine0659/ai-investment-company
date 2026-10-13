@@ -737,6 +737,15 @@ def run(state: InvestmentState) -> InvestmentState:
         except Exception as _oce:
             logger.debug("[CIO] 결과 채점 주입 실패: %s", _oce)
 
+        # 학습 고리: 과거 예측 성적표 + 복기 교훈 (표본 부족하면 자동으로 빈 문자열)
+        try:
+            from services.learning_loop import format_for_prompt as _learn_ctx
+            _lc = _learn_ctx()
+            if _lc:
+                context_parts.append("\n" + _lc)
+        except Exception as _lne:
+            logger.debug("[CIO] 학습 고리 주입 실패: %s", _lne)
+
         # Phase B: 단계 전환 경고 — CLOSE 브리핑에서 평가 후 팩트 시트 주입
         if run_type == RUN_TYPE_CLOSE:
             try:

@@ -382,6 +382,11 @@ def job_daily_tracker():
         from services.market_prediction_service import run_daily_verify
         stats    = run_daily_tracker(_get_kis())
         verified = run_daily_verify()
+        try:
+            from services.learning_loop import backfill_market_outcomes
+            verified += backfill_market_outcomes()   # 월·수 예측처럼 마감 스냅샷이 없는 날도 소급 채점
+        except Exception as _be:
+            logger.debug("소급 채점 실패 (무시): %s", _be)
         logger.info(
             "성과 추적 완료: 처리 %d건 (목표 %d/손절 %d/만료 %d) | 예측 검증 %d건",
             stats.get("processed", 0), stats.get("target_hit", 0),
@@ -493,6 +498,12 @@ def job_backtest_snapshot():
             detail += " | " + summarize_for_snapshot()
         except Exception as _oe:
             logger.debug("결과채점 요약 실패 (무시): %s", _oe)
+        try:
+            from services.learning_loop import run_weekly
+            detail += " | " + run_weekly()
+        except Exception as _le:
+            logger.warning("학습 고리 실패 (무시): %s", _le)
+            detail += f" | 학습고리 실패: {str(_le)[:80]}"
         logger.info("[백테스트 스냅샷] %s", detail)
         record_job("backtest_snapshot", "success", detail)
     except Exception as e:
