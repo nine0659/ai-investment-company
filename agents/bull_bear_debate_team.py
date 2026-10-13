@@ -19,7 +19,7 @@ CEO의 출력 스키마(=CIO_DECISION_START= 파싱)는 건드리지 않는다 �
 """
 import logging
 from graph.state import InvestmentState
-from clients.openai_client import chat
+from clients.openai_client import chat, chat_independent
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def run_judge(state: InvestmentState) -> InvestmentState:
     try:
         ctx = (f"[강세 논리]\n{bull}\n\n[약세 반박]\n{bear}\n\n"
                f"[시장 방향성] {state.get('market_direction', '중립')}")
-        state["debate_verdict"] = chat(_JUDGE_SYSTEM, ctx, max_tokens=300)
+        state["debate_verdict"] = chat_independent(_JUDGE_SYSTEM, ctx, max_tokens=300)   # 다른 계열 모델이 판정
         logger.info("[Judge] 완료")
     except Exception as e:
         logger.error("[Judge] 실패: %s", e)

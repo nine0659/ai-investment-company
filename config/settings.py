@@ -28,6 +28,9 @@ OPENAI_MODEL_CEO = os.getenv("OPENAI_MODEL_CEO", OPENAI_MODEL)  # CEO 전용 모
 OPENROUTER_API_KEY   = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL     = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
 OPENROUTER_MODEL_CEO = os.getenv("OPENROUTER_MODEL_CEO", OPENROUTER_MODEL)
+# 독립 검토자 모델: 주 모델(OpenAI)과 다른 계열이어야 같은 편향을 공유하지 않는다 (2026-10-13).
+# OpenRouter 키가 없거나 호출이 실패하면 주 모델로 폴백 — 검토가 멈추지는 않는다.
+OPENROUTER_MODEL_REVIEW = os.getenv("OPENROUTER_MODEL_REVIEW", "google/gemini-2.5-flash")
 
 # ── Langfuse Cloud (LLM 호출·파이프라인 관측성, 선택사항) ─────────────
 # 미설정 시(둘 중 하나라도 없으면) 관측성 없이 기존과 완전히 동일하게 동작.

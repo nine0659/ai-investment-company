@@ -27,7 +27,7 @@ def test_scorecard_baseline_and_neutral_insight():
     assert sc["n"] == 9 and sc["hits"] == 4
     assert sc["baseline_dir"] == "하락" and sc["baseline_pct"] == 56
     txt = L.format_scorecard(sc)
-    assert "중립' 예측은 5건 중 적중 0%" in txt
+    assert "중립' 스탠스는 5건 중 적중 0%" in txt
     assert "표본 9건은 적다" in txt
 
 
@@ -80,3 +80,81 @@ def test_miss_cases_show_investigation_result():
     r = {"date": "d", "predicted_dir": "중립", "predicted_prob": 50.0, "actual_dir": "하락",
          "actual_kospi": -2.0, "correct": 0, "miss_reason": "[AI 조사] 가설: 신호 간과"}
     assert "원인 조사: [AI 조사] 가설: 신호 간과" in L._miss_cases([r])
+
+
+# ── 국면 기저율 / 판단 채점 / 독립 모델 ─────────────────────────────────
+
+def _closes(chgs, start=100.0):
+    out, px = {}, start
+    for i, c in enumerate(chgs):
+        px *= 1 + c / 100
+        out[f"2026-01-{i + 1:02d}" if i < 31 else f"2026-02-{i - 30:02d}"] = px
+    return out
+
+
+def test_regime_stats_shock_base_rate():
+    from services import market_regime as R
+    # 급락(-3%) 다음 날이 +2%(재변동)인 패턴 6번 + 마지막 날 급락 → 유사 사례 6건
+    chg = [0.1, -0.1] * 4 + [-3.0, 2.0] * 6 + [0.1, -0.1] * 4 + [-3.0]
+    st = R.regime_stats(_closes(chg))
+    assert st["last_chg"] < -2.9
+    assert st["shock"]["n"] == 6 and st["shock"]["re_big"] == 100 and st["shock"]["flat"] == 0
+    txt = R.format_regime(st)
+    assert "시장 국면 기저율" in txt and "급변 직후에는 횡보가 드물었다" in txt
+
+
+def test_regime_hides_probabilities_when_few_cases():
+    from services import market_regime as R
+    chg = [0.1, -0.1] * 12 + [-3.0]
+    assert "shock" not in R.regime_stats(_closes(chg))
+
+
+def test_regime_returns_empty_when_data_short():
+    from services import market_regime as R
+    assert R.regime_stats(_closes([0.1] * 10)) == {}
+    assert R.format_regime({}) == ""
+
+
+def test_regime_discourages_neutral_when_market_is_volatile():
+    from services import market_regime as R
+    chg = [1.5, -1.4] * 12
+    txt = R.format_regime(R.regime_stats(_closes(chg)))
+    assert "중립/횡보'를 기본값으로 쓰지 말고" in txt
+
+
+def test_decision_scoring_buy_and_sell_sides():
+    from services import decision_scoring as D
+    dates = [f"2026-07-{d:02d}" for d in range(1, 20)]
+    index = {d: 100.0 for d in dates}
+    stock = {d: 100.0 + i for i, d in enumerate(dates)}          # 종목만 계속 오름 → 초과수익 +
+    buy = {"date": "2026-07-03", "run_type": "pre_market", "code": "1", "name": "A", "action": "new", "side": "buy"}
+    sell = {**buy, "action": "reduce", "side": "sell"}
+    rb = D.score_decision(buy, stock, index)
+    rs = D.score_decision(sell, stock, index)
+    assert [r["horizon"] for r in rb] == [5, 10] and all(r["correct"] for r in rb)
+    assert not any(r["correct"] for r in rs)        # 줄였는데 종목이 시장을 이겼다 → 틀린 판단
+    assert rb[0]["alpha"] > 0
+
+
+def test_decision_scoring_pending_when_horizon_not_reached():
+    from services import decision_scoring as D
+    dates = ["2026-07-01", "2026-07-02", "2026-07-03"]
+    idx = {d: 100.0 for d in dates}
+    dec = {"date": "2026-07-03", "run_type": "pre_market", "code": "1", "name": "A", "action": "new", "side": "buy"}
+    assert D.score_decision(dec, idx, idx) == []
+
+
+def test_decision_summary_warns_small_sample():
+    from services import decision_scoring as D
+    r = {"date": "2026-07-03", "code": "1", "name": "A", "action": "reduce", "side": "sell", "horizon": 5,
+         "alpha": 3.0, "correct": False}
+    txt = D.format_summary([r])
+    assert "빗나간 판단" in txt and "패턴으로 단정하지 말고" in txt
+    assert D.format_summary([]) == ""
+
+
+def test_chat_independent_falls_back_to_primary(monkeypatch):
+    from clients import openai_client as oc
+    monkeypatch.setattr(oc, "get_fallback_client", lambda: None)
+    monkeypatch.setattr(oc, "chat", lambda s, u, max_tokens=0, **k: "primary")
+    assert oc.chat_independent("s", "u") == "primary"

@@ -352,7 +352,15 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   움직인 날이 35/50). ⑤ 자율 조사(`investigate_misses`): ±1% 이상 빗나간 예측의 원인을 그날 시장 조건·수집 정보로
   AI가 '가설:'로 추적해 `market_predictions.miss_reason`에 기록(주 5건 상한, 입력에 없는 숫자는 폐기), 복기에 투입.
   아직 미구현: 종목추천·CEO 비중 결정의 소급 채점, 반증 발동 시 자율 조사.
-  회귀 테스트: tests/test_learning_loop.py.
+  **[정정, 같은 날]** `market_predictions.predicted_dir`은 순수 시장 방향 예측이 아니라 CEO **스탠스**(공격/중립/방어)를
+  방향으로 환산한 값이다 — 위 '중립 0%'는 공정한 채점이 아니었다. 성적표에 이 한계를 명시했고, 시나리오 확률(우호-비관)
+  기울기 적중을 별도 계산한다(표본 7건뿐).
+  ⑥ `services/market_regime.py`: KOSPI 일봉으로 최근 20일 변동성·횡보일 수·'전일 ±2% 급변 뒤 재변동 확률'을 코드가 계산해
+  CEO 입력에 주입(장중 미확정 봉 제외). ⑦ `services/decision_scoring.py`: cio_decisions_log의 신규편입·축소 판단을 N거래일 뒤
+  KOSPI 초과수익으로 소급 채점(첫 실측: 축소·청산 5일 후 7건 중 6건 적중이나 10일 후 3건, 신규편입 1건 오답 — 표본 8건).
+  ⑧ `clients/openai_client.chat_independent`: 토론 판정·복기·원인 조사를 주 모델(OpenAI)과 **다른 계열**(OpenRouter
+  `OPENROUTER_MODEL_REVIEW`, 기본 google/gemini-2.5-flash)이 수행 — 자기 판단을 같은 모델이 채점하면 편향이 공유된다.
+  키 없음·호출 실패 시 주 모델로 폴백. 회귀 테스트: tests/test_learning_loop.py.
 
 ## 장애 대응 런북
 

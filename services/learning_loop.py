@@ -129,6 +129,15 @@ def market_scorecard(rows: list[dict]) -> dict:
             "hi_n": len(hi), "hi_hit": round(sum(1 for r in hi if r["correct"] == 1) / len(hi) * 100),
             "lo_n": len(lo), "lo_hit": round(sum(1 for r in lo if r["correct"] == 1) / len(lo) * 100),
         }
+    # 시나리오 기울기: 우호% - 비관%가 10%p 이상이면 그 방향으로 기운 예측으로 보고, 실제 방향(횡보 제외)과 대조
+    lean = []
+    for r in scored:
+        bu, be = r.get("bull_prob"), r.get("bear_prob")
+        if bu is None or be is None or abs(bu - be) < 10 or r["actual_dir"] == "중립":
+            continue
+        lean.append(("상승" if bu > be else "하락") == r["actual_dir"])
+    if len(lean) >= MIN_PER_BUCKET:
+        sc["lean"] = {"n": len(lean), "hit_pct": round(sum(lean) / len(lean) * 100)}
     # 큰 움직임(|등락| >= 1%)을 놓친 횟수
     big = [r for r in scored if r.get("actual_kospi") is not None and abs(r["actual_kospi"]) >= 1.0]
     if big:
@@ -143,6 +152,7 @@ def format_scorecard(sc: dict) -> str:
         return ""
     lines = [
         "[시장 방향 예측 성적표 — 코드가 KOSPI 실제 등락과 소급 대조한 사실. 이 숫자만 인용]",
+        "※ 기록된 '방향'은 순수한 시장 예측이 아니라 CEO 스탠스(공격→상승/중립/방어→하락)를 환산한 값이다 — 중립 스탠스의 적중률은 보수적으로 읽어라",
         f"채점된 예측 {n}건 중 적중 {sc['hits']}건 ({sc['hit_pct']}%) / "
         f"실제 최빈 방향('{sc['baseline_dir']}')만 찍는 단순 전략의 적중 {sc['baseline_pct']}%",
         "예측 분포 " + ", ".join(f"{k} {v}회" for k, v in sc["pred_dist"].items())
@@ -151,6 +161,8 @@ def format_scorecard(sc: dict) -> str:
     if sc.get("by_pred"):
         lines.append("예측 방향별 적중: " + " | ".join(
             f"{k} 예측 {v['hit_pct']}%({v['n']}건)" for k, v in sc["by_pred"].items()))
+    if sc.get("lean"):
+        lines.append(f"시나리오 기울기(우호-비관 확률차 10%p↑) 방향 적중: {sc['lean']['hit_pct']}%({sc['lean']['n']}건, 횡보일 제외)")
     if sc.get("conf"):
         c = sc["conf"]
         lines.append(f"자신감 보정: 확률 60%+ 예측 적중 {c['hi_hit']}%({c['hi_n']}건) vs 60% 미만 {c['lo_hit']}%({c['lo_n']}건)")
@@ -160,7 +172,7 @@ def format_scorecard(sc: dict) -> str:
     neu = sc.get("by_pred", {}).get("중립")
     if neu and neu["hit_pct"] <= 20:
         real_neu = sc["actual_dist"].get("중립", 0)
-        lines.append(f"→ '중립' 예측은 {neu['n']}건 중 적중 {neu['hit_pct']}%: 실제로 ±{NEUTRAL_BAND}% 안에 머문 날은 "
+        lines.append(f"→ '중립' 스탠스는 {neu['n']}건 중 적중 {neu['hit_pct']}%: 실제로 ±{NEUTRAL_BAND}% 안에 머문 날은 "
                      f"{sc['n']}건 중 {real_neu}회뿐이다. 중립으로 뭉개지 말고 '어느 쪽으로 기울었는지'와 그 조건을 써라")
     if sc["hit_pct"] <= sc["baseline_pct"]:
         lines.append("→ 방향 예측이 '최빈 방향만 찍기'를 못 넘는다: 방향 확신을 낮추고 시나리오·조건부 서술을 우선하라")
@@ -174,10 +186,10 @@ def load_scored_predictions(limit: int = 120) -> list[dict]:
         with get_conn() as conn:
             rows = conn.execute(
                 text("SELECT date, run_type, predicted_dir, predicted_prob, actual_dir, actual_kospi, "
-                     "correct, tail_risk, miss_reason FROM market_predictions "
+                     "correct, tail_risk, miss_reason, bull_prob, bear_prob FROM market_predictions "
                      "WHERE correct IS NOT NULL ORDER BY date DESC LIMIT :n"), {"n": limit}).fetchall()
         keys = ("date", "run_type", "predicted_dir", "predicted_prob", "actual_dir", "actual_kospi",
-                "correct", "tail_risk", "miss_reason")
+                "correct", "tail_risk", "miss_reason", "bull_prob", "bear_prob")
         return [dict(zip(keys, r)) for r in rows]
     except Exception as e:
         logger.warning("[학습고리] 채점 예측 조회 실패: %s", e)
@@ -281,8 +293,15 @@ def reflect(rows: list[dict], sc: dict, chat_fn=None) -> list[dict]:
     if not facts:
         return []
     if chat_fn is None:
-        from clients.openai_client import chat as chat_fn
+        from clients.openai_client import chat_independent as chat_fn   # 자기 판단을 다른 계열 모델이 복기
     ctx = facts + "\n\n" + _miss_cases(rows)
+    try:
+        from services.decision_scoring import build_context as _dec_ctx
+        _dc = _dec_ctx()
+        if _dc:
+            ctx += "\n\n" + _dc
+    except Exception:
+        pass
     raw = chat_fn(_REFLECT_SYSTEM, ctx, max_tokens=900)
     lessons = parse_reflection(raw)
     # 근거 대조: 교훈이 입력에 없는 숫자를 들먹이면 그 항목은 버린다
@@ -339,7 +358,7 @@ def _snap(conn, date: str, after: bool = False):
 def investigate_misses(chat_fn=None, max_n: int = MAX_INVESTIGATIONS_PER_RUN) -> int:
     """큰 폭(±1%↑)으로 빗나간 예측 중 원인 미조사 건을 조사해 market_predictions.miss_reason에 기록."""
     if chat_fn is None:
-        from clients.openai_client import chat as chat_fn
+        from clients.openai_client import chat_independent as chat_fn
     done = 0
     try:
         with get_conn() as conn:
@@ -390,6 +409,14 @@ def format_for_prompt() -> str:
             parts.append(sc_txt)
     except Exception as e:
         logger.debug("[학습고리] 성적표 주입 실패: %s", e)
+    try:
+        from services.market_regime import build_context as _regime
+        from services.decision_scoring import build_context as _decs
+        for blk in (_regime(), _decs()):
+            if blk:
+                parts.append(blk)
+    except Exception as e:
+        logger.debug("[학습고리] 국면/판단채점 주입 실패: %s", e)
     ls = active_lessons()
     if ls:
         parts.append("[과거 복기에서 얻은 교훈 — 참고용. 오늘의 실제 데이터와 충돌하면 오늘 데이터가 우선]\n"

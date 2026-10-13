@@ -87,7 +87,7 @@ def test_bull_and_bear_see_different_evidence(monkeypatch):
 
 def test_judge_receives_both_sides_and_sets_verdict(monkeypatch):
     cap = {}
-    monkeypatch.setattr(bbd, "chat", lambda s, c, max_tokens=300: cap.update(ctx=c) or "우세: 약세")
+    monkeypatch.setattr(bbd, "chat_independent", lambda s, c, max_tokens=300: cap.update(ctx=c) or "우세: 약세")
     state = {"bull_case_report": "강세논리A", "bear_case_report": "약세반박B", "errors": []}
     r = bbd.run_judge(state)
     assert r["debate_verdict"] == "우세: 약세"
@@ -97,7 +97,7 @@ def test_judge_receives_both_sides_and_sets_verdict(monkeypatch):
 def test_judge_skips_when_a_side_is_missing(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("LLM 호출되면 안 됨")
-    monkeypatch.setattr(bbd, "chat", _boom)
+    monkeypatch.setattr(bbd, "chat_independent", _boom)
     r = bbd.run_judge({"bull_case_report": "x", "bear_case_report": "", "errors": []})
     assert r["debate_verdict"] == "" and r["errors"] == []
 
@@ -105,7 +105,7 @@ def test_judge_skips_when_a_side_is_missing(monkeypatch):
 def test_judge_failure_returns_error_delta(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("down")
-    monkeypatch.setattr(bbd, "chat", _boom)
+    monkeypatch.setattr(bbd, "chat_independent", _boom)
     r = bbd.run_judge({"bull_case_report": "x", "bear_case_report": "y", "errors": ["old"]})
     assert r["errors"] == ["debate_judge: down"] and r["debate_verdict"] == ""
 

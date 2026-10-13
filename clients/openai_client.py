@@ -2,7 +2,7 @@ import logging
 from collections.abc import Generator
 from config.settings import (
     OPENAI_API_KEY, OPENAI_MODEL, OPENAI_MODEL_CEO,
-    OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_MODEL_CEO,
+    OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_MODEL_CEO, OPENROUTER_MODEL_REVIEW,
 )
 from clients.langfuse_client import langfuse_configured
 
@@ -85,6 +85,27 @@ def chat(
             temperature=0.3,
         )
         return resp.choices[0].message.content.strip()
+
+
+def chat_independent(system: str, user: str, max_tokens: int = 800) -> str:
+    """주 모델과 다른 계열 모델(OpenRouter)로 독립 검토. 못 쓰면 주 모델로 폴백.
+
+    같은 모델이 쓰고 같은 모델이 채점하면 편향이 그대로 공유된다. 토론 판정·복기·원인 조사처럼
+    '남의 판단을 평가'하는 호출에 쓴다. 폴백 시에도 예외 없이 동작해 파이프라인을 막지 않는다.
+    """
+    fb = get_fallback_client()
+    if fb is not None and OPENROUTER_MODEL_REVIEW:
+        try:
+            resp = fb.chat.completions.create(
+                model=OPENROUTER_MODEL_REVIEW,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=max_tokens, temperature=0.3)
+            out = (resp.choices[0].message.content or "").strip()
+            if out:
+                return out
+        except Exception as e:
+            logger.warning("[독립검토] %s 호출 실패, 주 모델로 폴백: %s", OPENROUTER_MODEL_REVIEW, e)
+    return chat(system, user, max_tokens=max_tokens)
 
 
 def chat_stream(
