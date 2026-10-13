@@ -96,3 +96,28 @@ def test_normal_absolute_amounts_untouched():
     })
     assert warnings == []
     assert cleaned["revenue_억"] == 3_000_000
+
+
+# ── 시장 스냅샷 / 컨센서스 가드 (2026-10-13) ──────────────────────
+from services.data_guard import sanitize_market_snapshot, sanitize_consensus_gap
+
+
+def test_market_snapshot_removes_corrupt_keeps_real():
+    raw = {
+        "usd_krw": {"close": 1381.0, "change_pct": 0.4},
+        "vix": {"close": 13.0, "change_pct": 5.0},
+        "kospi": {"close": 7400.0, "change_pct": -7.18},   # 실제 급락 가능 수준 → 유지
+        "sp500": {"close": 6000.0, "change_pct": 42.0},    # 하루 +42% → 오염
+        "gold": {"close": 25.0, "change_pct": 1.0},        # 자릿수 오류
+    }
+    cleaned, warns = sanitize_market_snapshot(raw)
+    assert set(cleaned) == {"usd_krw", "vix", "kospi"}
+    assert len(warns) == 2
+
+
+def test_consensus_gap_guard():
+    assert sanitize_consensus_gap("A", 100, 130) is None
+    assert sanitize_consensus_gap("A", 100, 600) is not None      # +500%
+    assert sanitize_consensus_gap("A", 100, 20) is not None       # -80%
+    assert sanitize_consensus_gap("A", 0, 100) is not None
+    assert sanitize_consensus_gap("A", 100, 130, min_target=200, max_target=300) is not None

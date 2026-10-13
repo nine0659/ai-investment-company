@@ -71,6 +71,14 @@ def build_consensus_context(
         if not current_price or current_price <= 0:
             continue
 
+        # 데이터가드: 분할·단위 오류로 괴리율이 비현실적이면 제거(N/A) — 수정하지 않는다
+        from services.data_guard import sanitize_consensus_gap
+        _bad = sanitize_consensus_gap(code, current_price, avg_target,
+                                      cons.get("min_target", 0), cons.get("max_target", 0))
+        if _bad:
+            logger.warning("[데이터가드] 컨센서스 제외: %s", _bad)
+            continue
+
         # 괴리율: (목표가 - 현재가) / 현재가 × 100
         gap_pct = (avg_target - current_price) / current_price * 100
 

@@ -114,3 +114,71 @@ def alert_if_widespread(all_warnings: list[str], source: str, threshold: int = 5
         )
     except Exception as e:
         logger.warning("[데이터가드] 경보 발송 실패: %s", e)
+
+
+# ── 글로벌 시장 스냅샷 가드 (2026-10-13 추가) ─────────────────────
+# 종목 데이터(sanitize_stock_data)는 가드가 있었지만, CEO 브리핑의 핵심 입력인
+# raw_market_data(지수·환율·금리·VIX)는 NaN 외엔 무검증이었다(7/22 KOSPI 오염 사고의
+# 같은 계열). '실제 폭락'을 오탐하지 않도록 오류가 거의 확실한 수준만 컷한다.
+_MARKET_CLOSE_RANGES: dict[str, tuple[float, float]] = {
+    "usd_krw": (800, 2500), "us10y": (0, 15), "us3m": (0, 15), "vix": (5, 150),
+    "dxy": (60, 160), "gold": (500, 10_000), "kospi": (1_000, 15_000),
+    "kosdaq": (300, 5_000), "sp500": (500, 30_000), "nasdaq": (1_000, 60_000),
+    "dow": (5_000, 100_000), "sox": (500, 30_000),
+}
+_MARKET_MAX_ABS_CHG: dict[str, float] = {
+    "usd_krw": 8, "dxy": 6, "vix": 150, "kospi": 20, "kosdaq": 20,
+    "sp500": 15, "nasdaq": 15, "dow": 15, "sox": 20, "gold": 12,
+    "us10y": 40, "us3m": 60,
+}
+_MARKET_DEFAULT_MAX_ABS_CHG = 35.0
+
+
+def sanitize_market_snapshot(raw: dict) -> tuple[dict, list[str]]:
+    """raw_market_data의 명백한 오염 항목을 제거(수정 아님)하고 (데이터, 경고) 반환."""
+    warnings: list[str] = []
+    if not isinstance(raw, dict):
+        return raw, warnings
+    for key in list(raw.keys()):
+        d = raw[key]
+        if not isinstance(d, dict):
+            continue
+        close, chg = d.get("close"), d.get("change_pct")
+        rng = _MARKET_CLOSE_RANGES.get(key)
+        bad = None
+        if rng and close is not None:
+            try:
+                if not (rng[0] <= float(close) <= rng[1]):
+                    bad = f"close={close} 허용범위{rng} 이탈"
+            except (TypeError, ValueError):
+                bad = f"close={close!r} 숫자 아님"
+        if bad is None and chg is not None:
+            limit = _MARKET_MAX_ABS_CHG.get(key, _MARKET_DEFAULT_MAX_ABS_CHG)
+            try:
+                if abs(float(chg)) > limit:
+                    bad = f"change_pct={chg} (±{limit}% 초과)"
+            except (TypeError, ValueError):
+                bad = f"change_pct={chg!r} 숫자 아님"
+        if bad:
+            warnings.append(f"시장지표 {key}: {bad} → 제거")
+            del raw[key]
+    for w in warnings:
+        logger.warning("[데이터가드] %s", w)
+    return raw, warnings
+
+
+def sanitize_consensus_gap(code: str, current: float, avg_target: float,
+                           min_target: float = 0, max_target: float = 0) -> str | None:
+    """컨센서스 목표가 vs 현재가가 비현실적이면 사유 문자열(제거 대상), 정상이면 None.
+
+    액면분할·단위 불일치·오래된 목표가는 괴리율을 -80%나 +400% 같은 값으로 만든다 —
+    CEO는 이 괴리율을 '손익비 1차 목표'로 그대로 쓰므로(consensus_service 프롬프트) 가장 위험하다.
+    """
+    if not current or current <= 0 or not avg_target or avg_target <= 0:
+        return f"{code} 현재가/목표가 결측"
+    gap = (avg_target - current) / current * 100
+    if gap > 150 or gap < -70:
+        return f"{code} 괴리율 {gap:+.0f}% 비현실적(현재가 {current}, 목표가 {avg_target})"
+    if min_target and max_target and not (min_target * 0.99 <= avg_target <= max_target * 1.01):
+        return f"{code} 평균 목표가 {avg_target}가 최저/최고({min_target}/{max_target}) 범위 밖"
+    return None

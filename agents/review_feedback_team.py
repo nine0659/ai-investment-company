@@ -9,25 +9,23 @@ logger = logging.getLogger(__name__)
 _SYSTEM = """당신은 투자 성과 복기 전문가입니다.
 오늘 장 결과와 최근 30일 누적 패턴을 분석하여 내일 개선 방향을 도출하세요.
 
-[오늘 복기 항목]
-1. 추천 종목 수익률 실적 — 성공/실패 종목별 이유 분석 (데이터가 있을 때만)
-2. 오늘 시장 방향 예측 vs 실제 KOSPI 등락 비교 (맞췄는지, 틀렸는지 명확히)
-3. 잘된 점: 어떤 신호가 유효했는가 (구체적 사례)
-4. 개선할 점: 어떤 신호를 놓쳤는가 (구체적 사례)
+[절대 규칙]
+- 아래 입력에 있는 숫자만 인용하세요. 점수(X/10)·승률·평균수익 등 새 통계를 만들거나 계산하지 마세요.
+- 입력에 '표본 경고'가 있으면 패턴을 단정하지 말고 "가능성"으로만 쓰세요.
+- 없는 데이터(RSI 조건별 성과 등)는 "데이터 없음"이라고 쓰고 넘어가세요.
 
-[30일 패턴 분석 항목 — 오늘 데이터와 함께 반드시 포함]
-5. 반복되는 실수 패턴 — 최근 30일 중 같은 유형의 실패가 반복되는가?
-   (예: "KOSPI -1% 이상 하락일 추천 종목 성공률 낮음", "금요일 추천 성과 저조" 등)
-6. 잘 작동하는 신호 패턴 — 어떤 조건에서 추천이 성공하는가?
-   (예: "외국인+기관 동시 매수 종목 승률 80%", "RSI 28 이하 진입 시 평균 +5%" 등)
-7. 전략 편향 — 특정 섹터/테마에 과도하게 집중되고 있지 않은가?
+[복기 항목]
+1. 추천 종목 실적 — 입력에 있는 종목별 결과를 근거로 성공/실패 이유 (데이터 있을 때만)
+2. 오늘 장전 예측 vs 실제 KOSPI — 입력의 예측·실제를 그대로 비교해 맞췄는지 명확히
+3. 잘된 점 / 놓친 점: 어떤 신호가 유효했고 무엇을 놓쳤나 (구체적 사례, 입력 근거 있는 것만)
+4. 반복 실수·편향 — 입력의 요일별·종목 쏠림 팩트에 근거한 것만
 
 출력 형식:
-- 오늘 성과: N건 성공 / N건 실패 / 평균 수익률 X%
-- 예측 정확도: X/10점 + 이유 한 줄
+- 오늘 성과: 입력의 건수·수익률을 그대로 옮겨 적기
+- 예측 결과: 입력의 예측/실제 비교 한 줄 (점수 매기지 말 것)
 - 잘된 점 2가지 (구체적 종목/섹터 근거)
 - 개선점 2가지 (다음엔 어떤 신호를 추가해야 하는지)
-- [30일 패턴 발견]: 반복 실수 + 성공 패턴 각 1가지
+- [30일 패턴]: 입력 팩트로 뒷받침되는 것만 1~2가지, 없으면 "표본 부족"
 - 내일 집중 관찰: 딱 한 가지 (추상적 교훈 금지, 구체적 조건만)"""
 
 
@@ -92,6 +90,25 @@ def run(state: InvestmentState) -> InvestmentState:
             stats_text = "[최근 30일 추천 성과 통계] 데이터 부족 (3건 미만)"
 
         context_parts = [stats_text, rec_text, f"\n[30일 누적 패턴]\n{pattern_text}"]
+
+        # 요일별 성과·종목 쏠림·표본 경고 — 코드가 계산 (LLM이 통계를 지어내지 못하게)
+        try:
+            from services.review_facts import build_review_facts
+            context_parts.append("\n" + build_review_facts(recent_recs))
+        except Exception as _rfe:
+            logger.debug("[복기팀] 복기 팩트 계산 실패 (무시): %s", _rfe)
+
+        # 오늘 장전 예측(구조화)과 최근 예측 적중률 — 점수 대신 사실로 비교
+        try:
+            from services.prediction_service import get_selfcheck_context, get_accuracy_summary
+            _sc = get_selfcheck_context(date)
+            if _sc:
+                context_parts.append("\n" + _sc)
+            _acc = get_accuracy_summary(days=20)
+            if _acc:
+                context_parts.append("\n" + _acc)
+        except Exception as _pe:
+            logger.debug("[복기팀] 예측 컨텍스트 주입 실패 (무시): %s", _pe)
 
         if last:
             context_parts.append(

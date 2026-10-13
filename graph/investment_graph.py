@@ -41,6 +41,18 @@ kis = KISClient()
 
 # ── 데이터 수집 노드 ────────────────────────────────────────────
 
+def _guard_market_data(raw: dict) -> dict:
+    """글로벌 시장 스냅샷의 명백한 오염 항목 제거 + 광범위하면 경보 (data_guard)."""
+    try:
+        from services.data_guard import sanitize_market_snapshot, alert_if_widespread
+        cleaned, warns = sanitize_market_snapshot(raw)
+        alert_if_widespread(warns, "글로벌 시장 스냅샷", threshold=3)
+        return cleaned
+    except Exception as e:
+        logger.warning("[데이터가드] 시장 스냅샷 검사 실패 (원본 사용): %s", e)
+        return raw
+
+
 def collect_raw_data(state: InvestmentState) -> InvestmentState:
     logger.info("[데이터수집] 시작")
     # state["errors"]는 operator.add 채널의 실제 백업 리스트 그 자체라 직접
@@ -50,7 +62,7 @@ def collect_raw_data(state: InvestmentState) -> InvestmentState:
     _new_errors: list[str] = []
 
     try:
-        state["raw_market_data"] = fetch_global_market_data()
+        state["raw_market_data"] = _guard_market_data(fetch_global_market_data())
         freshness = check_data_freshness(state["raw_market_data"])
         state["data_freshness"] = freshness
         if freshness["warning"]:
@@ -307,6 +319,11 @@ def node_bear_case(state):
         return {}
     return bull_bear_debate_team.run_bear(state)
 
+def node_debate_judge(state):
+    if state.get("run_type") not in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
+        return {}
+    return bull_bear_debate_team.run_judge(state)
+
 def node_ceo(state):               return ceo_agent.run(state)
 def node_portfolio_manager(state): return portfolio_manager_agent.run(state)
 def node_committee(state):         return investment_committee.run(state)
@@ -533,6 +550,16 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         except Exception as e:
             logger.warning("[텔레그램] 리스크 게이트 검사 실패 (무시): %s", e)
 
+        # 브리핑 속 숫자가 분석 입력에 실제 있었는지 대조한 결과 — 많이 어긋날 때만 경고.
+        try:
+            from services.output_fact_check import format_warning
+            _fc = state.get("ceo_fact_check") or {}
+            if _fc.get("warn"):
+                send_message(format_warning(_fc))
+                logger.info("[텔레그램] 수치 검증 경고 발송 완료")
+        except Exception as e:
+            logger.warning("[텔레그램] 수치 검증 경고 실패 (무시): %s", e)
+
         errors = _errors_snapshot
         if errors:
             _SKIP_PATTERNS = ("psycopg2", "OperationalError", "supabase", "connection to server")
@@ -576,6 +603,8 @@ def collect_raw_data_global(state: InvestmentState) -> InvestmentState:
     ]:
         try:
             state[key] = fn()
+            if key == "raw_market_data":
+                state[key] = _guard_market_data(state[key])
             logger.info("[글로벌수집] %s 완료", label)
         except Exception as e:
             logger.error("[글로벌수집] %s 실패: %s", label, e)
@@ -686,6 +715,7 @@ def build_graph() -> StateGraph:
     g.add_node("midterm_stock_agent",      node_midterm_stocks)
     g.add_node("bull_case",               node_bull_case)
     g.add_node("bear_case",               node_bear_case)
+    g.add_node("debate_judge",            node_debate_judge)
     g.add_node("ceo_agent",               node_ceo)
     g.add_node("save_report",             node_save_report)
     g.add_node("deep_report",             node_deep_report)
@@ -728,7 +758,8 @@ def build_graph() -> StateGraph:
         ("portfolio_manager_agent", "midterm_stock_agent"),
         ("midterm_stock_agent",  "bull_case"),
         ("bull_case",            "bear_case"),
-        ("bear_case",            "ceo_agent"),
+        ("bear_case",            "debate_judge"),
+        ("debate_judge",         "ceo_agent"),
         ("ceo_agent",            "save_report"),
         ("save_report",          "deep_report"),
         ("deep_report",          "record_nav"),
@@ -876,6 +907,7 @@ def run_pipeline(run_type: str) -> InvestmentState:
         "deep_report_summary": "",
         "bull_case_report": "",
         "bear_case_report": "",
+        "debate_verdict": "",
     }
 
     graph = build_graph()
@@ -926,6 +958,7 @@ def _run_global(run_type: str) -> InvestmentState:
         "deep_report_summary": "",
         "bull_case_report": "",
         "bear_case_report": "",
+        "debate_verdict": "",
     }
 
     graph = build_global_graph()

@@ -770,6 +770,7 @@ def run(state: InvestmentState) -> InvestmentState:
             ("[리스크 관리팀]",                      "risk_report"),
             ("[강세 논리 — Bull]",                   "bull_case_report"),
             ("[약세 반박 — Bear, Bull 논리를 직접 반박함]", "bear_case_report"),
+            ("[토론 판정 — 중립 심판. 어느 쪽 데이터가 더 탄탄했는지(참고용, 결정은 CIO)]", "debate_verdict"),
         ]:
             if state.get(key):
                 context_parts.append(f"\n{label}\n{state[key]}")
@@ -1051,6 +1052,14 @@ def run(state: InvestmentState) -> InvestmentState:
         raw_result = chat_ceo(prompt, context, max_tokens=1800)
 
         # ── CIO 결정 로그 파싱 + 텔레그램 메시지 정리 ──────────────────────
+        # 출력 수치 대조 — 입력(프롬프트+컨텍스트)에 없던 숫자를 찾는다. 경고만, 발송은 안 막음.
+        try:
+            from services.output_fact_check import check_report_numbers
+            state["ceo_fact_check"] = check_report_numbers(raw_result, prompt, context)
+        except Exception as _fce:
+            logger.debug("[CIO] 수치 대조 실패 (무시): %s", _fce)
+            state["ceo_fact_check"] = {}
+
         _untracked_action = _find_untracked_action_line(raw_result)
         ceo_report, ceo_decisions = _parse_cio_decisions(raw_result, date, run_type)
         if _untracked_action:
