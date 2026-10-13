@@ -81,6 +81,25 @@ console = Console()
 scheduler = BlockingScheduler(timezone=TIMEZONE_STR)
 
 
+_STARTED_AT = datetime.now(ZoneInfo("Asia/Seoul"))
+
+# 1회성 배포 후 사후 점검 — 이 날짜 09:00(브리핑 종료 후)에 서버가 스스로 점검해 텔레그램 발송.
+# 반복 잡이 아니므로 job_ledger 기대 목록에는 넣지 않는다(넣으면 다음 주부터 누락 오탐).
+POST_DEPLOY_CHECK_DATE = "2026-10-14"
+
+
+def job_post_deploy_check():
+    """1회성: 장전 브리핑 실행·품질·메모리·재시작을 코드로 점검해 텔레그램으로 보고."""
+    from services.post_deploy_check import run
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    if today != POST_DEPLOY_CHECK_DATE:
+        return
+    try:
+        run(today, _STARTED_AT)
+    except Exception as e:
+        logger.error("사후 점검 실패: %s", e)
+
+
 def _on_job_finished(event) -> None:
     """모든 잡 종료(성공·예외 모두) 직후 메모리 측정+정리 — 무료 플랜 512MB 초과 재시작 대응(2026-10-13)."""
     try:
@@ -624,6 +643,21 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 매주 일요일 20:30[/cyan] 백테스트 스냅샷 기록 (무발송)")
+
+    # 1회성 배포 후 사후 점검 (날짜 지정). 재시작으로 지나간 시각이어도 6시간 안이면 즉시 실행(misfire).
+    try:
+        from datetime import datetime as _dt
+        _run_at = _dt.strptime(POST_DEPLOY_CHECK_DATE + " 09:00", "%Y-%m-%d %H:%M").replace(
+            tzinfo=ZoneInfo("Asia/Seoul"))
+        if _dt.now(ZoneInfo("Asia/Seoul")) < _run_at.replace(hour=15):
+            scheduler.add_job(
+                job_post_deploy_check, "date", run_date=_run_at,
+                id="post_deploy_check", name="[1회] 배포 후 사후 점검 리포트",
+                misfire_grace_time=6 * 3600, coalesce=True,
+            )
+            console.print(f"  [cyan]⏰ {POST_DEPLOY_CHECK_DATE} 09:00[/cyan] 배포 후 사후 점검 (1회성)")
+    except Exception as e:
+        logger.warning("사후 점검 등록 실패 (무시): %s", e)
 
 
 def shutdown(signum, frame):

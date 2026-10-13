@@ -19,6 +19,8 @@ LIMIT_MB = 512
 WARN_MB = 400            # 이 이상이면 텔레그램 경보 (한도의 약 78%)
 _ALERT_COOLDOWN_SEC = 6 * 3600
 _last_alert_ts = 0.0
+# 이 프로세스(스케줄러)가 본 컨테이너 메모리 최고치 — post_deploy_check가 읽는다.
+_peak: dict = {"mb": None, "job": "", "at": ""}
 
 
 def container_rss_mb() -> float | None:
@@ -65,6 +67,8 @@ def after_job(job_name: str) -> float | None:
         logger.info("[메모리] %s 종료 — 컨테이너 %.0fMB → 정리 후 %.0fMB (한도 %dMB)",
                     job_name, before, after if after is not None else before, LIMIT_MB)
         peak = max(before, after or 0)
+        if _peak["mb"] is None or peak > _peak["mb"]:
+            _peak.update(mb=peak, job=job_name, at=time.strftime("%m-%d %H:%M"))
         if peak >= WARN_MB and time.time() - _last_alert_ts > _ALERT_COOLDOWN_SEC:
             _last_alert_ts = time.time()
             from clients.telegram_client import send_error_alert
@@ -77,3 +81,8 @@ def after_job(job_name: str) -> float | None:
     except Exception as e:
         logger.debug("[메모리] 측정 실패 (무시): %s", e)
         return None
+
+
+def peak() -> dict:
+    """이 프로세스가 기록한 메모리 최고치 {"mb","job","at"} (측정 전이면 mb=None)."""
+    return dict(_peak)
