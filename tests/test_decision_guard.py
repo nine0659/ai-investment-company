@@ -132,3 +132,33 @@ def test_gate_allows_inconsistent_data_when_no_high_conviction_action():
         kr_index_realtime={"kospi": {"change_pct": -7.18}},
     )
     assert result["blocked"] is False
+
+
+# ── 2026-10-13 교차검증 확대 ─────────────────────────────────────
+def test_same_index_two_feeds_disagree():
+    w = market_data_inconsistencies({"kospi": {"change_pct": -0.5}}, {"kospi": {"change_pct": -7.18}})
+    assert any("같은 지수" in x for x in w)
+
+
+def test_same_index_close_enough_is_fine():
+    assert market_data_inconsistencies({"kospi": {"change_pct": -1.0}}, {"kospi": {"change_pct": -1.4}}) == []
+
+
+def test_us_indices_opposite_big_moves_flagged():
+    w = market_data_inconsistencies({"sp500": {"change_pct": 3.5}, "nasdaq": {"change_pct": -3.2}}, {})
+    assert any("S&P500" in x for x in w)
+
+
+def test_sox_vs_leaders_opposite_flagged_and_normal_not():
+    bad = market_data_inconsistencies(
+        {"sox": {"change_pct": -4.0}, "nvda": {"change_pct": 3.5}, "tsmc": {"change_pct": 3.1}}, {})
+    assert any("SOX" in x for x in bad)
+    ok = market_data_inconsistencies(
+        {"sox": {"change_pct": -4.0}, "nvda": {"change_pct": -5.0}, "tsmc": {"change_pct": -3.1}}, {})
+    assert ok == []
+
+
+def test_ceo_context_injects_inconsistency_warning_source():
+    import inspect
+    import agents.ceo_agent as ca
+    assert "데이터 불일치 경고" in inspect.getsource(ca)

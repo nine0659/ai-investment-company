@@ -2,8 +2,9 @@ from services import decision_outcome_service as dos
 from services.risk_gate import check_portfolio_rules
 
 
-def _item(i, status="target_hit", ret=10.0, alpha=4.0, adopted=False):
-    return {"rec_id": i, "code": f"00{i}", "name": f"종목{i}", "rec_date": "2026-09-01",
+def _item(i, status="target_hit", ret=10.0, alpha=4.0, adopted=False, conviction=""):
+    return {"rec_id": i, "code": f"00{i}", "name": f"종목{i}", "rec_date": f"2026-09-0{1 + i % 4}",
+            "conviction": conviction,
             "last_date": "2026-09-30", "return_pct": ret, "days_held": 20, "status": status,
             "adopted": adopted, "kospi_return_pct": 6.0, "alpha_pct": alpha}
 
@@ -28,8 +29,7 @@ def test_prompt_labels_basis_and_computes_stats(monkeypatch):
 
 
 def test_alpha_na_when_kospi_missing(monkeypatch):
-    it = _item(1, alpha=None)
-    monkeypatch.setattr(dos, "get_outcomes", lambda: [it] * 8)
+    monkeypatch.setattr(dos, "get_outcomes", lambda: [_item(i, alpha=None) for i in range(8)])
     assert "알파 N/A" in dos.format_outcomes_for_prompt()
 
 
@@ -56,3 +56,48 @@ def test_total_exceeds_room_warns_without_blocking():
 def test_clean_decisions_are_silent():
     assert check_portfolio_rules({"cash_target_pct": 30, "new_positions": []}, set()) == ([], set())
     assert check_portfolio_rules({}, None) == ([], set())
+
+
+def test_same_day_recommendations_do_not_open_the_gate(monkeypatch):
+    items = [dict(_item(i), rec_date="2026-08-30") for i in range(9)]
+    monkeypatch.setattr(dos, "get_outcomes", lambda: items)
+    assert dos.format_outcomes_for_prompt() == ""
+
+
+def test_calibration_flags_overconfidence(monkeypatch):
+    items = [_item(i, conviction="high", ret=-5.0, alpha=-8.0, status="stop_hit") for i in range(3)]
+    items += [_item(i + 3, conviction="medium") for i in range(5)]
+    monkeypatch.setattr(dos, "get_outcomes", lambda: items)
+    out = dos.format_outcomes_for_prompt()
+    assert "확신도별 실제 적중: high 0%(0/3" in out and "medium 100%" in out
+    assert "과신일 수 있으니" in out
+
+
+def test_calibration_skips_small_buckets():
+    cal = dos.calibration_by_conviction([_item(1, conviction="high"), _item(2, conviction="high")])
+    assert cal == {}
+
+
+def test_get_outcomes_falls_back_when_conviction_column_missing(monkeypatch):
+    """배포 직후 마이그레이션 전에도 조용히 빈 결과가 되면 안 된다."""
+    calls = []
+
+    class _Res:
+        def __init__(self, rows): self.rows = rows
+        def fetchall(self): return self.rows
+
+    class _Conn:
+        def execute(self, stmt, *a, **k):
+            sql = str(stmt)
+            calls.append("conviction" in sql)
+            if "sr.conviction" in sql:
+                raise RuntimeError("column sr.conviction does not exist")
+            return _Res([(1, "005930", "삼성전자", "2026-09-01", "2026-09-10", 5.0, 9, "target_hit", None, None)])
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(dos, "get_conn", lambda: _Conn())
+    monkeypatch.setattr(dos, "_kospi_return", lambda a, b: 2.0)
+    out = dos.get_outcomes()
+    assert len(out) == 1 and out[0]["alpha_pct"] == 3.0 and out[0]["conviction"] == ""
+    assert calls == [True, False]

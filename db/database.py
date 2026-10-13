@@ -220,6 +220,7 @@ stock_recommendations = Table("stock_recommendations", metadata,
     Column("close_price",  Float),
     Column("return_pct",   Float),
     Column("result",       Text),
+    Column("conviction",   Text),   # CEO 확신도(high/medium/low) — 확신도 보정용 (2026-10-13)
     Column("created_at",   Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
@@ -549,7 +550,8 @@ def _migrate_stock_recommendations():
         else:
             logger.debug("[DB] stock_recommendations.user_action 이미 존재 — 스킵")
         # 2026-10-02: 추천→내 실제 체결 연결. 채택한 추천은 이 체결가를 기준으로 추적한다.
-        for col, typ in (("fill_price", "REAL"), ("fill_qty", "INTEGER"), ("fill_date", "TEXT")):
+        for col, typ in (("fill_price", "REAL"), ("fill_qty", "INTEGER"), ("fill_date", "TEXT"),
+                         ("conviction", "TEXT")):
             if col not in cols:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE stock_recommendations ADD COLUMN {col} {typ}"))

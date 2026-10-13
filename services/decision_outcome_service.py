@@ -18,6 +18,8 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 MIN_SETTLED_FOR_PROMPT = 8   # CLAUDE.md 재개 기준(추천 8건+)과 동일. 2026-10-07 기준 종료 6건(전부 8/30 같은 날 추천)이라 아직 무동작
+MIN_DISTINCT_DATES = 3       # 서로 다른 추천일이 이만큼은 있어야 '패턴'으로 본다 (같은 날 6건 = 사실상 표본 1)
+MIN_PER_CONVICTION = 3       # 확신도 구간별 최소 표본 (미만이면 그 구간은 보정 판단 안 함)
 _TERMINAL = ("target_hit", "stop_hit", "expired")
 _STATUS_KR = {"target_hit": "목표가 도달", "stop_hit": "손절가 도달", "expired": "기간 만료",
               "tracking": "추적 중"}
@@ -43,23 +45,30 @@ def _kospi_return(from_date: str, to_date: str) -> float | None:
 
 def get_outcomes() -> list[dict]:
     """추천별 최신 추적 상태 + KOSPI 대비 알파. 최신 추천부터."""
-    try:
-        with get_conn() as conn:
-            rows = conn.execute(text("""
+    _sql = """
                 SELECT rt.rec_id, rt.code, rt.name, rt.rec_date, rt.date, rt.return_pct,
-                       rt.days_held, rt.status, sr.fill_price
+                       rt.days_held, rt.status, sr.fill_price, {conv}
                 FROM recommendation_tracking rt
                 JOIN stock_recommendations sr ON sr.id = rt.rec_id
                 WHERE rt.date = (SELECT MAX(date) FROM recommendation_tracking x
                                  WHERE x.rec_id = rt.rec_id)
                 ORDER BY rt.rec_date DESC
-            """)).fetchall()
-    except Exception as e:
-        logger.warning("[결과채점] 조회 실패: %s", e)
+            """
+    rows = None
+    # conviction 컬럼은 마이그레이션으로 추가된다 — 배포 직후 컬럼이 아직 없어도
+    # 조용히 빈 결과가 되지 않도록 컬럼 없는 쿼리로 한 번 더 시도한다.
+    for conv in ("sr.conviction", "NULL"):
+        try:
+            with get_conn() as conn:
+                rows = conn.execute(text(_sql.format(conv=conv))).fetchall()
+            break
+        except Exception as e:
+            logger.warning("[결과채점] 조회 실패 (%s): %s", conv, str(e)[:120])
+    if rows is None:
         return []
 
     out, seen = [], set()
-    for rec_id, code, name, rec_date, last_date, ret, days, status, fill in rows:
+    for rec_id, code, name, rec_date, last_date, ret, days, status, fill, conviction in rows:
         if rec_id in seen or ret is None:
             continue
         seen.add(rec_id)
@@ -69,6 +78,7 @@ def get_outcomes() -> list[dict]:
             "last_date": last_date, "return_pct": round(float(ret), 2),
             "days_held": days, "status": status or "tracking",
             "adopted": bool(fill and fill > 0),
+            "conviction": (conviction or "").lower(),
             "kospi_return_pct": kospi,
             "alpha_pct": round(float(ret) - kospi, 2) if kospi is not None else None,
         })
@@ -81,7 +91,40 @@ def summarize_for_snapshot() -> str:
     settled = [i for i in items if i["status"] in _TERMINAL]
     alphas = [i["alpha_pct"] for i in settled if i["alpha_pct"] is not None]
     avg_alpha = f"{sum(alphas) / len(alphas):+.2f}%p" if alphas else "N/A"
-    return f"결과채점 추적={len(items)} 종료={len(settled)} 종료평균알파={avg_alpha}"
+    cal = calibration_by_conviction(settled)
+    cal_txt = " 확신도적중=" + ",".join(f"{k}:{v['hit_pct']}%({v['n']})" for k, v in cal.items()) if cal else ""
+    dates = len({i["rec_date"] for i in settled})
+    return f"결과채점 추적={len(items)} 종료={len(settled)} 추천일수={dates} 종료평균알파={avg_alpha}{cal_txt}"
+
+
+def calibration_by_conviction(settled: list[dict]) -> dict[str, dict]:
+    """CEO 확신도(high/medium/low)별로 실제 적중이 따라오는지 계산 — 확신도 보정(calibration).
+
+    반환: {conviction: {"n", "wins", "hit_pct", "avg_alpha"(없으면 None)}} — 표본이
+    MIN_PER_CONVICTION 미만인 구간은 포함하지 않는다(우연과 구분 불가).
+    """
+    out: dict[str, dict] = {}
+    for conv in ("high", "medium", "low"):
+        items = [i for i in settled if i.get("conviction") == conv]
+        if len(items) < MIN_PER_CONVICTION:
+            continue
+        wins = sum(1 for i in items if i["return_pct"] > 0)
+        alphas = [i["alpha_pct"] for i in items if i.get("alpha_pct") is not None]
+        out[conv] = {
+            "n": len(items), "wins": wins, "hit_pct": round(wins / len(items) * 100),
+            "avg_alpha": round(sum(alphas) / len(alphas), 1) if alphas else None,
+        }
+    return out
+
+
+def calibration_warning(cal: dict[str, dict]) -> str:
+    """확신도가 실제 성과와 거꾸로면(high가 medium/low보다 적중이 낮음) 사실 한 줄을 반환."""
+    if "high" in cal:
+        lower = [cal[k]["hit_pct"] for k in ("medium", "low") if k in cal]
+        if lower and cal["high"]["hit_pct"] < max(lower):
+            return (f"⚠️ 확신도 high 적중률 {cal['high']['hit_pct']}%가 "
+                    f"하위 확신도 최고 {max(lower)}%보다 낮다 — high 판단이 과신일 수 있으니 비중 상향을 더 엄격히 요구하라")
+    return ""
 
 
 def format_outcomes_for_prompt(max_items: int = 8) -> str:
@@ -89,6 +132,8 @@ def format_outcomes_for_prompt(max_items: int = 8) -> str:
     settled = [i for i in get_outcomes() if i["status"] in _TERMINAL]
     if len(settled) < MIN_SETTLED_FOR_PROMPT:
         return ""
+    if len({i["rec_date"] for i in settled}) < MIN_DISTINCT_DATES:
+        return ""   # 같은 날 추천 여러 건은 독립 표본이 아니다 — 날짜가 분산될 때까지 무동작
     wins = sum(1 for i in settled if i["return_pct"] > 0)
     alphas = [i["alpha_pct"] for i in settled if i["alpha_pct"] is not None]
     lines = [
@@ -103,5 +148,14 @@ def format_outcomes_for_prompt(max_items: int = 8) -> str:
             f"- {i['name']}({i['code']}) 추천 {i['rec_date']}: {i['return_pct']:+.1f}% · {alpha} · "
             f"{_STATUS_KR.get(i['status'], i['status'])} [{basis}]"
         )
+    cal = calibration_by_conviction(settled)
+    if cal:
+        lines.append("확신도별 실제 적중: " + " | ".join(
+            f"{k} {v['hit_pct']}%({v['wins']}/{v['n']}"
+            + (f", 알파 {v['avg_alpha']:+.1f}%p" if v["avg_alpha"] is not None else "") + ")"
+            for k, v in cal.items()))
+        warn = calibration_warning(cal)
+        if warn:
+            lines.append(warn)
     lines.append("→ 오판 패턴(손절 반복 섹터·확신도 등)이 보이면 이번 판단에서 근거를 더 엄격히 요구하라.")
     return "\n".join(lines)

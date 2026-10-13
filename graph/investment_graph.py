@@ -503,6 +503,13 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         logger.warning("[텔레그램] 발송할 리포트 없음")
         return state
 
+    # 판단 재료 품질 기록 — 상류 리포트가 대거 비어도 잡은 success로 끝나던 사각지대(발송과 무관, 기록만)
+    try:
+        from services.briefing_quality import record as _record_quality
+        _record_quality(state, state.get("run_type", ""))
+    except Exception as e:
+        logger.debug("[브리핑품질] 평가 실패 (무시): %s", e)
+
     from services.decision_guard import gate_high_conviction_actions
     gate = gate_high_conviction_actions(
         state.get("ceo_decisions", {}),

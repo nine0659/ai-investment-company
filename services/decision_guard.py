@@ -23,6 +23,8 @@ HIGH_CONVICTION_CHANGE_PCT = 20.0
 HIGH_CONVICTION_NEW_SIZE_PCT = 5.0
 # 두 대리지표가 이 이상 벌어지고 부호까지 반대면 '불일치'로 본다.
 MIN_DIVERGENCE_MAGNITUDE = 3.0
+# 같은 지수를 두 경로로 받았을 때 허용하는 최대 등락률 차이(%p)
+SAME_INDEX_MAX_GAP = 2.5
 
 
 def high_conviction_actions(decisions: dict) -> list[str]:
@@ -49,6 +51,31 @@ def market_data_inconsistencies(raw_market_data: dict, kr_index_realtime: dict) 
         same_sign = (kospi > 0) == (ewy > 0)
         if not same_sign and abs(kospi) >= MIN_DIVERGENCE_MAGNITUDE and abs(ewy) >= MIN_DIVERGENCE_MAGNITUDE:
             warnings.append(f"KOSPI {kospi:+.2f}% vs EWY(한국ETF) {ewy:+.2f}% 방향 불일치")
+
+    raw = raw_market_data or {}
+
+    def _chg(key: str):
+        v = (raw.get(key) or {}).get("change_pct")
+        return v if isinstance(v, (int, float)) else None
+
+    # (2026-10-13 확장) 같은 지수를 서로 다른 수집 경로로 받은 두 값이 크게 다르면 한쪽 오염이다.
+    # 실시간 피드(KIS/yfinance 실시간)와 글로벌 일봉(^KS11)은 같은 세션을 가리켜야 한다.
+    kospi_daily = _chg("kospi")
+    if kospi is not None and kospi_daily is not None and abs(kospi - kospi_daily) >= SAME_INDEX_MAX_GAP:
+        warnings.append(f"KOSPI 실시간 {kospi:+.2f}% vs 일봉 {kospi_daily:+.2f}% — 같은 지수인데 {abs(kospi - kospi_daily):.1f}%p 차이")
+
+    # 미국 대표지수끼리(S&P500·나스닥)는 하루에 크게 반대 방향으로 움직이는 일이 거의 없다.
+    sp, nq = _chg("sp500"), _chg("nasdaq")
+    if sp is not None and nq is not None and (sp > 0) != (nq > 0) and abs(sp) >= MIN_DIVERGENCE_MAGNITUDE and abs(nq) >= MIN_DIVERGENCE_MAGNITUDE:
+        warnings.append(f"S&P500 {sp:+.2f}% vs 나스닥 {nq:+.2f}% 방향 불일치")
+
+    # 반도체지수(SOX)가 크게 빠졌는데 대장주 엔비디아·TSMC가 둘 다 크게 올랐다면 한쪽 데이터가 의심스럽다.
+    sox, nv, ts = _chg("sox"), _chg("nvda"), _chg("tsmc")
+    if sox is not None and nv is not None and ts is not None:
+        if sox <= -MIN_DIVERGENCE_MAGNITUDE and nv >= MIN_DIVERGENCE_MAGNITUDE and ts >= MIN_DIVERGENCE_MAGNITUDE:
+            warnings.append(f"SOX {sox:+.2f}% vs NVDA {nv:+.2f}%·TSM {ts:+.2f}% — 지수와 대장주가 정반대")
+        if sox >= MIN_DIVERGENCE_MAGNITUDE and nv <= -MIN_DIVERGENCE_MAGNITUDE and ts <= -MIN_DIVERGENCE_MAGNITUDE:
+            warnings.append(f"SOX {sox:+.2f}% vs NVDA {nv:+.2f}%·TSM {ts:+.2f}% — 지수와 대장주가 정반대")
     return warnings
 
 

@@ -81,6 +81,7 @@ def recs_from_cio_decisions(
             "stop_price":   int(stop),
             "target_price": int(target),
             "rationale":    pos.get("thesis", ""),
+            "conviction":   pos.get("conviction", "") or "",   # 확신도 보정(calibration)용
         })
 
     return results
@@ -269,22 +270,31 @@ def save_recommendations(date: str, recs: list[dict]) -> int:
     """
     if not recs:
         return 0
-    with get_conn() as conn:
-        for r in recs:
-            conn.execute(
-                text("DELETE FROM stock_recommendations WHERE date=:date AND code=:code"),
-                {"date": date, "code": r["code"]},
-            )
-            conn.execute(
-                text(
-                    "INSERT INTO stock_recommendations "
-                    "(date, code, name, entry_price, stop_price, target_price, rationale) "
-                    "VALUES (:date, :code, :name, :entry, :stop, :target, :rationale)"
-                ),
-                {"date": date, "code": r["code"], "name": r["name"],
-                 "entry": r["entry_price"], "stop": r["stop_price"],
-                 "target": r["target_price"], "rationale": r["rationale"]},
-            )
+    def _insert(with_conviction: bool) -> None:
+        cols = "date, code, name, entry_price, stop_price, target_price, rationale"
+        vals = ":date, :code, :name, :entry, :stop, :target, :rationale"
+        if with_conviction:
+            cols += ", conviction"
+            vals += ", :conv"
+        with get_conn() as conn:
+            for r in recs:
+                conn.execute(
+                    text("DELETE FROM stock_recommendations WHERE date=:date AND code=:code"),
+                    {"date": date, "code": r["code"]},
+                )
+                params = {"date": date, "code": r["code"], "name": r["name"],
+                          "entry": r["entry_price"], "stop": r["stop_price"],
+                          "target": r["target_price"], "rationale": r["rationale"]}
+                if with_conviction:
+                    params["conv"] = r.get("conviction") or None
+                conn.execute(text(f"INSERT INTO stock_recommendations ({cols}) VALUES ({vals})"), params)
+
+    try:
+        _insert(True)
+    except Exception as e:
+        # 배포 직후 conviction 컬럼 마이그레이션 전이어도 추천 기록 자체를 잃지 않는다
+        logger.warning("추천 저장 — conviction 컬럼 없이 재시도: %s", str(e)[:120])
+        _insert(False)
     logger.info("추천 종목 저장 완료: %d건 (%s)", len(recs), date)
     return len(recs)
 

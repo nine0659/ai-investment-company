@@ -669,6 +669,19 @@ def run(state: InvestmentState) -> InvestmentState:
                 "[CIO 핵심 수치 팩트 시트 — 브리핑에 이 수치를 그대로 인용]\n" + "\n".join(fact_rows)
             )
 
+        # 데이터 불일치 경고 — 대리지표끼리 어긋나면 한쪽이 오염됐을 수 있다.
+        # 발송 보류(decision_guard 게이트)와 별개로, CEO가 의심스러운 수치 위에 논지를
+        # 쌓지 않도록 입력 단계에서 알린다(2026-10-13).
+        try:
+            from services.decision_guard import market_data_inconsistencies
+            _incons = market_data_inconsistencies(raw_mkt, state.get("kr_index_realtime", {}))
+            if _incons:
+                context_parts.insert(1,
+                    "\n[⚠️ 데이터 불일치 경고 — 아래 수치 중 한쪽은 오염됐을 수 있음. 이 수치에만 의존한 큰 결정 금지, 판단 보류/현상 유지 우선]\n"
+                    + "\n".join(f"  - {w}" for w in _incons))
+        except Exception as _ine:
+            logger.debug("[CIO] 데이터 불일치 점검 실패: %s", _ine)
+
         # 고객 프로필 + 실보유 포트폴리오 — 자문의 대상 (팩트 시트 다음, 최상단)
         try:
             from services.profile_service import get_profile_context

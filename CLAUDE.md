@@ -317,6 +317,30 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   교훈: 새 알림·리포트에 수익률을 넣을 땐 "누구의 매매 기준인가(내 평단 vs 추천 시점
   가상)"를 먼저 정하고 라벨로 구분할 것. `tests/test_recommendation_tracker_alerts.py`가 회귀 테스트.
 
+- **[개선, 2026-10-13] 판단력·진단력 보강 8종 — "막는 장치"에서 "더 잘 판단하게 하는 장치"로.**
+  진단: 지금까지 방어(data_guard·decision_guard·risk_gate)는 틀린 숫자를 막는 데 집중했고,
+  판단 품질을 올리는 장치(검증·복기·토론·반증)는 형식뿐이었다. 보강 내용 ──
+  ① `services/output_fact_check.py`: CEO 브리핑의 단위 붙은 숫자가 입력(프롬프트+컨텍스트)에
+  있었는지 사후 대조, 5건 이상 근거 없으면 경고만(발송 안 막음). ② `services/review_facts.py`:
+  복기 프롬프트가 LLM에게 "X/10점·승률"을 만들라 하던 걸 요일별·쏠림·표본경고를 코드 계산해
+  주입하는 방식으로 교체. ③ data_guard에 `sanitize_market_snapshot`(지수·환율·VIX 오염 제거,
+  `_guard_market_data`로 수집 직후 적용)·`sanitize_consensus_gap`(괴리율 -70%/+150% 밖 제거) 추가 —
+  종목 데이터만 가드가 있고 CEO 핵심 입력인 시장 스냅샷·컨센서스는 무검증이었다.
+  ④ Bull/Bear가 서로 다른 증거를 보고 중립 판정자(`run_judge`, 그래프 노드 `debate_judge`)가
+  판정해 CEO에 전달. ⑤ `services/falsification_monitor.py`: 운영 DB의 반증 신호가 "수출 둔화"
+  같은 측정 불가 문장뿐이었다 → CEO 프롬프트가 지표+기준값 형태를 요구하고, 코드가 종가선·
+  평단 대비 %·KOSPI/환율/VIX/10Y 수준 트리거를 현재값과 비교(CEO 컨텍스트 주입 + 장중 경보 7일 1회).
+  ⑥ decision_guard 교차검증 확대(같은 지수 두 피드 차이·S&P/나스닥·SOX/NVDA·TSM), 불일치는
+  발송 보류 여부와 별개로 CEO 입력에도 경고로 주입. ⑦ 결과채점: `stock_recommendations.conviction`
+  컬럼 추가, 확신도별 실제 적중(calibration)·과신 경고, 주입 게이트에 "서로 다른 추천일 3개+" 추가
+  (같은 날 6건은 독립 표본이 아님). 마이그레이션 전 배포 직후에도 조용히 비지 않도록 폴백.
+  ⑧ `services/briefing_quality.py`: 상류 리포트 4개+ 비거나 CEO 실패·토론판정 없음이면
+  `branch:briefing_quality` fail로 기록 → daily_health가 기존 규약대로 경보(기준값은 초기 추정).
+  **프롬프트 변경 주의**: `new`/`hold` 줄의 반증신호 칸 설명문이 바뀌었다(필드 수 불변, 계약 테스트 통과).
+  이 칸에 파이프(`|`)를 넣지 말 것. 회귀 테스트: test_output_fact_check, test_review_facts,
+  test_falsification_monitor, test_briefing_quality, test_data_guard·test_decision_guard·
+  test_bull_bear_debate_team·test_decision_outcome_and_risk_rules 추가분.
+
 ## 장애 대응 런북
 
 - **08:05 헬스체크 경보 수신 시**: ① Render 대시보드에서 서비스 상태 확인(슬립/크래시)
