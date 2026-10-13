@@ -534,6 +534,52 @@ def _send_stop_advice(today: str, h: dict, pnl: float) -> None:
         _mark_sent(today, h["code"], f"stop_advice_{int(abs(tier))}")
 
 
+def _send_falsification_alert(today: str, h: dict, market_data: dict) -> None:
+    """보유종목의 반증 조건(투자 당시 CEO 기록)이 코드 판정으로 발동됐으면 경보.
+
+    기록만 하고 아무도 확인하지 않던 반증 신호를 실제로 감시한다(2026-10-13).
+    같은 종목은 7일에 한 번만 — 발동 상태가 며칠 지속돼도 매일 울리지 않는다.
+    정보 제공일 뿐 매도 지시가 아니다(드로다운 자동매도 금지 정책과 동일: 알리기만).
+    """
+    from services.falsification_monitor import evaluate
+    with get_conn() as conn:
+        row = conn.execute(
+            text("SELECT falsification FROM portfolio_positions WHERE code=:c AND status='holding'"),
+            {"c": h["code"]},
+        ).fetchone()
+    if not row or not row[0]:
+        return
+    res = evaluate(str(row[0]), h.get("price"), h.get("avg_price"), market_data)
+    if not res["fired"]:
+        return
+    if _stop_tier_already_sent_type(h["code"], "falsification", days=7):
+        return
+    msg = (
+        f"🚨 *반증 조건 발동* — {h['name']}({h['code']})\n\n"
+        f"투자 당시 기록한 '이럴 땐 근거가 훼손된다'는 조건이 충족됐습니다.\n"
+        + "\n".join(f"• {f}" for f in res["fired"])
+        + f"\n\n기록 원문: {str(row[0])[:100]}\n"
+        "→ 다음 브리핑에서 보유 근거를 재검토합니다. 자동 매도는 하지 않으며, 판단은 직접 하세요."
+    )
+    if _send_telegram(msg):
+        _mark_sent(today, h["code"], "falsification")
+
+
+def _stop_tier_already_sent_type(code: str, alert_type: str, days: int) -> bool:
+    """같은 종목·같은 타입 알림이 최근 days일 내 나갔는지."""
+    try:
+        from datetime import timedelta
+        since = (datetime.now(_KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            r = conn.execute(
+                text("SELECT 1 FROM price_alert_log WHERE code=:c AND type=:t AND date>=:d LIMIT 1"),
+                {"c": code, "t": alert_type, "d": since},
+            ).fetchone()
+        return r is not None
+    except Exception:
+        return False
+
+
 def check_portfolio_risk(today: str, market_data: dict = None, news_data: dict = None) -> None:
     """보유 종목 단일일 급락 감지 + 핵심 비중 종목 급변동 원인·대응 분석."""
     try:
@@ -585,6 +631,12 @@ def check_portfolio_risk(today: str, market_data: dict = None, news_data: dict =
                 _send_stop_advice(today, h, pnl)
             except Exception as e:
                 logger.warning("[위험] 손절 권고 실패 (%s): %s", code, e)
+
+            # CEO가 기록한 반증 조건(코드 판정 가능한 것)이 발동됐는지 — 종목당 7일 1회
+            try:
+                _send_falsification_alert(today, h, market_data or {})
+            except Exception as e:
+                logger.warning("[위험] 반증 조건 점검 실패 (%s): %s", code, e)
 
             is_core    = weight >= CORE_HOLDING_WEIGHT_MIN
             core_swing = is_core and abs(chg_pct) >= CORE_HOLDING_MOVE_MIN

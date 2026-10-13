@@ -392,7 +392,7 @@ KOSPI·주도 섹터가 다음 신호 중 2개 이상 충족 시 강세 확인 �
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 ① 분析팀 보고서와 독립적으로 팩트 시트만으로 먼저 자신의 가설을 세운다
 ② "시장 컨센서스가 옳다면 나는 무엇을 잃는가" — 반드시 역발상 기회 확인
-③ 각 포지션에 반증 신호(이것이 발생하면 투자 근거 훼손)를 반드시 명시
+③ 각 포지션에 반증 신호(이것이 발생하면 투자 근거 훼손)를 반드시 명시 — "수요 둔화" "불확실" 같은 모호한 문장 금지, 지표+기준값(숫자)이 있는 측정 가능한 조건만 허용
 ④ 이견이 없을 때도 "왜 나는 컨센서스에 동의/불동의하는가" 한 줄 명시
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -418,7 +418,7 @@ KOSPI·주도 섹터가 다음 신호 중 2개 이상 충족 시 강세 확인 �
 stance|[neutral/defensive/aggressive]|[현금목표%]
 thesis|[intact/challenged/reconsider]
 analyst|[agree/partial/disagree]|[이견 이유 — 없으면 공란]
-new|[코드]|[종목명]|[비중%]|[high/medium/low]|[mid/long]|[보유 근거 한 줄]|[early/developing/mature]|[손익비 예:3.5:1]|[반증신호 — 이것이 발생하면 투자 근거 훼손]
+new|[코드]|[종목명]|[비중%]|[high/medium/low]|[mid/long]|[보유 근거 한 줄]|[early/developing/mature]|[손익비 예:3.5:1]|[반증신호 — 지표+기준값 하나, 예: 종가 85000원 하회 / 평단 대비 -15% / KOSPI 7000 이탈 / 분기영업이익 YoY -20% 미만]
 reduce|[코드]|[종목명]|[축소%]|[이유]
 exit|[코드]|[종목명]||[이유]
 hold|[코드]|[종목명]|[high/medium/low]|[early/developing/mature/exhausted]|[재검토 트리거]|[반증신호]
@@ -686,6 +686,25 @@ def run(state: InvestmentState) -> InvestmentState:
                 context_parts.append("\n" + lc_ctx)
         except Exception as _lce:
             logger.debug("[CIO] 생애주기 주입 실패: %s", _lce)
+
+        # 반증 조건 점검 — 코드가 현재가·지표와 비교해 발동 여부를 판정 (LLM 아님)
+        if run_type in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
+            try:
+                from services.falsification_monitor import build_status_context
+                _fk = KISClient()
+                _fprices = {}
+                for _fc_code, _fc_name in _load_holdings():
+                    try:
+                        _fp = _fk.get_stock_price_with_fallback(_fc_code, market=None).get("price")
+                        if _fp:
+                            _fprices[_fc_code] = float(_fp)
+                    except Exception:
+                        pass
+                _fals_ctx = build_status_context(_fprices, raw_mkt)
+                if _fals_ctx:
+                    context_parts.append("\n" + _fals_ctx)
+            except Exception as _fe:
+                logger.debug("[CIO] 반증 조건 점검 주입 실패: %s", _fe)
 
         # Phase C: 예측 적중률 주입 (자기학습)
         try:
