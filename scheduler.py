@@ -100,6 +100,22 @@ def job_post_deploy_check():
         logger.error("사후 점검 실패: %s", e)
 
 
+POST_DEPLOY_RESULT_BRIEFING_DATE = "2026-10-14"   # 결과를 점검할 브리핑 날
+POST_DEPLOY_RESULT_DATE = "2026-10-15"            # 점검 실행일(브리핑 다음 날 09:00 — 종가가 확정된 뒤)
+
+
+def job_post_deploy_result():
+    """1회성 2단계: 수요일 브리핑 예측의 채점·반성과 스탠스 대조를 코드로 점검해 텔레그램 보고."""
+    from services.post_deploy_check import run_result
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    if today != POST_DEPLOY_RESULT_DATE:
+        return
+    try:
+        run_result(POST_DEPLOY_RESULT_BRIEFING_DATE, today, _STARTED_AT)
+    except Exception as e:
+        logger.error("결과 점검 실패: %s", e)
+
+
 def _on_job_finished(event) -> None:
     """모든 잡 종료(성공·예외 모두) 직후 메모리 측정+정리 — 무료 플랜 512MB 초과 재시작 대응(2026-10-13)."""
     try:
@@ -669,6 +685,15 @@ def setup_jobs():
                 misfire_grace_time=6 * 3600, coalesce=True,
             )
             console.print(f"  [cyan]⏰ {POST_DEPLOY_CHECK_DATE} 09:00[/cyan] 배포 후 사후 점검 (1회성)")
+        _run2 = _dt.strptime(POST_DEPLOY_RESULT_DATE + " 09:00", "%Y-%m-%d %H:%M").replace(
+            tzinfo=ZoneInfo("Asia/Seoul"))
+        if _dt.now(ZoneInfo("Asia/Seoul")) < _run2.replace(hour=15):
+            scheduler.add_job(
+                job_post_deploy_result, "date", run_date=_run2,
+                id="post_deploy_result", name="[1회] 수요일 결과 점검 리포트",
+                misfire_grace_time=6 * 3600, coalesce=True,
+            )
+            console.print(f"  [cyan]⏰ {POST_DEPLOY_RESULT_DATE} 09:00[/cyan] 수요일 결과 점검 (1회성)")
     except Exception as e:
         logger.warning("사후 점검 등록 실패 (무시): %s", e)
 

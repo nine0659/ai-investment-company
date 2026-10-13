@@ -132,3 +132,96 @@ def run(date: str | None = None, started_at: datetime | None = None) -> bool:
         raise
     record_job("post_deploy_check", "success", f"조치 {len(actions)}건")
     return True
+
+
+# ── 2단계: 수요일 결과 점검 (목요일 09:00, 1회성) ─────────────────────────────
+
+def build_result_report(result_date: str, today: str, started_at: datetime | None = None,
+                        fetcher=None) -> tuple[str, list[str]]:
+    """result_date(브리핑 날) 예측의 채점·반성과 스탠스 대조를 코드로 점검. (본문, 조치 항목)."""
+    from services.forecast_loop import score_forecasts
+    from services.learning_loop import backfill_market_outcomes
+    actions: list[str] = []
+    lines = [f"🔎 *수요일 결과 점검* ({result_date} 브리핑의 사후 평가)", ""]
+
+    try:
+        kw = {"fetcher": fetcher} if fetcher else {}
+        score_forecasts(today=today, **kw)
+        backfill_market_outcomes(today=today, **kw)
+    except Exception as e:
+        lines.append(f"• 채점 실행 오류: {str(e)[:80]}")
+        actions.append("채점 실행 오류 — Render 로그 확인")
+
+    try:
+        with get_conn() as conn:
+            fc = conn.execute(
+                text("SELECT direction, prob, low_pct, high_pct, prev_chg, actual_chg, dir_hit, range_hit, reflection "
+                     "FROM forecast_log WHERE date=:d AND run_type='pre_market' LIMIT 1"), {"d": result_date}).fetchone()
+            mp = conn.execute(
+                text("SELECT predicted_dir, predicted_prob, actual_kospi, actual_dir, correct FROM market_predictions "
+                     "WHERE date=:d AND run_type='pre_market' LIMIT 1"), {"d": result_date}).fetchone()
+            jfail = conn.execute(
+                text("SELECT job_name FROM job_runs WHERE date=:d AND status='fail'"), {"d": result_date}).fetchall()
+    except Exception as e:
+        return f"🔎 결과 점검 실패 — DB 조회 오류: {str(e)[:100]}", ["DB 조회 실패"]
+
+    # ① 독립 예측가의 예측과 결과
+    if not fc:
+        lines.append("• 독립 예측가: 🚨 그날 예측 기록 없음")
+        actions.append("독립 예측가 기록이 없었음 — 키(OPENROUTER)·예측 형식·`[예측일지]` 로그 확인")
+    elif fc[5] is None:
+        lines.append(f"• 독립 예측가: {fc[0]} {fc[1]:.0f}% — 아직 채점 불가(종가 데이터 없음)")
+        actions.append("예측 채점이 안 됐음 — 다음 daily_tracker(평일 16:20)에서 자동 재시도되는지 확인")
+    else:
+        lines.append(f"• 독립 예측가: {fc[8]}")
+        if not fc[6] and fc[1] >= 65:
+            actions.append(f"고확신({fc[1]:.0f}%) 예측이 빗나감 — 예측가 확률 상한(현재 85) 하향 또는 프롬프트 보수화 검토")
+        if not fc[7] and fc[5] is not None and abs(fc[5]) > max(abs(fc[2]), abs(fc[3])) * 1.5:
+            actions.append("실제 변동이 예상 범위의 1.5배 이상 — 변동 폭 산정에 최근 변동성 기저율을 더 강하게 반영 검토")
+
+    # ② CEO 스탠스 vs 실제, 급변 직후 중립 여부
+    if mp:
+        if mp[2] is None:
+            lines.append(f"• CEO 스탠스: {mp[0]} — 채점 불가(데이터 없음)")
+        else:
+            lines.append(f"• CEO 스탠스: {mp[0]} → 실제 {mp[2]:+.2f}% ({mp[3]}) {'적중' if mp[4] else '불일치'}")
+        prev = fc[4] if fc else None
+        if mp[0] == "중립" and prev is not None and abs(prev) >= 2.0:
+            lines.append(f"• ⚠️ 전일 {prev:+.2f}% 급변 직후인데 스탠스가 '중립'")
+            actions.append("급변 직후에도 중립 스탠스 — 기저율 지침이 CEO에 안 먹힘. 중립 상한 규칙을 코드로 강제하는 방안 검토")
+    else:
+        lines.append("• CEO 스탠스 기록 없음")
+
+    # ③ 그날 실패한 잡
+    if jfail:
+        names = ", ".join(sorted({r[0] for r in jfail}))
+        lines.append(f"• 실패한 잡: 🚨 {names}")
+        actions.append(f"그날 실패한 잡: {names}")
+
+    lines.append("")
+    if actions:
+        lines.append("*조치 필요*")
+        lines += [f"{i}. {a}" for i, a in enumerate(actions, 1)]
+    else:
+        lines.append("✅ 조치할 사항 없음 — 이 점검은 1회성이라 다시 오지 않습니다. 이후는 일요일 주간 순환 리포트로 이어집니다.")
+    return "\n".join(lines), actions
+
+
+def run_result(result_date: str, today: str | None = None, started_at: datetime | None = None) -> bool:
+    """결과 점검 실행 + 텔레그램 발송 (중복 방지 claim)."""
+    from services.job_ledger import record_job
+    from services.report_service import claim_report_slot, release_report_slot
+    from clients.telegram_client import send_message
+
+    today = today or datetime.now(_KST).strftime("%Y-%m-%d")
+    if not claim_report_slot(today, "post_deploy_result"):
+        logger.info("[결과점검] 이미 실행됨 — 스킵")
+        return False
+    body, actions = build_result_report(result_date, today, started_at)
+    try:
+        send_message(body)
+    except Exception:
+        release_report_slot(today, "post_deploy_result")
+        raise
+    record_job("post_deploy_result", "success", f"조치 {len(actions)}건")
+    return True
