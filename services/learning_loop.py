@@ -228,10 +228,10 @@ def active_lessons(limit: int = MAX_PROMPT_LESSONS, today: str | None = None) ->
     try:
         with get_conn() as conn:
             rows = conn.execute(
-                text("SELECT date, kind, lesson, evidence FROM learning_lessons "
+                text("SELECT date, kind, lesson, evidence, id FROM learning_lessons "
                      "WHERE active=1 AND (expires_at IS NULL OR expires_at >= :t) "
                      "ORDER BY id DESC LIMIT :n"), {"t": today, "n": limit}).fetchall()
-        return [{"date": r[0], "kind": r[1], "lesson": r[2], "evidence": r[3]} for r in rows]
+        return [{"date": r[0], "kind": r[1], "lesson": r[2], "evidence": r[3], "id": r[4]} for r in rows]
     except Exception as e:
         logger.debug("[학습고리] 교훈 조회 실패 (테이블 미생성 등): %s", e)
         return []
@@ -424,22 +424,26 @@ def format_for_prompt() -> str:
     return "\n\n".join(parts)
 
 
-def format_weekly_message(sc: dict, lessons: list[dict]) -> str:
-    """주간 복기 텔레그램 본문 (코드가 조립: 분석→사고→판단→교훈→의견)."""
-    lines = ["🧠 *주간 복기·교훈*", ""]
-    lines.append(f"• 시장 방향 예측: {sc['n']}건 채점, 적중 {sc['hit_pct']}% "
-                 f"(최빈 방향만 찍기 {sc['baseline_pct']}%)")
-    if sc["hit_pct"] <= sc["baseline_pct"]:
-        lines.append("  → 아직 단순 전략을 못 넘음. 방향 확신을 낮추고 조건부로 서술하도록 조정")
-    for i, ls in enumerate(lessons, 1):
-        lines += ["", f"*{i}. 교훈*", f"분석: {ls.get('analysis', '')}", f"사고: {ls.get('thought', '')}",
-                  f"판단→교훈: {ls['lesson']}", f"의견: {ls.get('opinion', '')}"]
-    lines += ["", "_다음 브리핑부터 CEO 판단 입력에 반영됩니다(60일 유효)._"]
-    return "\n".join(lines)
+def format_weekly_message(sc: dict, lessons: list[dict], cycle: str = "") -> str:
+    """주간 순환 리포트 본문 (코드가 조립: 예측→결과→반성→교훈 효과, 그리고 새 교훈의 분석→사고→판단→교훈→의견)."""
+    lines: list[str] = []
+    if cycle:
+        lines += [cycle, ""]
+    if lessons:
+        lines += ["🧠 *이번 주 복기·새 교훈*", "",
+                  f"• 시장 방향 기록(스탠스 환산): {sc['n']}건 채점, 적중 {sc['hit_pct']}% (최빈 방향만 찍기 {sc['baseline_pct']}%)"]
+        if sc["hit_pct"] <= sc["baseline_pct"]:
+            lines.append("  → 아직 단순 전략을 못 넘음. 방향 확신을 낮추고 조건부로 서술하도록 조정")
+        for i, ls in enumerate(lessons, 1):
+            lines += ["", f"*{i}. 교훈*", f"분석: {ls.get('analysis', '')}", f"사고: {ls.get('thought', '')}",
+                      f"판단→교훈: {ls['lesson']}", f"의견: {ls.get('opinion', '')}"]
+        lines += ["", "_다음 브리핑부터 CEO 판단 입력에 반영됩니다(60일 유효, 효과가 없으면 폐기)._"]
+    return "\n".join(lines).strip()
 
 
 def run_weekly(date: str | None = None) -> str:
-    """소급 채점 → 성적표 → 복기 → 교훈 저장 → (교훈이 생기면) 주간 복기 메시지 1통. 반환: job 상세."""
+    """소급 채점 → 예측 채점·반성 → 교훈 효과 검증 → 복기·새 교훈 → 주간 순환 리포트 1통. 반환: job 상세."""
+    from services import forecast_loop as FL
     date = date or datetime.now(_KST).strftime("%Y-%m-%d")
     filled = backfill_market_outcomes(today=date)
     try:
@@ -447,26 +451,41 @@ def run_weekly(date: str | None = None) -> str:
     except Exception as e:
         logger.warning("[학습고리] 자율 조사 실패 (무시): %s", e)
         investigated = 0
+    try:
+        f_scored = FL.score_forecasts(today=date)
+        f_rows = FL.load_scored()
+        f_sc = FL.scorecard(f_rows)
+        evaluated = FL.evaluate_lessons(f_rows)       # 교훈이 실제로 적중률을 올렸는지 (효과 없으면 폐기)
+    except Exception as e:
+        logger.warning("[학습고리] 예측 일지 처리 실패 (무시): %s", e)
+        f_scored, f_rows, f_sc, evaluated = 0, [], {}, []
+
     rows = load_scored_predictions()
     sc = market_scorecard(rows)
-    if sc.get("n", 0) < MIN_SCORED_FOR_REFLECT:
-        return f"학습고리 채점 {sc.get('n', 0)}건(신규 {filled}) — 표본 부족, 복기 생략"
-    lessons = reflect(rows, sc)
-    if not lessons:
-        return f"학습고리 채점 {sc['n']}건 적중 {sc['hit_pct']}%(신규 {filled}) — 교훈 생성 0건(형식/근거 미달)"
-    saved = save_lessons(lessons, date)
+    lessons: list[dict] = []
+    saved = 0
+    if sc.get("n", 0) >= MIN_SCORED_FOR_REFLECT:
+        lessons = reflect(rows, sc)
+        saved = save_lessons(lessons, date) if lessons else 0
+        if saved:
+            evaluated = FL.evaluate_lessons(f_rows)   # 방금 만든 교훈도 상태(검증 대기)에 포함
+
+    cycle = FL.format_cycle_section(f_rows, f_sc, evaluated)
+    week_ago = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+    fresh = any(r["date"] >= week_ago for r in f_rows)
     sent = False
-    if saved:
+    if saved or (cycle and fresh):
         try:
             from services.report_service import claim_report_slot, release_report_slot
             from clients.telegram_client import send_message
             if claim_report_slot(date, "weekly_reflection"):
                 try:
-                    send_message(format_weekly_message(sc, lessons))
+                    send_message(format_weekly_message(sc, lessons if saved else [], cycle))
                     sent = True
                 except Exception:
                     release_report_slot(date, "weekly_reflection")
                     raise
         except Exception as e:
-            logger.warning("[학습고리] 주간 복기 발송 실패 (교훈은 저장됨): %s", e)
-    return f"학습고리 채점 {sc['n']}건 적중 {sc['hit_pct']}%(신규 {filled}) 교훈 {saved}건 저장 조사 {investigated}건 발송={sent}"
+            logger.warning("[학습고리] 주간 리포트 발송 실패 (기록은 저장됨): %s", e)
+    return (f"학습고리 채점 {sc.get('n', 0)}건(신규 {filled}) 교훈 {saved}건 저장 조사 {investigated}건 | "
+            f"예측일지 채점 {f_scored}건 누적 {f_sc.get('n', 0)}건 교훈검증 {len(evaluated)}건 발송={sent}")

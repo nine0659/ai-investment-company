@@ -361,6 +361,13 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   ⑧ `clients/openai_client.chat_independent`: 토론 판정·복기·원인 조사를 주 모델(OpenAI)과 **다른 계열**(OpenRouter
   `OPENROUTER_MODEL_REVIEW`, 기본 google/gemini-2.5-flash)이 수행 — 자기 판단을 같은 모델이 채점하면 편향이 공유된다.
   키 없음·호출 실패 시 주 모델로 폴백. 회귀 테스트: tests/test_learning_loop.py.
+  **순환 완성 (같은 날 추가, `services/forecast_loop.py`):** ⑨ 독립 예측가(다른 계열 모델)가 PRE에서 '방향·확률·예상범위·
+  틀리는 조건'을 채점 가능한 JSON으로 예측 → `forecast_log` 기록 + CEO 입력에 "참고·반박" 블록으로 주입.
+  ⑩ 다음 날 코드가 채점하고 오차(방향 적중/변동폭 과소평가/과신)를 분석한 **즉시 반성 한 줄**을 기록(LLM 없음,
+  daily_tracker 16:20 훅). ⑪ 교훈 효과 검증: 교훈 생성 전/후 예측 적중률을 비교해 confirmed/neutral/retired
+  (생성 후 표본 8건 미만이면 pending — 결론 안 냄, retired는 자동 비활성). 기준선(전일 방향 반복·최빈 방향) 대비
+  우위(edge)와 Brier를 함께 본다. ⑫ 일요일 `weekly_reflection` 1통 = 예측→결과→반성→교훈 효과 + 새 교훈.
+  forecast_log·learning_lessons 신규 컬럼은 init_db 마이그레이션(추가만). 회귀 테스트: tests/test_forecast_loop.py.
 
 ## 장애 대응 런북
 

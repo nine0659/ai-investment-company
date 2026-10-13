@@ -745,6 +745,17 @@ def run(state: InvestmentState) -> InvestmentState:
                 context_parts.append("\n" + _lc)
         except Exception as _lne:
             logger.debug("[CIO] 학습 고리 주입 실패: %s", _lne)
+            _lc = ""
+
+        # 독립 예측가: 다른 계열 모델이 채점 가능한 형태로 오늘 KOSPI를 예측 → 일지에 기록, CEO는 참고·반박
+        if run_type == RUN_TYPE_PRE:
+            try:
+                from services.forecast_loop import forecast_for_briefing
+                _fc_ctx = forecast_for_briefing(date, run_type, raw_mkt, _lc if isinstance(_lc, str) else "")
+                if _fc_ctx:
+                    context_parts.append("\n" + _fc_ctx)
+            except Exception as _fce:
+                logger.debug("[CIO] 독립 예측가 실패: %s", _fce)
 
         # Phase B: 단계 전환 경고 — CLOSE 브리핑에서 평가 후 팩트 시트 주입
         if run_type == RUN_TYPE_CLOSE:

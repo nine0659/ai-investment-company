@@ -507,6 +507,34 @@ learning_lessons = Table("learning_lessons", metadata,
     Column("expires_at", Text),
     Column("active",     Integer, server_default=text("1")),
     Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
+    # 교훈의 효과 검증(순환의 '발전' 고리): 교훈 생성 전/후 예측 적중 비교
+    Column("status",     Text,    server_default=text("'new'")),   # new | pending | confirmed | neutral | retired
+    Column("n_before",   Integer),
+    Column("hit_before", Float),
+    Column("n_after",    Integer),
+    Column("hit_after",  Float),
+)
+
+# 구조화 예측 일지: 채점 가능한 형태(방향·확률·범위·틀리는 조건)로 기록하고 다음 날 코드가 채점·반성한다.
+forecast_log = Table("forecast_log", metadata,
+    Column("id",          Integer, primary_key=True, autoincrement=True),
+    Column("date",        Text,    nullable=False),
+    Column("run_type",    Text,    nullable=False),
+    Column("direction",   Text),                    # 상승 | 하락 | 횡보
+    Column("prob",        Float),                   # 방향이 맞을 확률(%)
+    Column("low_pct",     Float),                   # 예상 등락률 범위 하단(%)
+    Column("high_pct",    Float),
+    Column("reason",      Text),
+    Column("wrong_if",    Text),                    # 이 예측이 틀리는 조건(반증)
+    Column("model",       Text),
+    Column("prev_chg",    Float),                   # 예측 시점 전일 KOSPI 등락률(기준선 계산용)
+    Column("lessons_used", Text),                   # 입력에 들어간 교훈 id들
+    Column("actual_chg",  Float),
+    Column("dir_hit",     Integer),
+    Column("range_hit",   Integer),
+    Column("brier",       Float),
+    Column("reflection",  Text),                    # 코드가 만든 즉시 반성 한 줄
+    Column("created_at",  Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # ── 초기화 ─────────────────────────────────────────────────────────
@@ -516,6 +544,7 @@ def init_db():
     metadata.create_all(engine, checkfirst=True)
     _migrate_order_history()
     _migrate_stock_recommendations()
+    _migrate_learning_lessons()
     try:
         from services.position_lifecycle_service import migrate_portfolio_positions
         migrate_portfolio_positions()
@@ -527,6 +556,21 @@ def init_db():
     except Exception as _me2:
         logger.warning("[DB] 예측 테이블 마이그레이션 실패: %s", _me2)
     logger.info("[DB] 테이블 초기화 완료")
+
+
+def _migrate_learning_lessons():
+    """learning_lessons에 효과 검증 컬럼이 없으면 ALTER TABLE로 추가 (2026-10-13)."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        cols = [c["name"] for c in sa_inspect(engine).get_columns("learning_lessons")]
+        for col, typ in (("status", "TEXT"), ("n_before", "INTEGER"), ("hit_before", "REAL"),
+                         ("n_after", "INTEGER"), ("hit_after", "REAL")):
+            if col not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE learning_lessons ADD COLUMN {col} {typ}"))
+                logger.info("[DB] learning_lessons.%s 컬럼 추가 완료", col)
+    except Exception as e:
+        logger.warning("[DB] learning_lessons 마이그레이션 실패: %s", e)
 
 
 def _migrate_order_history():

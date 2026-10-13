@@ -385,6 +385,8 @@ def job_daily_tracker():
         try:
             from services.learning_loop import backfill_market_outcomes
             verified += backfill_market_outcomes()   # 월·수 예측처럼 마감 스냅샷이 없는 날도 소급 채점
+            from services.forecast_loop import score_forecasts
+            score_forecasts()                        # 독립 예측가 예측 채점 + 즉시 반성 한 줄
         except Exception as _be:
             logger.debug("소급 채점 실패 (무시): %s", _be)
         logger.info(
