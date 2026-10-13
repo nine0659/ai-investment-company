@@ -10,14 +10,17 @@ class _R:
     def fetchone(self): return self.rows[0] if self.rows else None
 
 
-def _patch_db(monkeypatch, pre=(), quality=(), branch=(), rep=True):
+def _patch_db(monkeypatch, pre=(), quality=(), branch=(), rep=True, forecast=True):
     def _rows(conn, date, like):
         if like == "pre_market": return list(pre)
         if like == "branch:briefing_quality": return list(quality)
         return list(branch)
 
     class _Conn:
-        def execute(self, *a, **k): return _R([(1,)] if rep else [])
+        def execute(self, sql, *a, **k):
+            if "forecast_log" in str(sql):
+                return _R([("하락", 60.0, -3.0, -0.5, "independent")] if forecast else [])
+            return _R([(1,)] if rep else [])
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
@@ -79,3 +82,15 @@ def test_job_is_actually_registered_for_the_date():
     assert s.scheduler.get_job("post_deploy_check") is not None
     s.scheduler.remove_all_jobs()
     s.POST_DEPLOY_CHECK_DATE = "2026-10-14"
+
+
+def test_missing_independent_forecast_is_action(monkeypatch):
+    _patch_db(monkeypatch, quality=[("branch:briefing_quality", "success", "ok", "t")], forecast=False)
+    body, actions = pdc.build_report("2026-10-14", None, {"mb": 330.0, "job": "pre_market", "at": "x"})
+    assert any("독립 예측가" in a for a in actions) and "예측 기록 없음" in body
+
+
+def test_independent_forecast_shown_when_present(monkeypatch):
+    _patch_db(monkeypatch, quality=[("branch:briefing_quality", "success", "ok", "t")])
+    body, actions = pdc.build_report("2026-10-14", None, {"mb": 330.0, "job": "pre_market", "at": "x"})
+    assert "독립 예측가: ✅ 하락 60%" in body and actions == []

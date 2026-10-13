@@ -72,6 +72,20 @@ def build_report(date: str, started_at: datetime | None, peak: dict) -> tuple[st
         lines.append(f"• 분석 팀 실패: ⚠️ {names}")
         actions.append(f"분석 팀 실패: {names}")
 
+    # ②-2 독립 예측가(학습 순환의 첫 고리)가 실제로 기록됐는가
+    try:
+        with get_conn() as conn:
+            fl = conn.execute(
+                text("SELECT direction, prob, low_pct, high_pct, model FROM forecast_log "
+                     "WHERE date=:d AND run_type='pre_market' LIMIT 1"), {"d": date}).fetchone()
+    except Exception:
+        fl = None
+    if fl:
+        lines.append(f"• 독립 예측가: ✅ {fl[0]} {fl[1]:.0f}% (예상 {fl[2]:+.1f}~{fl[3]:+.1f}%, {fl[4]})")
+    elif rep:
+        lines.append("• 독립 예측가: ⚠️ 오늘 예측 기록 없음")
+        actions.append("독립 예측가 기록이 없음 — Render 로그 `[예측일지]`/`독립 예측가` 확인 (OPENROUTER 키·형식 불량 가능)")
+
     # ③ 메모리
     mb = peak.get("mb")
     if mb is None:
