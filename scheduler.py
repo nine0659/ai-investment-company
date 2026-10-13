@@ -81,6 +81,19 @@ console = Console()
 scheduler = BlockingScheduler(timezone=TIMEZONE_STR)
 
 
+def _on_job_finished(event) -> None:
+    """모든 잡 종료(성공·예외 모두) 직후 메모리 측정+정리 — 무료 플랜 512MB 초과 재시작 대응(2026-10-13)."""
+    try:
+        from services.memory_watch import after_job
+        after_job(str(getattr(event, "job_id", "?")))
+    except Exception:
+        pass
+
+
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR  # noqa: E402
+scheduler.add_listener(_on_job_finished, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
+
+
 def _in_time_window(run_type: str) -> bool:
     """현재 KST 시각이 run_type의 허용 시간 윈도우 안에 있는지 확인."""
     window = _TIME_WINDOWS.get(run_type)
