@@ -66,3 +66,17 @@ def test_weekly_message_has_all_stages():
     msg = L.format_weekly_message(sc, [{"lesson": "L", "analysis": "A", "thought": "T", "opinion": "O"}])
     for key in ("분석:", "사고:", "판단→교훈:", "의견:"):
         assert key in msg
+
+
+def test_investigation_facts_include_conditions_and_actual():
+    pred = {"date": "2026-10-12", "predicted_dir": "중립", "predicted_prob": 50.0,
+            "actual_dir": "하락", "actual_kospi": -3.65, "tail_risk": "외국인 매도"}
+    before = {"kospi_chg": -2.62, "usd_krw": 1341.3, "vix": 14.84, "us10y": 5.244, "sp500_chg": 0.13, "nasdaq_chg": 0.27}
+    txt = L.build_investigation_facts(pred, before, None, ["요약A"])
+    assert "-3.65%" in txt and "-2.62%" in txt and "다음 영업일 장전 조건] 데이터 없음" in txt and "요약A" in txt
+
+
+def test_miss_cases_show_investigation_result():
+    r = {"date": "d", "predicted_dir": "중립", "predicted_prob": 50.0, "actual_dir": "하락",
+         "actual_kospi": -2.0, "correct": 0, "miss_reason": "[AI 조사] 가설: 신호 간과"}
+    assert "원인 조사: [AI 조사] 가설: 신호 간과" in L._miss_cases([r])

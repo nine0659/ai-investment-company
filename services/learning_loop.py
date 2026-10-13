@@ -246,7 +246,8 @@ def _miss_cases(rows: list[dict], k: int = 6) -> str:
     for r in misses[:k]:
         prob = f"{r['predicted_prob']:.0f}%" if r.get("predicted_prob") is not None else "확률 미기재"
         lines.append(f"- {r['date']} 예측 {r['predicted_dir']}({prob}) → 실제 {r['actual_dir']}({r['actual_kospi']:+.2f}%)"
-                     + (f" | 당시 꼬리위험 서술: {(r.get('tail_risk') or '')[:90]}" if r.get("tail_risk") else ""))
+                     + (f" | 당시 꼬리위험 서술: {(r.get('tail_risk') or '')[:90]}" if r.get("tail_risk") else "")
+                     + (f" | 원인 조사: {r['miss_reason'][:160]}" if r.get("miss_reason") else ""))
     return "[빗나간 예측 사례]\n" + ("\n".join(lines) if lines else "없음")
 
 
@@ -294,6 +295,90 @@ def reflect(rows: list[dict], sc: dict, chat_fn=None) -> list[dict]:
     return lessons
 
 
+# ── 자율 조사: 크게 빗나간 날의 원인을 그날의 데이터로 추적 ───────────────────
+
+BIG_MISS_PCT = 1.0
+MAX_INVESTIGATIONS_PER_RUN = 5     # LLM 호출 상한 (주 1회 실행 기준 비용 제한)
+
+_INVEST_SYSTEM = """당신은 시장 예측 실패 원인 조사관입니다. '예측 당시 보였던 조건'과 '실제 결과'만 보고,
+왜 빗나갔는지 가설을 1~2문장으로 쓰세요.
+- 입력에 있는 수치·뉴스만 근거로 삼으세요. 없는 사건이나 숫자를 만들지 마세요.
+- 반드시 '가설:'로 시작하고, 예측 당시 이미 보였던 신호를 놓친 것인지(놓친 신호를 구체적으로),
+  당시엔 알 수 없던 충격이었는지 구분하세요. 근거가 부족하면 '근거 부족'이라고 쓰세요."""
+
+
+def build_investigation_facts(pred: dict, before: dict | None, after: dict | None, intel: list[str]) -> str:
+    """예측 1건의 조사용 사실 묶음 (순수 함수). before=예측 당일 장전 스냅샷, after=다음 영업일 장전 스냅샷."""
+    def snap(s):
+        if not s:
+            return "데이터 없음"
+        return (f"전일 KOSPI {s.get('kospi_chg')}% · USD/KRW {s.get('usd_krw')} · VIX {s.get('vix')} · "
+                f"미10년물 {s.get('us10y')} · 미 S&P {s.get('sp500_chg')}% · 나스닥 {s.get('nasdaq_chg')}%")
+    lines = [
+        f"[예측] {pred['date']} {pred['predicted_dir']}"
+        + (f"({pred['predicted_prob']:.0f}%)" if pred.get("predicted_prob") is not None else ""),
+        f"[실제] KOSPI {pred['actual_kospi']:+.2f}% ({pred['actual_dir']})",
+        f"[예측 당시 시장 조건] {snap(before)}",
+        f"[다음 영업일 장전 조건] {snap(after)}",
+    ]
+    if pred.get("tail_risk"):
+        lines.append(f"[당시 꼬리위험 서술] {pred['tail_risk'][:200]}")
+    if intel:
+        lines.append("[당시 수집된 정보 요약] " + " / ".join(i[:140] for i in intel[:3]))
+    return "\n".join(lines)
+
+
+def _snap(conn, date: str, after: bool = False):
+    sql = ("SELECT kospi_chg, usd_krw, vix, us10y, sp500_chg, nasdaq_chg FROM market_snapshots "
+           "WHERE run_type='pre_market' AND date " + (">" if after else "=") + " :d ORDER BY date "
+           + ("ASC" if after else "DESC") + " LIMIT 1")
+    r = conn.execute(text(sql), {"d": date}).fetchone()
+    return dict(zip(("kospi_chg", "usd_krw", "vix", "us10y", "sp500_chg", "nasdaq_chg"), r)) if r else None
+
+
+def investigate_misses(chat_fn=None, max_n: int = MAX_INVESTIGATIONS_PER_RUN) -> int:
+    """큰 폭(±1%↑)으로 빗나간 예측 중 원인 미조사 건을 조사해 market_predictions.miss_reason에 기록."""
+    if chat_fn is None:
+        from clients.openai_client import chat as chat_fn
+    done = 0
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                text("SELECT id, date, predicted_dir, predicted_prob, actual_dir, actual_kospi, tail_risk "
+                     "FROM market_predictions WHERE correct=0 AND ABS(actual_kospi) >= :b "
+                     "AND (miss_reason IS NULL OR miss_reason='') ORDER BY date DESC LIMIT :n"),
+                {"b": BIG_MISS_PCT, "n": max_n}).fetchall()
+            cases = []
+            for r in rows:
+                pred = dict(zip(("id", "date", "predicted_dir", "predicted_prob", "actual_dir",
+                                 "actual_kospi", "tail_risk"), r))
+                intel = [x[0] for x in conn.execute(
+                    text("SELECT summary FROM intelligence_archive WHERE date=:d AND summary IS NOT NULL LIMIT 3"),
+                    {"d": pred["date"]}).fetchall()]
+                cases.append((pred, _snap(conn, pred["date"]), _snap(conn, pred["date"], after=True), intel))
+    except Exception as e:
+        logger.warning("[학습고리] 조사 대상 조회 실패: %s", e)
+        return 0
+    for pred, before, after, intel in cases:
+        try:
+            facts = build_investigation_facts(pred, before, after, intel)
+            why = (chat_fn(_INVEST_SYSTEM, facts, max_tokens=200) or "").strip()
+            if not why.startswith("가설"):
+                continue
+            from services.output_fact_check import check_report_numbers
+            if check_report_numbers(why, facts)["count"] > 0:      # 입력에 없는 숫자를 지어냈으면 폐기
+                continue
+            with get_conn() as conn:
+                conn.execute(text("UPDATE market_predictions SET miss_reason=:m WHERE id=:i"),
+                             {"m": "[AI 조사] " + why[:300], "i": pred["id"]})
+            done += 1
+        except Exception as e:
+            logger.warning("[학습고리] 원인 조사 실패 (%s): %s", pred.get("date"), e)
+    if done:
+        logger.info("[학습고리] 빗나간 예측 원인 조사 %d건", done)
+    return done
+
+
 # ── 프롬프트 주입 / 주간 실행 ──────────────────────────────────────────
 
 def format_for_prompt() -> str:
@@ -330,6 +415,11 @@ def run_weekly(date: str | None = None) -> str:
     """소급 채점 → 성적표 → 복기 → 교훈 저장 → (교훈이 생기면) 주간 복기 메시지 1통. 반환: job 상세."""
     date = date or datetime.now(_KST).strftime("%Y-%m-%d")
     filled = backfill_market_outcomes(today=date)
+    try:
+        investigated = investigate_misses()
+    except Exception as e:
+        logger.warning("[학습고리] 자율 조사 실패 (무시): %s", e)
+        investigated = 0
     rows = load_scored_predictions()
     sc = market_scorecard(rows)
     if sc.get("n", 0) < MIN_SCORED_FOR_REFLECT:
@@ -352,4 +442,4 @@ def run_weekly(date: str | None = None) -> str:
                     raise
         except Exception as e:
             logger.warning("[학습고리] 주간 복기 발송 실패 (교훈은 저장됨): %s", e)
-    return f"학습고리 채점 {sc['n']}건 적중 {sc['hit_pct']}%(신규 {filled}) 교훈 {saved}건 저장 발송={sent}"
+    return f"학습고리 채점 {sc['n']}건 적중 {sc['hit_pct']}%(신규 {filled}) 교훈 {saved}건 저장 조사 {investigated}건 발송={sent}"
