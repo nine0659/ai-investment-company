@@ -81,3 +81,10 @@ def test_more_roundtrip_in_test_db():
     assert briefing_facts.save_more("2026-10-14", "pre_market", "근거 상세")
     m = briefing_facts.load_more()
     assert m["more"] == "근거 상세" and m["run_type"] == "pre_market"
+
+
+def test_mirae_style_side_labels():
+    assert fill_ocr._side("현금매수") == "buy"
+    assert fill_ocr._side("신용매도") == "sell"
+    assert fill_ocr._side("매수취소") is None and fill_ocr._side("정정매도") is None
+    assert fill_ocr._side("미체결매수") is None

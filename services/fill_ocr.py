@@ -15,14 +15,19 @@ logger = logging.getLogger(__name__)
 MAX_BYTES = 8 * 1024 * 1024
 PRICE_DEVIATION_WARN = 0.40        # 현재가와 40% 넘게 다르면 확인 요청
 
-SYSTEM = """너는 증권사 앱 캡처의 글자를 옮겨 적는 OCR 도우미다. 해석·추측·계산을 하지 않는다.
-화면에 실제로 보이는 '체결된' 주문만 추출한다(미체결·주문접수·취소는 제외).
-읽을 수 없거나 화면에 없는 칸은 반드시 null. 숫자의 쉼표·단위는 제거한 순수 숫자로.
+SYSTEM = """너는 미래에셋증권(m.Stock 등) 앱 캡처의 글자를 옮겨 적는 OCR 도우미다. 해석·추측·계산을 하지 않는다.
+화면에 실제로 보이는 '체결된' 국내주식·ETF 주문만 추출한다.
+- 제외: 미체결, 주문접수, 정정, 취소, 거부 건. 해외주식(달러 표시)·펀드·채권·현금 입출금도 제외.
+- 구분 칸이 '현금매수/신용매수/장내매수/매수체결'이면 side=buy, '현금매도/신용매도/장내매도/매도체결'이면 side=sell.
+- 수량·단가는 '주문수량/주문단가'가 아니라 반드시 '체결수량/체결단가(평균단가 아님)' 칸의 값을 쓴다.
+  체결 칸이 보이지 않으면 해당 값은 null.
+- 같은 종목이 여러 줄이면 보이는 줄마다 별도 항목으로 적는다(합산은 하지 않는다).
+- 읽을 수 없거나 화면에 없는 칸은 반드시 null. 숫자의 쉼표·단위(주, 원)는 제거한 순수 숫자로.
 출력은 JSON 하나만:
 {"fills": [{"name": 종목명, "code": 6자리코드 또는 null, "side": "buy" 또는 "sell",
             "qty": 체결수량(주), "price": 체결단가(원), "date": "YYYY-MM-DD" 또는 null}],
  "readable": true 또는 false}
-체결내역이 아닌 이미지이거나 글자가 흐려 읽을 수 없으면 {"fills": [], "readable": false}."""
+체결내역 화면이 아니거나 글자가 흐려 읽을 수 없으면 {"fills": [], "readable": false}."""
 USER = "이 캡처에서 체결된 주문을 모두 JSON으로 옮겨 적어줘."
 
 
@@ -40,9 +45,11 @@ def _json_from(text: str) -> dict:
 
 def _side(v) -> str | None:
     s = str(v or "").strip().lower()
-    if s in ("buy", "매수", "사기", "b"):
+    if "취소" in s or "정정" in s or "미체결" in s:
+        return None
+    if s in ("buy", "b") or "매수" in s:
         return "buy"
-    if s in ("sell", "매도", "팔기", "s"):
+    if s in ("sell", "s") or "매도" in s:
         return "sell"
     return None
 
