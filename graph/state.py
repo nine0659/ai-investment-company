@@ -63,3 +63,4 @@ class InvestmentState(TypedDict):
     bear_case_report:    Annotated[str,  _last]
     debate_verdict:      Annotated[str,  _last]   # Bull/Bear 판정 (2026-10-13)
     ceo_fact_check:      Annotated[dict, _last]   # 출력 수치 대조 결과 (2026-10-13)
+    briefing_contradictions: Annotated[list, _last]  # 서술-수치 방향 모순 교정 목록 (2026-10-14)

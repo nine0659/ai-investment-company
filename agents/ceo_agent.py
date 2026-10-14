@@ -456,6 +456,9 @@ def _build_prompt_global() -> str:
 - 팩트 시트 실제 수치만 사용. 예시 수치 금지.
 - 전문 용어 사용 금지. 누구나 읽고 바로 판단할 수 있는 말로.
 - 모든 행동 줄에는 이유와 수치가 함께.
+- 달러/원이 오르면 '원화 약세', 내리면 '원화 강세'. 선물·지수의 방향(상승/하락)은 팩트 시트 부호 그대로.
+- 팩트 시트의 KOSPI(전일 마감) 등락이 ±3% 이상이면 '시장 분위기' 이유에 반드시 그 수치를 먼저 언급.
+- 손절·분할매도 기준은 헌장의 -15% 재검토 규칙만 인용. 임의의 새 손실 % 기준을 만들지 말 것.
 
 시장 분위기: [좋음/나쁨/보통] (기본 X%/우호 Y%/비관 Z% — 세 확률 합 100) — [한 줄 이유, 수치 포함]
 
@@ -1133,6 +1136,17 @@ def run(state: InvestmentState) -> InvestmentState:
             ceo_report = _build_summary_card(ceo_decisions) + "\n\n" + ceo_report
         except Exception as _sce:
             logger.debug("[CIO] 요약 카드 생성 실패 (본문은 정상): %s", _sce)
+        # 핵심 수치는 코드가 확정 — 수치 줄 덮어쓰기·전일 급변 경고·방향 모순 교정
+        try:
+            from services.briefing_facts import apply as _apply_facts
+            ceo_report, _contra = _apply_facts(
+                ceo_report, state.get("raw_market_data", {}),
+                state.get("kr_index_realtime", {}), run_type)
+            state["briefing_contradictions"] = _contra
+            if _contra:
+                logger.warning("[CIO] 서술-수치 방향 모순 교정: %s", _contra)
+        except Exception as _bfe:
+            logger.warning("[CIO] 확정 수치 적용 실패 (원문 유지): %s", _bfe)
         state["ceo_report"]   = ceo_report
         state["ceo_decisions"]= ceo_decisions
 
