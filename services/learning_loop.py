@@ -51,7 +51,9 @@ def fetch_kospi_closes(start: str, end: str) -> dict[str, float]:
     try:
         import yfinance as yf
         h = yf.Ticker("^KS11").history(start=start, end=end, interval="1d")
-        return {idx.strftime("%Y-%m-%d"): float(r["Close"]) for idx, r in h.iterrows()}
+        closes = {idx.strftime("%Y-%m-%d"): float(r["Close"]) for idx, r in h.iterrows()}
+        from clients.market_data_client import fill_missing_index_closes
+        return fill_missing_index_closes(closes)
     except Exception as e:
         logger.warning("[학습고리] KOSPI 일봉 조회 실패: %s", e)
         return {}

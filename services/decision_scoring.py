@@ -64,7 +64,8 @@ def fetch_stock_closes(code: str, start: str) -> dict[str, float]:
 
 
 def fetch_index_closes(start: str) -> dict[str, float]:
-    return _fetch_closes("^KS11", start)
+    from clients.market_data_client import fill_missing_index_closes
+    return fill_missing_index_closes(_fetch_closes("^KS11", start))
 
 
 def score_decision(dec: dict, stock: dict[str, float], index: dict[str, float]) -> list[dict]:

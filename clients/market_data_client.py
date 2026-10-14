@@ -1,6 +1,6 @@
 import logging
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import yfinance as yf
@@ -132,6 +132,97 @@ def _parse(ticker: yf.Ticker) -> dict:
         return {}
 
 
+# ── 네이버 금융 지수 (yfinance 보조·검증 소스) ─────────────────────────
+# 2026-10-14 사고: yfinance ^KS11 일봉에서 10/13(화) 봉이 통째로 빠져 있었다
+# (KODEX200은 -6.3%로 정상). 그래서 장전 브리핑이 "전일 KOSPI -3.65%"(10/12 값)를
+# 실제 10/13 마감(-5.46%, 6,035)인 것처럼 서술했고, 소급 채점·국면 통계도 그 하루를
+# 못 봤다. yfinance는 한국 지수 봉을 간헐적으로 놓치므로, KRX 원천을 중계하는
+# 네이버 값으로 "더 최신 날짜"가 있을 때 덮어쓴다. 실패하면 조용히 yfinance 값 유지.
+_NAVER_UA = {"User-Agent": "Mozilla/5.0"}
+
+
+def _naver_get(url: str):
+    """네이버 JSON GET. 실패 시 None (호출부는 yfinance 값을 그대로 쓴다)."""
+    try:
+        import requests
+        r = requests.get(url, headers=_NAVER_UA, timeout=8)
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        logger.debug("네이버 지수 조회 실패 (%s): %s", url, e)
+    return None
+
+
+def _num(v) -> float | None:
+    try:
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_naver_index_bars(code: str, n: int = 10) -> list[dict]:
+    """네이버 지수 일봉 최근 n개 (최신순 → 과거순 아님: 날짜 오름차순으로 반환).
+    code: "KOSPI" | "KOSDAQ". 각 항목: {date, close, change, change_pct, high, low}.
+    장중에는 오늘 봉이 미확정 값으로 포함될 수 있다(호출부가 판단)."""
+    data = _naver_get(f"https://m.stock.naver.com/api/index/{code}/price?pageSize={n}&page=1")
+    bars = []
+    for row in data or []:
+        close = _num(row.get("closePrice"))
+        chg = _num(row.get("compareToPreviousClosePrice"))
+        pct = _num(row.get("fluctuationsRatio"))
+        d = row.get("localTradedAt")
+        if close is None or chg is None or pct is None or not d:
+            continue
+        bars.append({"date": d, "close": close, "change": chg, "change_pct": pct,
+                     "high": _num(row.get("highPrice")), "low": _num(row.get("lowPrice"))})
+    return sorted(bars, key=lambda b: b["date"])
+
+
+def fill_missing_index_closes(closes: dict, code: str = "KOSPI", n: int = 60) -> dict:
+    """yfinance 종가 dict에 빠진 날짜를 네이버 값으로 채운다(없는 날짜만, 기존 값은 유지).
+    장중 미확정 오늘 봉이 섞이지 않게 15:45(KST) 전에는 오늘 날짜를 채우지 않는다."""
+    try:
+        now = datetime.now(_KST)
+        today = now.strftime("%Y-%m-%d")
+        before_close = now.hour * 60 + now.minute < 15 * 60 + 45
+        out = dict(closes)
+        for b in fetch_naver_index_bars(code, n):
+            if b["date"] in out or (b["date"] == today and before_close):
+                continue
+            out[b["date"]] = b["close"]
+        return out
+    except Exception as e:
+        logger.debug("지수 종가 보강 실패: %s", e)
+        return closes
+
+
+def _override_stale_kr_index(result: dict) -> None:
+    """글로벌 수집 결과의 kospi/kosdaq가 네이버보다 오래됐으면 네이버 확정 종가로 교체."""
+    now = datetime.now(_KST)
+    today = now.strftime("%Y-%m-%d")
+    before_close = now.hour * 60 + now.minute < 15 * 60 + 45
+    for key, code in (("kospi", "KOSPI"), ("kosdaq", "KOSDAQ")):
+        try:
+            bars = [b for b in fetch_naver_index_bars(code, 5)
+                    if not (b["date"] == today and before_close)]
+            if not bars:
+                continue
+            last = bars[-1]
+            cur = result.get(key) or {}
+            if cur.get("data_date", "") >= last["date"]:
+                continue
+            logger.warning("[한국지수] yfinance %s 최신봉 %s < 네이버 %s — 네이버 값으로 교체 (%.2f%%)",
+                           key, cur.get("data_date", "없음"), last["date"], last["change_pct"])
+            result[key] = {
+                "close": last["close"], "change": last["change"], "change_pct": last["change_pct"],
+                "high": last["high"] or last["close"], "low": last["low"] or last["close"],
+                "volume": cur.get("volume", 0), "data_date": last["date"],
+                "symbol": cur.get("symbol") or TICKERS[key], "source": "naver",
+            }
+        except Exception as e:
+            logger.debug("한국 지수 네이버 보강 실패 (%s): %s", key, e)
+
+
 _FUTURES_REALTIME = {
     "ES=F":  "S&P500선물",
     "NQ=F":  "나스닥선물",
@@ -198,6 +289,25 @@ def fetch_kr_index_realtime() -> dict:
             }
         except Exception as e:
             logger.debug("한국 지수 실시간 조회 실패 (%s): %s", sym, e)
+    # yfinance 일봉이 최신 거래일 봉을 놓쳤으면(2026-10-14 사고) 네이버 값으로 교체
+    for key, code in (("kospi", "KOSPI"), ("kosdaq", "KOSDAQ")):
+        try:
+            poll = _naver_get(f"https://polling.finance.naver.com/api/realtime/domestic/index/{code}")
+            item = ((poll or {}).get("datas") or [None])[0] or {}
+            cur, chg = _num(item.get("closePrice")), _num(item.get("compareToPreviousClosePrice"))
+            pct = _num(item.get("fluctuationsRatio"))
+            if cur is None or chg is None or pct is None or abs(pct) > _MAX_DAILY_CHANGE:
+                continue
+            old = result.get(key)
+            if old and abs(old["change_pct"] - pct) < 0.3:
+                continue  # 두 소스가 일치 — 기존 값 유지
+            if old:
+                logger.warning("[한국지수] 실시간 %s yfinance %.2f%% ≠ 네이버 %.2f%% — 네이버 값 사용",
+                               key, old["change_pct"], pct)
+            result[key] = {"current": round(cur, 2), "prev_close": round(cur - chg, 2),
+                           "change_pct": round(pct, 2)}
+        except Exception as e:
+            logger.debug("한국 지수 네이버 실시간 보강 실패 (%s): %s", key, e)
     return result
 
 
@@ -346,6 +456,8 @@ def fetch_global_market_data() -> dict:
                         result[key] = {**data, "symbol": symbol}
                 except Exception:
                     pass
+
+    _override_stale_kr_index(result)
 
     # 미국 선물 실시간 데이터 병합 (장전 브리핑 오버나잇 방향 반영)
     try:

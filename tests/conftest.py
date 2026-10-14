@@ -11,3 +11,17 @@ from pathlib import Path
 os.environ["DB_FORCE_SQLITE"] = "1"
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_naver_network(monkeypatch):
+    """네이버 지수 보강(market_data_client._naver_get)이 테스트에서 실망을 타지 않게 차단."""
+    try:
+        import clients.market_data_client as m
+        monkeypatch.setattr(m, "_naver_get", lambda url: None)
+    except Exception:
+        pass
+    yield

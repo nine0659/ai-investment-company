@@ -96,6 +96,8 @@ def fetch_closes(period: str = "2y") -> dict[str, float]:
         kst = datetime.now(ZoneInfo("Asia/Seoul"))
         if kst.hour * 60 + kst.minute < 15 * 60 + 45:
             closes.pop(kst.strftime("%Y-%m-%d"), None)
+        from clients.market_data_client import fill_missing_index_closes
+        closes = fill_missing_index_closes(closes)
         if closes:
             _CACHE.update(ts=now, closes=closes)
         return closes
