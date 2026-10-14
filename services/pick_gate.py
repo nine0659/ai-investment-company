@@ -24,6 +24,12 @@ CRASH_5D_PCT = -8.0
 CRASH_1D_PCT = -3.0
 HEAT_20D_PCT = 10.0
 HEAT_MA60_RATIO = 1.10
+US_CRASH_5D_PCT = -5.0
+US_CRASH_1D_PCT = -2.5
+US_HEAT_20D_PCT = 8.0
+US_HEAT_MA60_RATIO = 1.07
+US_CHASE_1W_PCT = 15.0         # 1주 이 이상 급등한 종목은 '추격'이라 후보에서 제외
+US_CHASE_1M_PCT = 35.0
 
 # KOSPI_TOP30(agents/midterm_agent.py) 업종 분류 — 섹터 분산 판단용
 SECTOR = {
@@ -86,8 +92,7 @@ def filter_candidates(valid: list[dict], recent: set[str], held: set[str], secto
     return kept, out
 
 
-def market_gate(closes: dict[str, float]) -> dict:
-    """KOSPI 상태로 이번 주 추천 개수 상한을 정한다. 반환: {mode, max_picks, reason, note}."""
+def _gate(closes: dict[str, float], crash5: float, crash1: float, heat20: float, heat_ma: float) -> dict:
     days = sorted(closes)
     if len(days) < 25:
         return {"mode": "unknown", "max_picks": 3, "reason": "지수 데이터 부족", "note": ""}
@@ -97,15 +102,25 @@ def market_gate(closes: dict[str, float]) -> dict:
     r20 = (c[-1] / c[-21] - 1) * 100 if len(c) > 21 else 0.0
     ma60 = sum(c[-60:]) / len(c[-60:]) if len(c) >= 60 else None
     heat = (c[-1] / ma60) if ma60 else None
-    if r5 <= CRASH_5D_PCT or r1 <= CRASH_1D_PCT:
+    if r5 <= crash5 or r1 <= crash1:
         return {"mode": "crash", "max_picks": 2,
                 "reason": f"급락 직후(5일 {r5:+.1f}%, 1일 {r1:+.1f}%)",
                 "note": "한 번에 전액 진입 금지 — 1/3씩 3회 분할, 반등 확인 전 첫 1/3만"}
-    if r20 >= HEAT_20D_PCT or (heat and heat >= HEAT_MA60_RATIO):
+    if r20 >= heat20 or (heat and heat >= heat_ma):
         return {"mode": "heated", "max_picks": 1,
                 "reason": f"단기 과열(20일 {r20:+.1f}%" + (f", 60일선 대비 {heat*100-100:+.1f}%)" if heat else ")"),
                 "note": "고점 추격 금지 — 1종목만, 분할 진입"}
     return {"mode": "normal", "max_picks": 3, "reason": f"특이 과열/급락 없음(5일 {r5:+.1f}%, 20일 {r20:+.1f}%)", "note": ""}
+
+
+def market_gate(closes: dict[str, float]) -> dict:
+    """KOSPI 상태로 이번 주 추천 개수 상한을 정한다. 반환: {mode, max_picks, reason, note}."""
+    return _gate(closes, CRASH_5D_PCT, CRASH_1D_PCT, HEAT_20D_PCT, HEAT_MA60_RATIO)
+
+
+def us_market_gate(closes: dict[str, float]) -> dict:
+    """S&P500 상태로 미국 성장주 추천 개수 상한. 미국 지수는 변동폭이 작아 기준이 더 좁다."""
+    return _gate(closes, US_CRASH_5D_PCT, US_CRASH_1D_PCT, US_HEAT_20D_PCT, US_HEAT_MA60_RATIO)
 
 
 def constraint_block(gate: dict, excluded: list[tuple[str, str]], sector_w: dict[str, float]) -> str:
@@ -149,3 +164,88 @@ def truncate_report(report: str, max_picks: int) -> str:
     tail = report[cut:]
     foot = re.search(r"^📌.*$", tail, re.M)
     return report[:cut].rstrip() + ("\n\n" + foot.group(0) if foot else "")
+
+
+# ───────────── 미국 추천 ─────────────
+# 같은 업종끼리 같이 움직이므로 업종당 1종목만 허용한다. '반도체'는 한국 보유(SK하이닉스 등)와 같은 위험이라 이름을 맞춘다.
+US_GROUP = {
+    "NVDA": "반도체", "AMD": "반도체", "SMCI": "반도체", "SOXX": "반도체",
+    "META": "빅테크", "GOOGL": "빅테크", "MSFT": "빅테크", "AMZN": "빅테크", "AAPL": "빅테크",
+    "TSLA": "전기차", "PLTR": "소프트웨어", "CRWD": "소프트웨어", "SNOW": "소프트웨어",
+}
+
+
+def recent_us_picks(days: int = COOLDOWN_DAYS, today: str | None = None) -> set[str]:
+    """최근 N일 내 '실제로 추천한' 미국 티커(카테고리가 pick_ 로 시작하는 행)."""
+    today = today or datetime.now(_KST).strftime("%Y-%m-%d")
+    cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(text("SELECT DISTINCT ticker FROM us_invest_recommendations "
+                                     "WHERE date >= :c AND category LIKE 'pick_%'"), {"c": cutoff}).fetchall()
+        return {r[0] for r in rows}
+    except Exception as e:
+        logger.debug("[추천관문] 미국 최근 추천 조회 실패: %s", e)
+        return set()
+
+
+def us_exclusion_reason(d: dict, recent: set[str], sector_w: dict[str, float], sector_cap: float = 60.0) -> str | None:
+    """후보 1건의 제외 사유(없으면 None). d: {ticker, change_1w, change_1m}"""
+    t = d["ticker"]
+    if t in recent:
+        return f"최근 {COOLDOWN_DAYS}일 내 추천한 종목(같은 판단 반복 방지)"
+    g = US_GROUP.get(t)
+    if g and sector_w.get(g, 0) >= sector_cap:
+        return f"내 계좌의 {g} 비중이 이미 {sector_w[g]:.0f}% — 같은 업종 추가 추천 금지"
+    if (d.get("change_1w") or 0) >= US_CHASE_1W_PCT or (d.get("change_1m") or 0) >= US_CHASE_1M_PCT:
+        return f"단기 급등 직후(1주 {d.get('change_1w', 0):+.0f}%·1달 {d.get('change_1m', 0):+.0f}%) — 고점 추격 금지"
+    return None
+
+
+_US_ITEM = re.compile(r"^(\d)\.\s*\[?([A-Z]{1,5})\]?", re.M)
+
+
+def enforce_us_growth(report: str, max_n: int) -> tuple[str, list[str]]:
+    """'## 성장주' 구간에서 같은 업종 중복·개수 초과 항목을 잘라내고 번호를 다시 매긴다.
+    반환: (새 리포트, 남은 티커 목록). 구간을 못 찾으면 (원문, [])."""
+    m = re.search(r"^##\s*성장주[^\n]*\n", report, re.M)
+    if not m:
+        return report, []
+    start = m.end()
+    nxt = re.search(r"^##\s", report[start:], re.M)
+    end = start + nxt.start() if nxt else len(report)
+    body = report[start:end]
+    heads = list(_US_ITEM.finditer(body))
+    if not heads:
+        return report, []
+    blocks = []
+    for i, h in enumerate(heads):
+        blocks.append((h.group(2), body[h.start(): heads[i + 1].start() if i + 1 < len(heads) else len(body)].rstrip()))
+    kept, seen = [], set()
+    for tick, blk in blocks:
+        g = US_GROUP.get(tick, tick)
+        if g in seen:
+            continue
+        seen.add(g)
+        kept.append((tick, blk))
+        if len(kept) >= max_n:
+            break
+    renum = []
+    for i, (tick, blk) in enumerate(kept, 1):
+        renum.append(re.sub(r"^\d\.", f"{i}.", blk, count=1))
+    new_body = "\n\n".join(renum) + "\n\n"
+    return report[:start] + new_body + report[end:], [t for t, _ in kept]
+
+
+def us_picks_in_report(report: str) -> dict[str, list[str]]:
+    """리포트의 섹션별 추천 티커. {'growth': [...], 'dividend': [...], 'sector': [...]}"""
+    out: dict[str, list[str]] = {"growth": [], "dividend": [], "sector": []}
+    cat = None
+    for line in report.splitlines():
+        if line.startswith("##"):
+            cat = "growth" if "성장주" in line else "dividend" if "배당" in line else "sector" if "섹터" in line else None
+            continue
+        mm = _US_ITEM.match(line.strip())
+        if cat and mm:
+            out[cat].append(mm.group(2))
+    return out

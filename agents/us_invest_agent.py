@@ -148,14 +148,23 @@ def _score_sector(d: dict) -> float:
     return round(score, 1)
 
 
-def collect_candidates() -> dict:
-    """각 카테고리 후보 데이터 수집 및 스코어링."""
+def collect_candidates(exclusion=None, excluded_out: list | None = None) -> dict:
+    """각 카테고리 후보 데이터 수집 및 스코어링.
+    exclusion(d) -> 제외 사유(str)|None  — 성장주·섹터ETF 후보에 적용(추천 관문, 2026-10-14)."""
     growth_data, div_data, sector_data = [], [], []
+
+    def _skip(d: dict) -> bool:
+        why = exclusion(d) if exclusion else None
+        if why and excluded_out is not None:
+            excluded_out.append((d.get("name") or d["ticker"], why))
+        return bool(why)
 
     for ticker, name in _GROWTH_STOCKS:
         d = _fetch_stock_data(ticker)
         if d:
             d["name"] = name
+            if _skip(d):
+                continue
             d["score"] = _score_growth(d)
             growth_data.append(d)
 
@@ -170,6 +179,8 @@ def collect_candidates() -> dict:
         d = _fetch_stock_data(ticker)
         if d:
             d["name"] = name
+            if _skip(d):
+                continue
             d["score"] = _score_sector(d)
             sector_data.append(d)
 
@@ -250,8 +261,25 @@ def run(send: bool = True) -> str:
 
     logger.info("[US투자] 주간 추천 생성 시작")
 
+    # 추천 관문(2026-10-14): 최근 추천 반복·내 쏠림 업종·급등 추격 후보 제외 + S&P500 상태별 성장주 개수 제한
+    gate = {"mode": "unknown", "max_picks": 3, "reason": "", "note": ""}
+    excluded: list[tuple[str, str]] = []
+    exclusion = None
+    sector_w: dict[str, float] = {}
     try:
-        candidates = collect_candidates()
+        from services import pick_gate
+        from services.portfolio_risk import load_positions
+        _held, sector_w = pick_gate.held_summary(load_positions(None))
+        _h = yf.Ticker("^GSPC").history(period="6mo", interval="1d")["Close"].dropna()
+        gate = pick_gate.us_market_gate({i.strftime("%Y-%m-%d"): float(v) for i, v in _h.items()})
+        _recent = pick_gate.recent_us_picks(today=date)
+        exclusion = lambda d: pick_gate.us_exclusion_reason(d, _recent, sector_w)
+        logger.info("[US추천관문] 모드=%s 성장주 최대 %d개", gate["mode"], gate["max_picks"])
+    except Exception as e:
+        logger.warning("[US추천관문] 준비 실패 — 제약 없이 진행: %s", e)
+
+    try:
+        candidates = collect_candidates(exclusion, excluded)
         logger.info("[US투자] 후보 수집 완료 — 성장주 %d개 배당ETF %d개 섹터ETF %d개",
                     len(candidates["growth"]), len(candidates["dividend"]), len(candidates["sector"]))
     except Exception as e:
@@ -261,14 +289,42 @@ def run(send: bool = True) -> str:
 
     candidate_text = _format_candidates(candidates)
     try:
-        report = chat_ceo(_SYSTEM, f"오늘 날짜: {date}\n\n{candidate_text}", max_tokens=2000)
+        from services import pick_gate as _pgc
+        candidate_text += "\n\n" + _pgc.constraint_block(
+            {**gate, "reason": gate["reason"] + " — 성장주 TOP 개수에 적용"}, excluded, sector_w)
+    except Exception as e:
+        logger.debug("[US추천관문] 제약 블록 실패: %s", e)
+    try:
+        report = chat_ceo(
+            _SYSTEM.replace("## 성장주 TOP3", f"## 성장주 TOP{gate['max_picks']} (최대 {gate['max_picks']}개, 마지막의 [이번 주 추천 제약] 우선)"),
+            f"오늘 날짜: {date}\n\n{candidate_text}", max_tokens=2000)
     except Exception:
         release_report_slot(date, "us_invest")  # 같은 날 재시도 가능하도록
         raise
 
+    # 후처리: 같은 업종 중복·개수 초과 제거 + 상태 안내 줄 (발송 전). 실제 추천 티커는 쿨다운용으로 기록한다.
+    picks: dict[str, list[str]] = {}
+    try:
+        from services import pick_gate as _pg
+        report, _kept = _pg.enforce_us_growth(report, gate["max_picks"])
+        if gate.get("note"):
+            report = f"🛡 이번 주 추천 제약(성장주): {gate['reason']} → 최대 {gate['max_picks']}종목 · {gate['note']}\n\n" + report
+        picks = _pg.us_picks_in_report(report)
+    except Exception as e:
+        logger.debug("[US추천관문] 후처리 실패 (원문 유지): %s", e)
+
     # DB 저장
     try:
         with get_conn() as conn:
+            _by_ticker = {d["ticker"]: d for items in candidates.values() for d in items}
+            for cat, tickers in picks.items():
+                for t in tickers:
+                    d = _by_ticker.get(t, {})
+                    conn.execute(
+                        text("INSERT INTO us_invest_recommendations (date, category, ticker, name, price, change_1w, change_1m, score) "
+                             "VALUES (:date, :cat, :ticker, :name, :price, :w1, :m1, :score)"),
+                        {"date": date, "cat": f"pick_{cat}", "ticker": t, "name": d.get("name", ""),
+                         "price": d.get("price"), "w1": d.get("change_1w"), "m1": d.get("change_1m"), "score": d.get("score")})
             for cat, items in candidates.items():
                 for d in items:
                     conn.execute(
