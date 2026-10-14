@@ -77,11 +77,17 @@ def record_nav(kis=None) -> dict | None:
         try:
             h = yf.Ticker("^KS11").history(period="1y", interval="1d")
             if not h.empty:
-                kospi_close = round(float(h.iloc[-1]["Close"]), 2)
-                year_start = h[h.index.year == datetime.now(_KST).year]
-                if not year_start.empty:
-                    start_price = float(year_start.iloc[0]["Close"])
-                    kospi_pct_ytd = round((kospi_close - start_price) / start_price * 100, 2)
+                from clients.market_data_client import fill_missing_index_closes
+                closes = {i.strftime("%Y-%m-%d"): float(r["Close"]) for i, r in h.iterrows()
+                          if r["Close"] == r["Close"]}              # NaN 봉 제외
+                closes = fill_missing_index_closes(closes)          # yfinance가 놓친 최신 거래일은 네이버로 보강
+                if closes:
+                    last_day = max(closes)
+                    kospi_close = round(closes[last_day], 2)
+                    yr = str(datetime.now(_KST).year)
+                    first_day = min((d for d in closes if d.startswith(yr)), default=None)
+                    if first_day and closes[first_day] > 0:
+                        kospi_pct_ytd = round((kospi_close - closes[first_day]) / closes[first_day] * 100, 2)
         except Exception as e:
             logger.debug("[NAV] KOSPI 조회 실패: %s", e)
 

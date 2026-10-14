@@ -542,13 +542,20 @@ def format_tracker_report() -> str:
         "expired":    "⏰ 만료",
     }
     held = _get_held_codes()
+    try:   # 같은 기간 KOSPI와 비교 — 시장 하락이 종목 실력 부족으로 섞여 보이지 않게
+        from services.account_perf import _index_closes, kospi_return_since
+        _closes = _index_closes()
+    except Exception:
+        _closes, kospi_return_since = {}, (lambda *_: None)
 
     def _line(item):
         st    = status_map.get(item["status"], item["status"])
         ret   = item["return_pct"] or 0
         emoji = "🔺" if ret > 0 else ("🔻" if ret < 0 else "➖")
+        mk = kospi_return_since(item.get("rec_date", ""), _closes)
+        vs = f" · 시장 대비 {ret - mk:+.1f}%p" if mk is not None else ""
         return (f"{st} {item['name']}({item['code']}) "
-                f"{emoji}{ret:+.2f}% ({item['days_held']}일) [{item['rec_date']}]"
+                f"{emoji}{ret:+.2f}%{vs} ({item['days_held']}일) [{item['rec_date']}]"
                 + (" 📌실보유" if item["code"] in held else ""))
 
     adopted = [i for i in items if i.get("adopted")]

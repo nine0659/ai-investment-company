@@ -410,6 +410,26 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
             _send(chat_id, f"❌ 등록 실패: {e}")
         return
 
+    # ── /holdings date CODE YYYY-MM-DD — 실제 매수일 보정(지수 비교·성과 계산 정확도) ──
+    if sub == "date":
+        import re as _re
+        if len(parts) < 3 or not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[2]):
+            _send(chat_id, "❌ 사용법: `/holdings date CODE YYYY-MM-DD`\n예: `/holdings date 000660 2026-06-20`")
+            return
+        code = parts[1].zfill(6) if parts[1].isdigit() else parts[1].upper()
+        try:
+            from db.database import get_conn as _gc
+            from sqlalchemy import text as _t
+            with _gc() as _c:
+                r = _c.execute(_t("UPDATE portfolio_positions SET entry_date=:d WHERE code=:c AND status='holding'"),
+                               {"d": parts[2], "c": code})
+            _send(chat_id, f"✅ `{code}` 매수일을 {parts[2]}로 고쳤습니다. `계좌성과`에서 지수 비교가 이 날짜부터 계산됩니다."
+                  if r.rowcount else f"❌ 보유 중인 `{code}`를 찾지 못했습니다.")
+        except Exception as e:
+            logger.error("[Bot] /holdings date 오류: %s", e)
+            _send(chat_id, f"❌ 수정 실패: {e}")
+        return
+
     # ── /holdings unlink CODE — 잘못 연결된 추천↔체결 해제 ────────────────
     if sub == "unlink":
         if len(parts) < 2:
