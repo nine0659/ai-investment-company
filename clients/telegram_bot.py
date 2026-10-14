@@ -122,6 +122,33 @@ def _typing(chat_id: str) -> None:
 
 # ── 명령 핸들러 ────────────────────────────────────────────────
 
+def _cmd_menu(chat_id: str, _args: str) -> None:
+    """하단 한글 버튼 키보드를 띄운다(버튼을 누르면 해당 한글 명령이 전송됨)."""
+    from clients.telegram_aliases import MENU_KEYBOARD
+    try:
+        requests.post(f"{_BASE}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": "한글 메뉴를 열었습니다. 버튼을 누르거나 `위험`, `일정`처럼 한글로 입력하세요.\n"
+                    "(주문 계열은 `/매수`처럼 슬래시를 붙여야 인식됩니다)",
+            "parse_mode": "Markdown",
+            "reply_markup": {"keyboard": [[{"text": b} for b in row] for row in MENU_KEYBOARD],
+                             "resize_keyboard": True, "is_persistent": True},
+        }, timeout=15)
+    except Exception as e:
+        logger.warning("[Bot] 메뉴 전송 실패: %s", e)
+        _send(chat_id, "메뉴를 열지 못했습니다. `위험`, `일정`처럼 한글로 직접 입력해도 됩니다.")
+
+
+def _register_command_menu() -> None:
+    """텔레그램 '/' 메뉴에 명령과 한글 설명 등록(메시지 발송 없음, 멱등)."""
+    try:
+        from clients.telegram_aliases import COMMAND_MENU
+        requests.post(f"{_BASE}/setMyCommands", json={
+            "commands": [{"command": c, "description": d[:256]} for c, d in COMMAND_MENU]}, timeout=10)
+    except Exception as e:
+        logger.debug("[Bot] 명령 메뉴 등록 실패(무시): %s", e)
+
+
 def _cmd_start(chat_id: str, _args: str) -> None:
     _send(
         chat_id,
@@ -142,7 +169,9 @@ def _cmd_start(chat_id: str, _args: str) -> None:
 
 def _cmd_help(chat_id: str, _args: str) -> None:
     msg = (
-        "🤖 *AI 투자 어시스턴트 명령어*\n\n"
+        "🤖 *AI 투자 어시스턴트 명령어*\n"
+        "💡 한글로도 됩니다: `위험`, `일정`, `보유`, `더보기` … (`메뉴`를 입력하면 한글 버튼이 뜹니다. "
+        "주문 계열은 `/매수`처럼 슬래시 필요)\n\n"
         "📊 *시장·종목 조회*\n"
         "`/research [코드 또는 회사명]` — 기업 종합 투자 분석\n"
         "`/search [검색어]` — 종목코드 검색\n"
@@ -1366,6 +1395,7 @@ _HANDLERS: dict = {
     "/did":       lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_did(c, a, _send),
     "/ledger":    lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_ledger(c, a, _send),
     "/more":      lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_more(c, a, _send),
+    "/menu":      lambda c, a: _cmd_menu(c, a),
 }
 
 
@@ -1374,6 +1404,11 @@ def _dispatch(chat_id: str, text: str) -> None:
     text = text.strip()
     if not text:
         return
+    try:
+        from clients.telegram_aliases import resolve
+        text = resolve(text)       # "/위험", "위험" → "/risk"
+    except Exception as _ae:
+        logger.debug("[Bot] 별칭 해석 실패(원문 사용): %s", _ae)
 
     if chat_id in _PENDING_FILL and not text.startswith("/"):
         _handle_fill_reply(chat_id, text)
@@ -1451,6 +1486,7 @@ def run_bot(allowed_chats: set[str] | None = None) -> None:
     allowed = allowed_chats or _ALLOWED
     offset  = 0
     logger.info("[Bot] 텔레그램 봇 시작 (허용 채팅: %s)", allowed or "전체")
+    _register_command_menu()
     _RUNNING.set()
 
     # 시작 알림
