@@ -508,6 +508,8 @@ def _build_prompt_pre() -> str:
 - 내 의견: [한 문장 + 확신도 상/중/하 + 왜 그 확신도인지]
 - 당신이 정할 것: [사용자 실보유(평단·수량·현재 손익)에 맞춘 A/B 두 선택지. 각각 구체적 행동(종목·몇 주/몇 %)과 득·실을 한 줄씩, 마지막에 '나라면 A/B'. 이미 넘어선 기준(현재 손실이 -25%인데 "-25% 하락 시")을 앞으로의 조건처럼 쓰지 말 것 — 현재 수준을 기점으로 다음 기준선(예: 추가 -X% 또는 반등 +X%)을 새로 제시]
 - 틀릴 수 있는 곳: [내 판단이 틀리는 조건 + 그걸 확인할 지표·기준값, 그리고 최근 내 예측 성적(성적표가 있으면)을 반영해 얼마나 믿어야 하는지]
+- 사전 부검: [신규 편입·비중 확대를 권할 때만 — "1년 뒤 실패했다면 이유 3가지"를 각각 확인 가능한 지표와 함께 한 줄로. 해당 없으면 이 줄 생략]
+(수급은 [투자자별 순매수 금액]의 숫자만 인용하고, 확신도는 [확신도 보정] 블록의 실제 적중률을 넘지 않게 쓸 것. 국면 규칙은 [국면 플레이북]에 비추어 판단하고, [내 계좌 위험]·[가치 위치]·[앞으로 10일 일정]이 있으면 근거로 삼을 것.)
 (이 섹션은 8줄 이내. 없는 수치는 만들지 말 것. 위 항목 중 근거가 없는 것은 생략 대신 "근거 부족"이라고 솔직히 쓸 것)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -548,6 +550,8 @@ def _build_prompt_close() -> str:
 - 내 의견: [한 문장 + 확신도 상/중/하 + 왜 그 확신도인지]
 - 당신이 정할 것: [사용자 실보유(평단·수량)에 맞춰 1~2개의 구체적 선택지. 각 선택의 득/실을 한 줄씩. 예: "하이닉스 평단 대비 -X% — 줄이면 [득/실], 버티면 [득/실]"]
 - 틀릴 수 있는 곳: [내 판단이 틀리는 조건 + 그걸 확인할 지표·기준값, 그리고 최근 내 예측 성적(성적표가 있으면)을 반영해 얼마나 믿어야 하는지]
+- 사전 부검: [신규 편입·비중 확대를 권할 때만 — "1년 뒤 실패했다면 이유 3가지"를 각각 확인 가능한 지표와 함께 한 줄로. 해당 없으면 이 줄 생략]
+(수급은 [투자자별 순매수 금액]의 숫자만 인용하고, 확신도는 [확신도 보정] 블록의 실제 적중률을 넘지 않게 쓸 것. 국면 규칙은 [국면 플레이북]에 비추어 판단하고, [내 계좌 위험]·[가치 위치]·[앞으로 10일 일정]이 있으면 근거로 삼을 것.)
 (이 섹션은 8줄 이내. 없는 수치는 만들지 말 것. 위 항목 중 근거가 없는 것은 생략 대신 "근거 부족"이라고 솔직히 쓸 것)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -701,6 +705,16 @@ def run(state: InvestmentState) -> InvestmentState:
                     + "\n".join(f"  - {w}" for w in _incons))
         except Exception as _ine:
             logger.debug("[CIO] 데이터 불일치 점검 실패: %s", _ine)
+
+        # 코드 계산 자문 근거 블록 (신선도·수급금액·계좌위험·성과·가치위치·일정·플레이북·확신도보정·모드)
+        _advisor = {}
+        try:
+            from services.advisor_context import build as _build_advisor
+            _advisor = _build_advisor(raw_mkt, state.get("kr_index_realtime", {}), run_type)
+            for _i, _blk in enumerate(_advisor.get("blocks", []), start=2):
+                context_parts.insert(_i, "\n" + _blk)
+        except Exception as _ade:
+            logger.warning("[CIO] 자문 근거 블록 실패 (건너뜀): %s", _ade)
 
         # 고객 프로필 + 실보유 포트폴리오 — 자문의 대상 (팩트 시트 다음, 최상단)
         try:
@@ -1134,6 +1148,15 @@ def run(state: InvestmentState) -> InvestmentState:
 
         _untracked_action = _find_untracked_action_line(raw_result)
         ceo_report, ceo_decisions = _parse_cio_decisions(raw_result, date, run_type)
+        # '내 의견'의 확신도(상/중/하)를 확신도 없는 조정 판단에 부여 — 확신도별 사후 채점(보정)용
+        try:
+            from services.briefing_facts import parse_opinion_conviction
+            _conv = parse_opinion_conviction(ceo_report)
+            if _conv:
+                for _c in ceo_decisions.get("position_changes", []):
+                    _c.setdefault("conviction", _conv)
+        except Exception as _cve:
+            logger.debug("[CIO] 확신도 부여 실패: %s", _cve)
         if _untracked_action:
             logger.error(
                 "[CIO] 구조화 결정 로그 누락 — 본문엔 행동 지시가 있는데 승인큐/추적/"
@@ -1158,7 +1181,8 @@ def run(state: InvestmentState) -> InvestmentState:
             from services.briefing_facts import apply as _apply_facts
             ceo_report, _contra = _apply_facts(
                 ceo_report, state.get("raw_market_data", {}),
-                state.get("kr_index_realtime", {}), run_type)
+                state.get("kr_index_realtime", {}), run_type,
+                stale=_advisor.get("stale"), flows=_advisor.get("flows"))
             state["briefing_contradictions"] = _contra
             if _contra:
                 logger.warning("[CIO] 서술-수치 방향 모순 교정: %s", _contra)

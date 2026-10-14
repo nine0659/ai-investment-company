@@ -86,6 +86,30 @@ _FIXES = (
 )
 
 
+_CONV_RE = re.compile(r"내 의견[^\n]*?확신도\s*[:：]?\s*(상|중|하)")
+_CONV_MAP = {"상": "high", "중": "medium", "하": "low"}
+
+
+def parse_opinion_conviction(report: str) -> str | None:
+    """🧭 '내 의견' 줄의 확신도(상/중/하) → high/medium/low. 없으면 None."""
+    m = _CONV_RE.search(report or "")
+    return _CONV_MAP[m.group(1)] if m else None
+
+
+def flow_contradictions(report: str, flows: dict | None) -> list[str]:
+    """외국인 수급 서술이 코드 수급 금액(억원)과 반대인 경우."""
+    out = []
+    k = (flows or {}).get("KOSPI") or {}
+    f = k.get("foreign")
+    if f is None or k.get("partial"):
+        return out
+    if f >= 1000 and re.search(r"외국인[^\n.]{0,12}(매도세|순매도|이탈)", report):
+        out.append(f"'외국인 매도'라 썼지만 코스피 외국인 순매수 {f:+,.0f}억")
+    if f <= -1000 and re.search(r"외국인[^\n.]{0,12}(매수세|순매수|유입)", report):
+        out.append(f"'외국인 매수'라 썼지만 코스피 외국인 순매도 {f:+,.0f}억")
+    return out
+
+
 def find_contradictions(report: str, raw: dict) -> list[str]:
     """LLM 서술이 코드 수치와 방향이 반대인 경우를 문자열 목록으로 반환."""
     out = []
@@ -106,9 +130,10 @@ def find_contradictions(report: str, raw: dict) -> list[str]:
     return out
 
 
-def apply(report: str, raw: dict, kr_rt: dict, run_type: str) -> tuple[str, list[str]]:
+def apply(report: str, raw: dict, kr_rt: dict, run_type: str,
+          stale: list[str] | None = None, flows: dict | None = None) -> tuple[str, list[str]]:
     """수치 줄 덮어쓰기 + 확정 블록 삽입 + 모순 교정. (새 리포트, 발견된 모순)"""
-    contradictions = find_contradictions(report, raw)
+    contradictions = find_contradictions(report, raw) + flow_contradictions(report, flows)
     text = report
     # 환율 방향 교정 (서술 삭제가 아니라 올바른 표현으로 치환)
     fx = _chg(raw, "usd_krw")
@@ -129,4 +154,6 @@ def apply(report: str, raw: dict, kr_rt: dict, run_type: str) -> tuple[str, list
         text = block + "\n\n" + text
     if contradictions:
         text += "\n\n⚠️ 자동 교정: " + "; ".join(contradictions)
+    if stale:
+        text += "\n\n⚠️ 데이터 지연: " + "; ".join(stale[:3]) + " — 해당 수치는 참고만"
     return text, contradictions

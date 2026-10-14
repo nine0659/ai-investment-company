@@ -374,6 +374,24 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   job_ledger 기대목록에 넣지 않았다(넣으면 이후 매일 누락 오탐). 지난 날짜면 등록 자체를 건너뛴다. 이후엔 일요일 순환 리포트가 이어받는다.
   `services/memory_watch.py`는 잡 종료마다 컨테이너 RSS를 로그(`[메모리]`)하고 400MB 이상이면 경보(6시간 1회).
 
+- **[개선, 2026-10-14] 자문 에이전트 역량 18종 — "틀린 눈 교정 + 내 계좌 중심 판단 + 학습".**
+  계기: yfinance ^KS11 일봉이 10/13 봉을 통째로 빠뜨려(실제 -5.46%) 장전 브리핑이 10/12 값(-3.65%)을 "전일"로
+  서술, 같은 브리핑에서 선물 부호·환율 방향도 반대로 썼다. ① **눈**: `clients/naver_client.py`(제2 출처),
+  `market_data_client`의 한국 지수 네이버 보강/교체, `services/cross_validate.py`(환율·보유가 교차검증),
+  `data_freshness.py`(자산군별 직전 거래일 대비 지연 감사), `investor_flow.py`(외국인·기관 순매수 금액 억원,
+  system_settings `flow.*`에 확정치 누적), `briefing_facts.py`(수치 줄 코드 덮어쓰기·전일 급변 경고·환율/선물/수급
+  방향 모순 교정·지연 경고 부착). ② **내 계좌**: `portfolio_risk.py`(비중·섹터 쏠림·변동성·VaR·시나리오 손실),
+  `account_perf.py`(내 평단 기준 vs 지수), `scenario_engine.py`(/whatif 매도 시나리오, 세율은 가정치),
+  `fill_parser.py`+`/ledger`(체결 문자→원장 갱신안, 반드시 사람 확인 뒤 반영 — 자동 반영 금지).
+  ③ **판단**: `fair_value.py`(컨센서스 범위+5년 분위, 근거 2개 미만이면 "근거 약함"), `playbook.py`(국면별 사전
+  규칙, 사용자 확정 전엔 "기본안" 표시), `event_calendar.py`(FOMC 하드코딩·옵션만기·실적일), 프롬프트에 사전부검·🧭
+  섹션. ④ **학습**: `decision_scoring`이 보유유지 판단·확신도까지 채점, `calibration.py`(확신도별 실제 적중률·과신 시
+  확신도 남발 금지 지시), `user_decisions`(+`/did`, 내가 따랐을 때 vs 무시했을 때). ⑤ **대화**: `/risk /perf /whatif
+  /calendar /playbook /did /ledger`, 봇 AI 대화에도 같은 근거 블록 주입(`services/advisor_context.py`가 브리핑과
+  봇의 공통 조립 지점, 블록별 try/except), `behavior_check.py`(물타기·공황매도·쏠림 되묻기), `briefing_mode.py`
+  (결정 거리 있는 날만 🧭 충실히). **새 발송 경로·새 스케줄 잡은 없다**(절대원칙 4·5 해당 없음). 테스트에서는
+  conftest가 네이버 호출을 차단한다. 이미지 체결 캡처 인식(OCR)은 미구현.
+
 ## 장애 대응 런북
 
 - **08:05 헬스체크 경보 수신 시**: ① Render 대시보드에서 서비스 상태 확인(슬립/크래시)

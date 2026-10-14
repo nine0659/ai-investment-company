@@ -175,6 +175,14 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/watchlist` — 관심종목 목록\n"
         "`/watchlist add CODE 회사명 [목표가]` — 추가\n"
         "`/watchlist remove CODE` — 제거\n\n"
+        "🧭 *판단 보조*\n"
+        "`/risk` — 내 계좌 위험(쏠림·변동성·시나리오 손실)\n"
+        "`/perf` — 내 평단 기준 성과 vs 지수\n"
+        "`/whatif 종목명 매도%` — 파는 경우/안 파는 경우 비교 (예: `/whatif SK하이닉스 20`)\n"
+        "`/calendar` — 앞으로 2주 일정(FOMC·옵션만기·실적)\n"
+        "`/playbook` — 국면별 행동 규칙 보기/수정\n"
+        "`/did 코드 따름|무시|일부 [이유]` — AI 제안에 대한 내 결정 기록\n"
+        "`/ledger 체결문자` — 체결 문자로 보유 원장 갱신안 (확인 후 반영)\n\n"
         "🛡 *리스크 확인*\n"
         "`/auto` — 자동매매 비활성 상태 확인\n"
         "`/exposure` — 오늘 노출도 + 드로다운 현황\n\n"
@@ -336,6 +344,16 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
             _send(chat_id, "❌ 수량·평균단가는 숫자로 입력하세요.")
             return
         name = parts[4] if len(parts) > 4 else code
+        habit_note = ""
+        try:
+            from services.portfolio_service import get_portfolio as _gp
+            from services.behavior_check import check_buy as _cb
+            _cur = next((h for h in _gp() if h["code"] == code), None)
+            _pos = {"name": _cur["name"], "qty": _cur["quantity"], "avg": _cur["avg_price"]} if _cur else None
+            _notes = _cb(_pos, avg_price, qty)
+            habit_note = ("\n\n" + "\n".join(_notes)) if _notes else ""
+        except Exception as _he:
+            logger.debug("[Bot] 습관 점검 실패: %s", _he)
         try:
             from services.portfolio_service import add_position
             add_position(code, name, qty, avg_price, timeframe="mid")
@@ -355,7 +373,7 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
                 logger.warning("[Bot] 추천 연결 실패(등록은 정상): %s", _le)
             _send_with_web_button(chat_id,
                 f"✅ 보유종목 등록: *{name}*({code})\n"
-                f"{qty:,}주 | 평균단가 {avg_price:,.0f}원 | 매입금액 {qty * avg_price:,.0f}원" + link_note)
+                f"{qty:,}주 | 평균단가 {avg_price:,.0f}원 | 매입금액 {qty * avg_price:,.0f}원" + link_note + habit_note)
         except Exception as e:
             logger.error("[Bot] /holdings add 오류: %s", e)
             _send(chat_id, f"❌ 등록 실패: {e}")
@@ -1253,6 +1271,16 @@ def _cmd_ai_chat(chat_id: str, text: str) -> None:
     except Exception as e:
         logger.debug("[Bot] 시장 스냅샷 실패: %s", e)
 
+    # 2.5 코드 계산 판단 근거 (계좌 위험·수급 금액·일정·플레이북·가치 위치) — 질문에 숫자로 답하게
+    try:
+        from services.advisor_context import build as _adv
+        from clients.market_data_client import fetch_kr_index_realtime
+        _a = _adv(locals().get("mkt") or {}, fetch_kr_index_realtime(), "bot")
+        context_parts.extend(_a.get("blocks", []))
+        context_parts.append("[질문이 '팔면/사면 어떻게 되나'류면 /whatif 종목 매도% 명령으로 시나리오 숫자를 직접 볼 수 있다고 안내]")
+    except Exception as e:
+        logger.debug("[Bot] 자문 근거 블록 실패: %s", e)
+
     # 3. 현재 투자관·주간 전략
     try:
         from services.thesis_service import get_thesis_ceo_summary
@@ -1328,6 +1356,13 @@ _HANDLERS: dict = {
     "/auto":      _cmd_auto,
     "/exposure":  _cmd_exposure,
     "/pause":     _cmd_pause,
+    "/risk":      lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_risk(c, a, _send),
+    "/perf":      lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_perf(c, a, _send),
+    "/whatif":    lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_whatif(c, a, _send),
+    "/calendar":  lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_calendar(c, a, _send),
+    "/playbook":  lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_playbook(c, a, _send),
+    "/did":       lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_did(c, a, _send),
+    "/ledger":    lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_ledger(c, a, _send),
 }
 
 
@@ -1357,6 +1392,14 @@ def _dispatch(chat_id: str, text: str) -> None:
         else:
             _send(chat_id, f"❓ 알 수 없는 명령어: `{cmd}`\n`/help`로 명령어를 확인하세요.")
     else:
+        # 증권사 체결 문자로 보이면 원장 갱신안 제시 (자동 반영 없음)
+        if "체결" in text:
+            try:
+                from clients.telegram_advisor_cmds import propose_ledger
+                if propose_ledger(chat_id, text, _send):
+                    return
+            except Exception as e:
+                logger.warning("[Bot] 체결 문자 처리 실패 (AI 대화로 전달): %s", e)
         # 자유형식 텍스트 → AI 투자 어드바이저
         try:
             _cmd_ai_chat(chat_id, text)

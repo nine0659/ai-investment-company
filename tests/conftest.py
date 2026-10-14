@@ -25,3 +25,13 @@ def _no_naver_network(monkeypatch):
     except Exception:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_naver_client_network(monkeypatch):
+    try:
+        import clients.naver_client as n
+        monkeypatch.setattr(n, "_get", lambda url: None)
+    except Exception:
+        pass
+    yield

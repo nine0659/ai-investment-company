@@ -47,6 +47,12 @@ def _guard_market_data(raw: dict) -> dict:
         from services.data_guard import sanitize_market_snapshot, alert_if_widespread
         cleaned, warns = sanitize_market_snapshot(raw)
         alert_if_widespread(warns, "글로벌 시장 스냅샷", threshold=3)
+        try:
+            from services.cross_validate import validate_fx
+            for w in validate_fx(cleaned):
+                logger.warning("[교차검증] %s", w)
+        except Exception as _fxe:
+            logger.debug("[교차검증] 환율 검증 실패 (무시): %s", _fxe)
         return cleaned
     except Exception as e:
         logger.warning("[데이터가드] 시장 스냅샷 검사 실패 (원본 사용): %s", e)

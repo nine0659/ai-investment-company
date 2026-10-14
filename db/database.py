@@ -498,6 +498,20 @@ market_predictions = Table("market_predictions", metadata,
 )
 
 # 학습 고리: 복기에서 얻은 교훈 저장소 (2026-10-13). 유효기간(expires_at) 지나면 주입 안 됨.
+# ── 사용자 결정 로그 (2026-10-14) — AI 제안을 내가 따랐는지/무시했는지와 그 이유.
+# "AI가 맞았나"뿐 아니라 "내가 AI를 따랐을 때/무시했을 때 성과"를 재기 위한 기록.
+user_decisions = Table("user_decisions", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("date",       Text,    nullable=False),   # 결정일 YYYY-MM-DD (KST)
+    Column("code",       Text,    nullable=False),
+    Column("name",       Text),
+    Column("followed",   Text,    nullable=False),   # followed | ignored | partial
+    Column("advice",     Text),                      # 당시 AI 제안 요약(있으면)
+    Column("reason",     Text),                      # 내 이유
+    Column("price_at",   Float),                     # 결정 시점 가격
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
+)
+
 learning_lessons = Table("learning_lessons", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
     Column("date",       Text,    nullable=False),

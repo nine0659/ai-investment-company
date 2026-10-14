@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 HORIZONS = (5, 10)             # 판단 후 거래일 수
 BUY_ACTIONS = {"new", "add", "increase", "buy", "raise"}
 SELL_ACTIONS = {"reduce", "trim", "exit", "sell", "decrease", "cut"}
+HOLD_ACTIONS = {"hold"}        # 보유유지 판단도 채점 (2026-10-14): 지수 대비 HOLD_TOLERANCE%p 넘게 뒤처지지 않으면 맞음
+HOLD_TOLERANCE = 3.0
+CONV_MAP = {"high": "high", "상": "high", "medium": "medium", "중": "medium", "low": "low", "하": "low"}
 MIN_FOR_PATTERN = 8            # 이 건수 미만이면 '경향'조차 말하지 않는다
 
 
@@ -45,7 +48,9 @@ def load_decisions() -> list[dict]:
                 continue
             seen.add(key)
             out.append({"date": date, "run_type": run_type, "code": code, "name": it.get("name", code),
-                        "action": action, "side": "buy" if action in BUY_ACTIONS else "sell"})
+                        "action": action,
+                        "side": "buy" if action in BUY_ACTIONS else "hold" if action in HOLD_ACTIONS else "sell",
+                        "conviction": CONV_MAP.get(str(it.get("conviction", "")).strip().lower(), "")})
     return out
 
 
@@ -87,7 +92,12 @@ def score_decision(dec: dict, stock: dict[str, float], index: dict[str, float]) 
         s_ret = (stock[e] - stock[b]) / stock[b] * 100
         i_ret = (index[e] - index[b]) / index[b] * 100
         alpha = s_ret - i_ret
-        correct = alpha > 0 if dec["side"] == "buy" else alpha < 0
+        if dec["side"] == "buy":
+            correct = alpha > 0
+        elif dec["side"] == "hold":
+            correct = alpha > -HOLD_TOLERANCE
+        else:
+            correct = alpha < 0
         out.append({**dec, "horizon": h, "ret": round(s_ret, 1), "index_ret": round(i_ret, 1),
                     "alpha": round(alpha, 1), "correct": bool(correct), "end": e})
     return out
@@ -120,7 +130,7 @@ def format_summary(results: list[dict]) -> str:
         sub = [r for r in results if r["horizon"] == h]
         if not sub:
             continue
-        for side, label in (("buy", "신규편입·확대"), ("sell", "축소·청산")):
+        for side, label in (("buy", "신규편입·확대"), ("sell", "축소·청산"), ("hold", "보유유지(지수 대비 -3%p 이상 뒤처지지 않으면 맞음)")):
             s = [r for r in sub if r["side"] == side]
             if s:
                 ok = sum(1 for r in s if r["correct"])
@@ -129,7 +139,7 @@ def format_summary(results: list[dict]) -> str:
     wrong = sorted((r for r in results if r["horizon"] == HORIZONS[0] and not r["correct"]),
                    key=lambda r: abs(r["alpha"]), reverse=True)[:3]
     for r in wrong:
-        verb = "축소" if r["side"] == "sell" else "편입/확대"
+        verb = {"sell": "축소", "hold": "보유유지"}.get(r["side"], "편입/확대")
         lines.append(f"- 빗나간 판단: {r['date']} {r['name']} {verb} → {HORIZONS[0]}거래일 후 KOSPI 대비 {r['alpha']:+.1f}%p")
     total = len({(r["date"], r["code"], r["action"]) for r in results})
     lines.append(f"※ 서로 다른 판단 {total}건뿐이다: " + ("패턴으로 단정하지 말고 '가능성'으로만 서술하라"
