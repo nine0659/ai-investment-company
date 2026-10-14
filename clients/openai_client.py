@@ -87,6 +87,29 @@ def chat(
         return resp.choices[0].message.content.strip()
 
 
+def chat_vision(system: str, user_text: str, image_b64: str, mime: str = "image/jpeg",
+                max_tokens: int = 1200) -> str:
+    """이미지 + 텍스트 → 텍스트. 주 모델(OpenAI) 실패 시 OpenRouter(비전 지원 모델)로 폴백.
+    이미지 내용은 로그에 남기지 않는다(계좌 화면일 수 있음)."""
+    msgs = [{"role": "system", "content": system},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}}]}]
+    try:
+        resp = get_client().chat.completions.create(
+            model=OPENAI_MODEL, messages=msgs, max_tokens=max_tokens, temperature=0)
+        return (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        fb = get_fallback_client()
+        if fb is None:
+            raise
+        logger.warning("[비전] 주 모델 실패, OpenRouter 폴백: %s", type(e).__name__)
+        resp = fb.chat.completions.create(
+            model=OPENROUTER_MODEL_REVIEW or OPENROUTER_MODEL, messages=msgs,
+            max_tokens=max_tokens, temperature=0)
+        return (resp.choices[0].message.content or "").strip()
+
+
 def chat_independent(system: str, user: str, max_tokens: int = 800) -> str:
     """주 모델과 다른 계열 모델(OpenRouter)로 독립 검토. 못 쓰면 주 모델로 폴백.
 

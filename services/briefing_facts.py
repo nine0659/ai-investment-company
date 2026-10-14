@@ -157,3 +157,44 @@ def apply(report: str, raw: dict, kr_rt: dict, run_type: str,
     if stale:
         text += "\n\n⚠️ 데이터 지연: " + "; ".join(stale[:3]) + " — 해당 수치는 참고만"
     return text, contradictions
+
+
+MORE_MARK = "【더보기】"
+_MORE_KEY = "brief.more"
+
+
+def split_more(report: str) -> tuple[str, str]:
+    """리포트를 (메인, 더보기)로 분리. 마커가 없으면 (원문, '')."""
+    if MORE_MARK not in (report or ""):
+        return report, ""
+    main, more = report.split(MORE_MARK, 1)
+    return main.rstrip() + "\n", more.strip()
+
+
+def save_more(date: str, run_type: str, more: str) -> bool:
+    """가장 최근 브리핑의 더보기를 보관(덮어쓰기). /more 가 읽는다."""
+    import json
+    from sqlalchemy import text
+    from db.database import get_conn
+    try:
+        with get_conn() as conn:
+            conn.execute(text("DELETE FROM system_settings WHERE key=:k"), {"k": _MORE_KEY})
+            conn.execute(text("INSERT INTO system_settings (key, value) VALUES (:k, :v)"),
+                         {"k": _MORE_KEY, "v": json.dumps({"date": date, "run_type": run_type, "more": more},
+                                                           ensure_ascii=False)})
+        return True
+    except Exception as e:
+        logger.warning("[더보기] 저장 실패: %s", e)
+        return False
+
+
+def load_more() -> dict:
+    import json
+    from sqlalchemy import text
+    from db.database import get_conn
+    try:
+        with get_conn() as conn:
+            row = conn.execute(text("SELECT value FROM system_settings WHERE key=:k"), {"k": _MORE_KEY}).fetchone()
+        return json.loads(row[0]) if row else {}
+    except Exception:
+        return {}

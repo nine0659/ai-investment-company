@@ -182,7 +182,9 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/calendar` — 앞으로 2주 일정(FOMC·옵션만기·실적)\n"
         "`/playbook` — 국면별 행동 규칙 보기/수정\n"
         "`/did 코드 따름|무시|일부 [이유]` — AI 제안에 대한 내 결정 기록\n"
-        "`/ledger 체결문자` — 체결 문자로 보유 원장 갱신안 (확인 후 반영)\n\n"
+        "`/ledger 체결문자` — 체결 문자로 보유 원장 갱신안 (확인 후 반영)\n"
+        "📷 체결내역 *캡처 이미지*를 그냥 보내도 읽어서 갱신안을 만듭니다 (파일로 보내면 더 정확)\n"
+        "`/more` — 가장 최근 브리핑의 반론·사전부검·근거 상세\n\n"
         "🛡 *리스크 확인*\n"
         "`/auto` — 자동매매 비활성 상태 확인\n"
         "`/exposure` — 오늘 노출도 + 드로다운 현황\n\n"
@@ -1363,6 +1365,7 @@ _HANDLERS: dict = {
     "/playbook":  lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_playbook(c, a, _send),
     "/did":       lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_did(c, a, _send),
     "/ledger":    lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_ledger(c, a, _send),
+    "/more":      lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_more(c, a, _send),
 }
 
 
@@ -1408,6 +1411,39 @@ def _dispatch(chat_id: str, text: str) -> None:
             _send(chat_id, f"❌ 오류: {e}")
 
 
+def _download_tg_file(file_id: str) -> tuple[bytes, str]:
+    """텔레그램 파일 내려받기. (바이트, mime). 실패 시 (b'', '')."""
+    try:
+        r = requests.get(f"{_BASE}/getFile", params={"file_id": file_id}, timeout=15)
+        path = r.json().get("result", {}).get("file_path", "")
+        if not path:
+            return b"", ""
+        f = requests.get(f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{path}", timeout=30)
+        if not f.ok:
+            return b"", ""
+        low = path.lower()
+        mime = "image/png" if low.endswith(".png") else "image/webp" if low.endswith(".webp") else "image/jpeg"
+        return f.content, mime
+    except Exception as e:
+        logger.warning("[Bot] 파일 다운로드 실패: %s", type(e).__name__)
+        return b"", ""
+
+
+def _handle_photo(chat_id: str, file_id: str) -> None:
+    """체결내역 캡처 → 원장 갱신안. 이미지는 저장하지 않는다."""
+    _send(chat_id, "🔍 캡처를 읽는 중입니다…")
+    data, mime = _download_tg_file(file_id)
+    if not data:
+        _send(chat_id, "❌ 이미지를 받지 못했습니다. 다시 보내주세요.")
+        return
+    try:
+        from clients.telegram_advisor_cmds import propose_from_image
+        propose_from_image(chat_id, data, mime, _send)
+    except Exception as e:
+        logger.error("[Bot] 캡처 처리 오류: %s", e)
+        _send(chat_id, f"❌ 캡처 처리 중 오류: {e}")
+
+
 # ── Long-polling 루프 ──────────────────────────────────────────
 
 def run_bot(allowed_chats: set[str] | None = None) -> None:
@@ -1446,6 +1482,16 @@ def run_bot(allowed_chats: set[str] | None = None) -> None:
                 msg = upd.get("message", {})
                 if msg:
                     chat_id = str(msg.get("chat", {}).get("id", ""))
+                    # 체결내역 캡처(사진 또는 이미지 파일)
+                    _fid = ""
+                    if msg.get("photo"):
+                        _fid = msg["photo"][-1].get("file_id", "")
+                    elif (msg.get("document") or {}).get("mime_type", "").startswith("image/"):
+                        _fid = msg["document"].get("file_id", "")
+                    if chat_id and _fid:
+                        if not allowed or chat_id in allowed:
+                            threading.Thread(target=_handle_photo, args=(chat_id, _fid), daemon=True).start()
+                        continue
                     text    = msg.get("text", "")
                     if chat_id and text:
                         if allowed and chat_id not in allowed:
