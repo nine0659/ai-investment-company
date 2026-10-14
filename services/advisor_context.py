@@ -73,6 +73,16 @@ def build(raw: dict, kr_rt: dict, run_type: str, kis=None) -> dict:
         if t:
             blocks.append(t)
 
+    violations, conc_alerts = [], []
+    if positions:
+        from services import concentration_rule
+        violations = _safe("집중도", lambda: concentration_rule.evaluate(positions)) or []
+        conc_alerts = [concentration_rule.format_alert(v) for v in violations]
+        if conc_alerts:
+            blocks.append(
+                "[⚠️ 집중도 규칙 위반 — 코드 계산. 🧭 '선택'의 A안은 반드시 아래 분할 축소안으로 하고(수량·일수는 이 숫자만 인용), "
+                "위반 종목의 추가 매수·신규 편입 권고는 금지]\n" + "\n".join(conc_alerts))
+
     from services import event_calendar
     earnings = _safe("실적일", lambda: _cached("earn", lambda: event_calendar.fetch_earnings(positions), ttl=12 * 3600)) or {}
     evs = _safe("일정", lambda: event_calendar.upcoming(earnings=earnings)) or []
@@ -98,4 +108,5 @@ def build(raw: dict, kr_rt: dict, run_type: str, kis=None) -> dict:
     mode = briefing_mode.decide(kospi_chg, holding_pl=pl, events=evs)
     blocks.append(briefing_mode.context_line(mode))
 
-    return {"blocks": blocks, "stale": fresh[1], "mode": mode, "flows": flows, "kospi_chg": kospi_chg}
+    return {"blocks": blocks, "stale": fresh[1], "mode": mode, "flows": flows, "kospi_chg": kospi_chg,
+            "concentration": conc_alerts, "violations": violations}

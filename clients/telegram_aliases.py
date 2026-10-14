@@ -17,7 +17,7 @@ ALIASES: dict[str, str] = {
     "투자관": "/thesis", "전략": "/strategy", "자산": "/nav", "리포트": "/report", "성과": "/tracker",
     "노출": "/exposure",
     "위험": "/risk", "계좌성과": "/perf", "만약": "/whatif", "일정": "/calendar",
-    "플레이북": "/playbook", "결정": "/did", "원장": "/ledger", "더보기": "/more",
+    "플레이북": "/playbook", "상한": "/limit", "집중도": "/limit", "결정": "/did", "원장": "/ledger", "더보기": "/more",
     # 결과가 큰 명령 — 슬래시가 있을 때만
     "매수": "/buy", "매도": "/sell", "취소": "/cancel", "자동": "/auto", "중지": "/pause",
 }
@@ -41,6 +41,7 @@ COMMAND_MENU = [
     ("nav", "자산(NAV) 현황 — 한글: 자산"),
     ("tracker", "AI 추천 성과 — 한글: 성과"),
     ("playbook", "국면별 행동 규칙 — 한글: 플레이북"),
+    ("limit", "종목/섹터 비중 상한과 위반 현황 — 한글: 상한"),
     ("ledger", "체결 문자/캡처로 원장 갱신 — 한글: 원장"),
     ("did", "AI 제안에 대한 내 결정 기록 — 한글: 결정"),
     ("menu", "한글 버튼 메뉴 열기 — 한글: 메뉴"),

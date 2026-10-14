@@ -119,6 +119,24 @@ def run_analysis(send: bool = True) -> str | None:
 
     logger.info("[중기에이전트] 유효 종목 %d개 / 전체 %d개", len(valid), len(KOSPI_TOP30))
 
+    # 추천 관문(2026-10-14): 같은 종목 반복·내 계좌 쏠림 업종·과열/급락장 추격을 코드로 차단
+    gate = {"mode": "unknown", "max_picks": 3, "reason": "", "note": ""}
+    constraint = ""
+    try:
+        from services import pick_gate
+        from services.portfolio_risk import load_positions
+        from services.account_perf import _index_closes
+        held, sector_w = pick_gate.held_summary(load_positions(kis))
+        gate = pick_gate.market_gate(_index_closes())
+        kept, excluded = pick_gate.filter_candidates(valid, pick_gate.recent_rec_codes(today=today), held, sector_w)
+        logger.info("[추천관문] 모드=%s 최대 %d개 | 후보 %d→%d개 | 제외: %s",
+                    gate["mode"], gate["max_picks"], len(valid), len(kept),
+                    ", ".join(f"{n}" for n, _ in excluded) or "없음")
+        valid = kept
+        constraint = "\n\n" + pick_gate.constraint_block(gate, excluded, sector_w)
+    except Exception as e:
+        logger.warning("[추천관문] 적용 실패 — 제약 없이 진행: %s", e)
+
     # 이상치가 광범위하면 데이터 소스 장애 가능성 — 관리자 경보
     from services.data_guard import alert_if_widespread
     alert_if_widespread(
@@ -145,16 +163,28 @@ def run_analysis(send: bool = True) -> str | None:
         f"=== 종목별 재무 데이터 ===\n\n"
         f"{stock_text}"
         f"{prev_section}"
+        f"{constraint}"
     )
 
     try:
         # 주간 1회 호출 — 사용자 의사결정에 직결되는 추천이므로 CEO급 모델 사용
-        report = chat_ceo(_SYSTEM, context, max_tokens=1200)
+        report = chat_ceo(
+            _SYSTEM.replace("중기 추천 종목 3개만 선정하세요.",
+                            f"중기 추천 종목을 최대 {gate['max_picks']}개 선정하세요(마지막의 [이번 주 추천 제약]이 우선합니다)."),
+            context, max_tokens=1200)
     except Exception as e:
         logger.error("[중기에이전트] OpenAI 호출 실패: %s", e)
         release_report_slot(today, "midterm")
         send_error_alert(f"중기 분석 OpenAI 오류: {e}")
         return None
+
+    try:
+        from services import pick_gate as _pg
+        report = _pg.truncate_report(report, gate["max_picks"])
+        if gate.get("note"):
+            report = f"🛡 이번 주 추천 제약: {gate['reason']} → 최대 {gate['max_picks']}종목 · {gate['note']}\n\n" + report
+    except Exception as e:
+        logger.debug("[추천관문] 리포트 후처리 실패 (원문 유지): %s", e)
 
     if send:
         header = (
@@ -178,6 +208,11 @@ def run_analysis(send: bool = True) -> str | None:
         price_lookup = {d["code"]: d["price"] for d in valid if d.get("price")}
         recs = recs_from_weekly_picks(report, price_lookup)
         recs = [r for r in recs if not has_open_recommendation(r["code"])]
+        try:
+            from services.pick_gate import enforce
+            recs = enforce(recs, gate["max_picks"])
+        except Exception as _ge:
+            logger.debug("[추천관문] 개수/업종 강제 실패 (무시): %s", _ge)
         if recs:
             save_recommendations(today, recs)
             logger.info("[중기에이전트] 추천 %d건 추적 등록: %s",

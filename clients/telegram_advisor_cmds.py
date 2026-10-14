@@ -188,7 +188,10 @@ def _behavior_notes(fill: dict, holdings: list[dict]) -> list[str]:
         cur = next((h for h in holdings if h["code"] == fill["code"]), None)
         pos = {"name": cur["name"], "qty": cur["quantity"], "avg": cur["avg_price"]} if cur else None
         if fill["side"] == "buy":
-            return behavior_check.check_buy(pos, fill["price"], fill["qty"])
+            notes = behavior_check.check_buy(pos, fill["price"], fill["qty"])
+            from services.concentration_rule import warn_if_adding
+            w = warn_if_adding(fill["code"])
+            return notes + ([w] if w else [])
         kospi = None
         try:
             from clients.market_data_client import fetch_kr_index_realtime
@@ -200,6 +203,28 @@ def _behavior_notes(fill: dict, holdings: list[dict]) -> list[str]:
     except Exception as e:
         logger.debug("[Bot] 습관 점검 실패: %s", e)
         return []
+
+
+def cmd_limit(chat_id: str, args: str, send) -> None:
+    """/limit → 현재 상한과 위반 현황 | /limit 종목 40 | /limit 섹터 60"""
+    from services import concentration_rule as cr
+    parts = args.split()
+    if len(parts) == 2 and parts[0] in ("종목", "섹터", "stock", "sector"):
+        kind = "stock" if parts[0] in ("종목", "stock") else "sector"
+        try:
+            ok = cr.set_cap(kind, float(parts[1].replace("%", "")))
+        except ValueError:
+            ok = False
+        send(chat_id, f"✅ {parts[0]} 비중 상한을 {parts[1]}%로 저장했습니다." if ok
+             else "❌ 10~100 사이 숫자로 입력하세요. 예: `상한 종목 40`")
+        return
+    caps = cr.get_caps()
+    from services.portfolio_risk import load_positions
+    viol = cr.evaluate(load_positions(_kis()), caps)
+    msg = f"📏 집중도 상한: 종목 {caps['stock']:.0f}% · 섹터 {caps['sector']:.0f}% (투자금 기준, 현금 제외)\n"
+    msg += "\n".join(cr.format_alert(v) for v in viol) if viol else "현재 상한을 넘는 종목/섹터가 없습니다."
+    msg += "\n\n변경: `상한 종목 40` / `상한 섹터 55`"
+    send(chat_id, msg)
 
 
 def cmd_more(chat_id: str, _args: str, send) -> None:

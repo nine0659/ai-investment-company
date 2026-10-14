@@ -503,6 +503,7 @@ def _build_prompt_pre() -> str:
 - 틀릴 조건: [내 판단이 틀리는 지표+기준값 하나]
 【더보기】
 - 엇갈린 시각: 낙관 — [근거] / 비관 — [근거] (토론 자료에서 데이터가 탄탄한 쪽을 밝힐 것)
+- 집중도: [[집중도 규칙 위반] 블록이 있을 때만 — 위반 종목/섹터를 A안(분할 축소)에 반영했는지 한 줄. 없으면 생략]
 - 사전 부검: [신규 편입·비중 확대를 권할 때만 — "1년 뒤 실패했다면 이유 3가지"를 지표와 함께. 해당 없으면 이 줄 생략]
 - 근거 상세: [확신도 이유, 최근 예측 성적 반영, 일정·가치 위치 등 — 3줄 이내]
 (수급은 [투자자별 순매수 금액]의 숫자만, 확신도는 [확신도 보정]의 실제 적중률을 넘지 않게, 국면 규칙은 [국면 플레이북]에 비추어 판단. 없는 수치는 만들지 말 것. 근거가 없으면 "근거 부족"이라고 쓸 것.
@@ -548,6 +549,7 @@ def _build_prompt_close() -> str:
 - 틀릴 조건: [내 판단이 틀리는 지표+기준값 하나]
 【더보기】
 - 엇갈린 시각: 낙관 — [근거] / 비관 — [근거] (토론 자료에서 데이터가 탄탄한 쪽을 밝힐 것)
+- 집중도: [[집중도 규칙 위반] 블록이 있을 때만 — 위반 종목/섹터를 A안(분할 축소)에 반영했는지 한 줄. 없으면 생략]
 - 사전 부검: [신규 편입·비중 확대를 권할 때만 — "1년 뒤 실패했다면 이유 3가지"를 지표와 함께. 해당 없으면 이 줄 생략]
 - 근거 상세: [확신도 이유, 최근 예측 성적 반영, 일정·가치 위치 등 — 3줄 이내]
 (수급은 [투자자별 순매수 금액]의 숫자만, 확신도는 [확신도 보정]의 실제 적중률을 넘지 않게, 국면 규칙은 [국면 플레이북]에 비추어 판단. 없는 수치는 만들지 말 것. 근거가 없으면 "근거 부족"이라고 쓸 것.
@@ -1190,7 +1192,9 @@ def run(state: InvestmentState) -> InvestmentState:
             ceo_report, _contra = _apply_facts(
                 ceo_report, state.get("raw_market_data", {}),
                 state.get("kr_index_realtime", {}), run_type,
-                stale=_advisor.get("stale"), flows=_advisor.get("flows"))
+                stale=_advisor.get("stale"), flows=_advisor.get("flows"),
+                concentration=_advisor.get("concentration"))
+            state["concentration_alerts"] = _advisor.get("violations") or []
             state["briefing_contradictions"] = _contra
             if _contra:
                 logger.warning("[CIO] 서술-수치 방향 모순 교정: %s", _contra)

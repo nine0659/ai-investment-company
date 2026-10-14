@@ -131,7 +131,8 @@ def find_contradictions(report: str, raw: dict) -> list[str]:
 
 
 def apply(report: str, raw: dict, kr_rt: dict, run_type: str,
-          stale: list[str] | None = None, flows: dict | None = None) -> tuple[str, list[str]]:
+          stale: list[str] | None = None, flows: dict | None = None,
+          concentration: list[str] | None = None) -> tuple[str, list[str]]:
     """수치 줄 덮어쓰기 + 확정 블록 삽입 + 모순 교정. (새 리포트, 발견된 모순)"""
     contradictions = find_contradictions(report, raw) + flow_contradictions(report, flows)
     text = report
@@ -150,6 +151,8 @@ def apply(report: str, raw: dict, kr_rt: dict, run_type: str,
         else:
             text = text.rstrip() + "\n\n" + line
     block = build_market_block(raw, kr_rt, run_type)
+    if concentration:
+        block = (block + "\n" if block else "") + "\n".join(concentration)
     if block:
         text = block + "\n\n" + text
     if contradictions:

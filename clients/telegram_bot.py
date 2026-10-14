@@ -382,6 +382,10 @@ def _cmd_holdings(chat_id: str, args: str) -> None:
             _cur = next((h for h in _gp() if h["code"] == code), None)
             _pos = {"name": _cur["name"], "qty": _cur["quantity"], "avg": _cur["avg_price"]} if _cur else None
             _notes = _cb(_pos, avg_price, qty)
+            from services.concentration_rule import warn_if_adding as _wa
+            _w = _wa(code)
+            if _w:
+                _notes = list(_notes) + [_w]
             habit_note = ("\n\n" + "\n".join(_notes)) if _notes else ""
         except Exception as _he:
             logger.debug("[Bot] 습관 점검 실패: %s", _he)
@@ -1416,6 +1420,7 @@ _HANDLERS: dict = {
     "/ledger":    lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_ledger(c, a, _send),
     "/more":      lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_more(c, a, _send),
     "/menu":      lambda c, a: _cmd_menu(c, a),
+    "/limit":     lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_limit(c, a, _send),
 }
 
 

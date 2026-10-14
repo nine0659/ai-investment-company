@@ -555,6 +555,11 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
             rule_warns, blocked = check_portfolio_rules(
                 state.get("ceo_decisions", {}), {c for c, _n in _load_holdings()})
             violations = violations + rule_warns
+            try:
+                from services.concentration_rule import check_decisions as _cd
+                violations = violations + _cd(state.get("ceo_decisions", {}), state.get("concentration_alerts", []))
+            except Exception as _cde:
+                logger.debug("[텔레그램] 집중도 결정 점검 실패 (무시): %s", _cde)
             if blocked:
                 violations.append(f"→ 승인 큐 미등록 처리: {', '.join(sorted(blocked))} (직접 판단 후 필요하면 /holdings로 반영)")
             if violations:
