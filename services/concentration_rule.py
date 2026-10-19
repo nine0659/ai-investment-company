@@ -102,17 +102,14 @@ def format_alert(v: dict) -> str:
     """사람이 읽는 한 덩어리(여러 줄) 경보. 수치는 전부 코드 계산."""
     p = v["plan"]
     label = "종목" if v["kind"] == "stock" else "섹터"
-    head = f"🔔 집중도 경보({label}): {v['name']} {v['weight']:.1f}% — 상한 {v['cap']:.0f}% 초과"
+    head = f"🔔 {v['name']} 한 {label}이 내 자산의 {v['weight']:.1f}% (한도 {v['cap']:.0f}%) — 한도 초과"
     if not p:
         return head
     lines = [head,
-             f"   상한까지 필요한 매도: 현금으로 두면 약 {p['sell_cash_qty']:,}주({_man(p['sell_cash_won'])}), "
-             f"다른 종목으로 옮기면 약 {p['sell_reinvest_qty']:,}주({_man(p['sell_reinvest_won'])})",
-             f"   하루 한도(투자금의 {DAILY_TRIM_PCT:.0f}% = {_man(p['per_day_won'])}, 약 {p['per_day_qty']:,}주)로 나누면 "
-             f"최소 {p['days_reinvest']}~{p['days_cash']}거래일"]
+             f"   한도까지 줄이려면 약 {p['sell_cash_qty']:,}주({_man(p['sell_cash_won'])}) 매도 필요. "
+             f"하루 약 {p['per_day_qty']:,}주씩 나눠 팔면 {p['days_reinvest']}~{p['days_cash']}거래일"]
     if v["kind"] == "stock" and p["realized_per_share"] < 0:
-        lines.append(f"   ※ 지금 팔면 평단 대비 주당 {p['realized_per_share']:,.0f}원 손실이 확정됩니다 — "
-                     f"'손실 확정이 싫어서 버틴 비중'이 다음 하락의 크기를 키우는지 `/만약 {v['name']} 20`으로 비교해 보세요")
+        lines.append(f"   ※ 평단보다 낮은 가격이라 팔면 주당 {abs(p['realized_per_share']):,.0f}원 손실이 확정됩니다")
     return "\n".join(lines)
 
 

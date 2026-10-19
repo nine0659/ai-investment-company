@@ -39,10 +39,7 @@ def fx_phrase(pct: float) -> str:
 
 
 def build_numbers_line(raw: dict, kr_rt: dict) -> str:
-    parts = []
-    k = ((kr_rt or {}).get("kospi") or {})
-    if k.get("change_pct") is not None:
-        parts.append(f"KOSPI(전일 마감) {k['current']:,.0f} ({k['change_pct']:+.2f}%)")
+    parts = []   # KOSPI·KOSDAQ는 맨 위 블록(build_market_block)에 이미 있다 — 중복 표기 금지
     sp = _fut_pct(raw, "sp500_futures")
     if sp is not None:
         parts.append(f"S&P500선물 {sp:+.2f}%")
@@ -60,7 +57,7 @@ def build_numbers_line(raw: dict, kr_rt: dict) -> str:
     ewy = _chg(raw, "ewy")
     if ewy is not None:
         parts.append(f"EWY {ewy:+.2f}%")
-    return "수치(코드 확정): " + " · ".join(parts) if parts else ""
+    return "📈 해외·환율: " + " · ".join(parts) if parts else ""
 
 
 def build_market_block(raw: dict, kr_rt: dict, run_type: str) -> str:
@@ -70,10 +67,12 @@ def build_market_block(raw: dict, kr_rt: dict, run_type: str) -> str:
     for key, name in (("kospi", "KOSPI"), ("kosdaq", "KOSDAQ")):
         d = (kr_rt or {}).get(key) or {}
         if d.get("change_pct") is not None:
-            lines.append(f"{name} {label} {d['current']:,.0f} ({d['change_pct']:+.2f}%)")
+            # 정확히 0.00%는 장 시작 전 소스가 비교 기준을 못 잡은 값인 경우가 많다(실제 지수가 0.00%일 확률은 거의 없음) — 틀린 수치 대신 생략
+            pct = f" ({d['change_pct']:+.2f}%)" if abs(d["change_pct"]) >= 0.005 else ""
+            lines.append(f"{name} {label} {d['current']:,.0f}{pct}")
     if not lines:
         return ""
-    block = "📊 확정 수치(코드 계산): " + " · ".join(lines)
+    block = "📊 " + " · ".join(lines)
     k = ((kr_rt or {}).get("kospi") or {}).get("change_pct")
     if k is not None and abs(k) >= SHOCK_PCT:
         block += f"\n🚨 {label} KOSPI {k:+.2f}% — 변동성 {'급락' if k < 0 else '급등'} 구간. 아래 판단은 이 변동을 전제로 읽을 것."
@@ -156,9 +155,10 @@ def apply(report: str, raw: dict, kr_rt: dict, run_type: str,
     if block:
         text = block + "\n\n" + text
     if contradictions:
-        text += "\n\n⚠️ 자동 교정: " + "; ".join(contradictions)
+        # 시스템 내부 교정 내역은 투자 판단에 불필요 — 본문은 이미 교정됐으므로 로그로만 남긴다
+        logger.info("[브리핑] 서술-수치 모순 교정: %s", "; ".join(contradictions))
     if stale:
-        text += "\n\n⚠️ 데이터 지연: " + "; ".join(stale[:3]) + " — 해당 수치는 참고만"
+        logger.info("[브리핑] 데이터 지연(본문 미표기): %s", ", ".join(stale[:3]))
     return text, contradictions
 
 

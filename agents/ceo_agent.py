@@ -178,18 +178,20 @@ def _build_summary_card(d: dict, holdings: list[tuple[str, str]] | None = None) 
     대응 — 이미 파싱된 구조화 데이터를 코드가 그대로 나열하므로 LLM이 매번
     형식을 지킬지 여부와 무관하게 항상 같은 모양으로 나온다.
     """
-    stance = _STANCE_KR.get(d.get("macro_stance", "neutral"), d.get("macro_stance", ""))
-    thesis = _THESIS_KR.get(d.get("thesis_status", "intact"), d.get("thesis_status", ""))
-
-    lines = [
-        "📌 *오늘의 결론*",
-        f"- 스탠스: {stance} (현금목표 {d.get('cash_target_pct', 30)}%) · 투자관: {thesis}",
-    ]
+    stance_key = d.get("macro_stance", "neutral")
+    cash = d.get("cash_target_pct", 30)
+    tone = {
+        "defensive": f"조심하는 쪽 (현금 {cash}% 확보 목표)",
+        "aggressive": "적극적으로 투자하는 쪽",
+    }.get(stance_key, f"지켜보는 쪽 (현금 {cash}% 유지)")
+    lines = [f"📌 *한 줄 결론* — 지금은 {tone}"]
+    if d.get("thesis_status") in ("challenged", "reconsider"):
+        lines.append("- 장기 투자 시각이 흔들리는 중이라 재점검이 필요합니다")
 
     new_pos = d.get("new_positions") or []
     if new_pos:
         names = ", ".join(f"{p.get('name','')}({p.get('size_pct','?')}%)" for p in new_pos)
-        lines.append(f"- 신규 편입 {len(new_pos)}건: {names}")
+        lines.append(f"- 새로 살 종목: {names}")
 
     changes = d.get("position_changes") or []
     if changes:
@@ -197,26 +199,22 @@ def _build_summary_card(d: dict, holdings: list[tuple[str, str]] | None = None) 
             f"{c.get('name','')} {_ACTION_KR.get(c.get('action',''), c.get('action',''))}"
             for c in changes
         )
-        lines.append(f"- 비중조정/청산 {len(changes)}건: {parts}")
+        lines.append(f"- 오늘 조정: {parts}")
     elif not new_pos:
-        lines.append("- 오늘 매매 조정 없음")
+        lines.append("- 오늘은 사고팔 것 없음")
 
     holds = d.get("position_holds") or []
-    # 실보유 원장과 대조 — CEO가 hold/조정 줄을 빠뜨린 종목을 코드가 드러낸다
-    # (2026-10-07: 실보유 4종목인데 "보유 유지 3종목"으로 나간 사고). 정상일 땐 침묵(2026-10-14 간결화).
+    # 실보유 원장과 대조 — AI가 hold/조정 줄을 빠뜨린 종목을 코드가 드러낸다
+    # (2026-10-07: 실보유 4종목인데 "보유 유지 3종목"으로 나간 사고). 정상일 땐 침묵.
     if holdings:
         covered = {str(x.get("code", "")).strip()
                    for x in (holds + (d.get("position_changes") or []))}
         missing = [name or code for code, name in holdings if code not in covered]
         if missing:
-            lines.append(f"- ⚠️ CEO 판단 누락 보유종목: {', '.join(missing)} (실보유 {len(holdings)}종목 중)")
-
-    risks = d.get("key_risks") or []
-    if risks:
-        lines.append(f"- 핵심 리스크: {risks[0]}")
+            lines.append(f"- ⚠️ 오늘 판단이 없는 보유종목: {', '.join(missing)}")
 
     if d.get("committee_alignment") == "disagree" and d.get("committee_dissent"):
-        lines.append(f"- 분석팀과 이견: {d['committee_dissent']}")
+        lines.append(f"- 참고, 다른 시각: {d['committee_dissent']}")
 
     return "\n".join(lines)
 
@@ -446,7 +444,10 @@ def _build_prompt_global() -> str:
 
 [출력 규칙]
 - 팩트 시트 실제 수치만 사용. 예시 수치 금지.
-- 전문 용어 사용 금지. 누구나 읽고 바로 판단할 수 있는 말로.
+- 전문 용어 사용 금지. 투자를 처음 하는 사람도 바로 이해하는 말로 (예: 스탠스→"투자 자세", 리스크→"위험", 비중→"전체 자산 중 차지하는 몫", 변동성→"오르내림").
+- 시스템·AI·데이터 수집 상태·분석팀·모델 얘기는 쓰지 말 것. 오직 "그래서 내 돈을 어떻게 할지"만 쓴다. 데이터가 없으면 그 항목을 말없이 생략(설명 금지).
+- 마크다운 굵은 글씨(**)와 [대괄호] 빈칸을 그대로 출력하지 말 것. 각 줄은 한 문장, 40자 안팎.
+- 같은 내용(특히 KOSPI 수치, 위험 요인)을 두 군데 이상에 반복하지 말 것.
 - 모든 행동 줄에는 이유와 수치가 함께.
 - 지수·가격 기준선은 컨텍스트에 있는 현재 수준·평단에서 ±%로 표현하거나 컨텍스트에 있는 수치만 쓸 것. 새로운 절대 레벨(예: 컨텍스트에 없는 'KOSPI 2,600선')을 지어내지 말 것.
 - 달러/원이 오르면 '원화 약세', 내리면 '원화 강세'. 선물·지수의 방향(상승/하락)은 팩트 시트 부호 그대로.
@@ -479,7 +480,10 @@ def _build_prompt_pre() -> str:
 
 [출력 규칙]
 - 팩트 시트 실제 수치만 사용. 예시 수치 금지.
-- 전문 용어 사용 금지. 누구나 읽고 바로 판단할 수 있는 말로.
+- 전문 용어 사용 금지. 투자를 처음 하는 사람도 바로 이해하는 말로 (예: 스탠스→"투자 자세", 리스크→"위험", 비중→"전체 자산 중 차지하는 몫", 변동성→"오르내림").
+- 시스템·AI·데이터 수집 상태·분석팀·모델 얘기는 쓰지 말 것. 오직 "그래서 내 돈을 어떻게 할지"만 쓴다. 데이터가 없으면 그 항목을 말없이 생략(설명 금지).
+- 마크다운 굵은 글씨(**)와 [대괄호] 빈칸을 그대로 출력하지 말 것. 각 줄은 한 문장, 40자 안팎.
+- 같은 내용(특히 KOSPI 수치, 위험 요인)을 두 군데 이상에 반복하지 말 것.
 - 모든 행동 줄에는 이유와 수치가 함께.
 - 지수·가격 기준선은 컨텍스트에 있는 현재 수준·평단에서 ±%로 표현하거나 컨텍스트에 있는 수치만 쓸 것. 새로운 절대 레벨(예: 컨텍스트에 없는 'KOSPI 2,600선')을 지어내지 말 것.
 
@@ -523,7 +527,10 @@ def _build_prompt_close() -> str:
 
 [출력 규칙]
 - 팩트 시트·실제 수급 데이터만 사용. 예시 수치 금지.
-- 전문 용어 사용 금지. 누구나 읽고 바로 판단할 수 있는 말로.
+- 전문 용어 사용 금지. 투자를 처음 하는 사람도 바로 이해하는 말로 (예: 스탠스→"투자 자세", 리스크→"위험", 비중→"전체 자산 중 차지하는 몫", 변동성→"오르내림").
+- 시스템·AI·데이터 수집 상태·분석팀·모델 얘기는 쓰지 말 것. 오직 "그래서 내 돈을 어떻게 할지"만 쓴다. 데이터가 없으면 그 항목을 말없이 생략(설명 금지).
+- 마크다운 굵은 글씨(**)와 [대괄호] 빈칸을 그대로 출력하지 말 것. 각 줄은 한 문장, 40자 안팎.
+- 같은 내용(특히 KOSPI 수치, 위험 요인)을 두 군데 이상에 반복하지 말 것.
 - 모든 행동 줄에는 이유와 수치가 함께.
 - 지수·가격 기준선은 컨텍스트에 있는 현재 수준·평단에서 ±%로 표현하거나 컨텍스트에 있는 수치만 쓸 것. 새로운 절대 레벨(예: 컨텍스트에 없는 'KOSPI 2,600선')을 지어내지 말 것.
 
@@ -1155,7 +1162,7 @@ def run(state: InvestmentState) -> InvestmentState:
             ceo_report, _more = split_more(ceo_report)
             if _more:
                 save_more(date, run_type, _more)
-                ceo_report = ceo_report.rstrip() + "\n\n📎 반론·사전부검·근거 상세: /more"
+                ceo_report = ceo_report.rstrip() + "\n\n📎 반대 의견·근거가 더 궁금하면: /more"
         except Exception as _mre:
             logger.debug("[CIO] 더보기 분리 실패 (전체 유지): %s", _mre)
         # '내 의견'의 확신도(상/중/하)를 확신도 없는 조정 판단에 부여 — 확신도별 사후 채점(보정)용
@@ -1213,9 +1220,9 @@ def run(state: InvestmentState) -> InvestmentState:
                 _new_errors.extend(_rr_warns)
                 # 브리핑 맨 앞에 경고 블록 삽입 (텔레그램 가시성)
                 _rr_block = (
-                    "\n\n🚨 [CIO 헌장 위반 — R/R 기준 미달]\n"
+                    "\n\n🚨 기대수익 대비 손실 위험이 큰 종목\n"
                     + "\n".join(_rr_warns)
-                    + "\n⛔ 위 포지션 진입 전 CIO 재검토 필수\n"
+                    + "\n⛔ 위 종목은 매수 전에 다시 따져보세요\n"
                 )
                 state["ceo_report"] = _rr_block + state["ceo_report"]
         except Exception as _rre:

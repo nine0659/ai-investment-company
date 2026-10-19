@@ -104,7 +104,7 @@ def format_warning(result: dict) -> str:
     """사용자 경고 문구 (warn일 때만 호출)."""
     shown = ", ".join(result["ungrounded"][:8])
     return (
-        f"⚠️ *수치 검증* — 브리핑 속 숫자 {result['count']}개가 분석 입력에서 확인되지 않았습니다.\n"
+        f"⚠️ *숫자 확인 필요* — 브리핑 속 숫자 {result['count']}개는 근거를 확인하지 못했습니다.\n"
         f"{shown}\n"
-        "AI가 계산했거나 잘못 옮긴 숫자일 수 있으니, 이 숫자들은 매매 판단 전에 직접 확인하세요."
+        "틀렸을 수 있으니 매매 전에 직접 확인하세요."
     )

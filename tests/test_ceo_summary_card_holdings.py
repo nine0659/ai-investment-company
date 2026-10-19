@@ -11,7 +11,7 @@ def _d(holds, changes=()):
 
 def test_missing_holding_is_flagged():
     card = _build_summary_card(_d(["005380", "009150", "000660"]), _HOLDINGS)
-    assert "CEO 판단 누락 보유종목: TIGER ETF" in card
+    assert "오늘 판단이 없는 보유종목: TIGER ETF" in card
 
 
 def test_change_counts_as_covered():

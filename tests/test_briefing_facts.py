@@ -14,15 +14,20 @@ REPORT = ("시장 분위기: 나쁨 — 선물 소폭 상승에도 원달러 강
 
 def test_numbers_line_uses_code_values():
     line = bf.build_numbers_line(RAW, KR)
-    assert "S&P500선물 -0.03%" in line and "원화 약세" in line and "-5.46%" in line
+    assert "S&P500선물 -0.03%" in line and "원화 약세" in line and "KOSPI" not in line  # 지수는 상단 블록에만
 
 
 def test_apply_overwrites_numbers_and_flags_shock():
     out, contra = bf.apply(REPORT, RAW, KR, "pre_market")
     assert "+0.12%" not in out
     assert "🚨 전일 마감 KOSPI -5.46%" in out
-    body = out.split("⚠️ 자동 교정")[0]
-    assert "원달러 강세" not in body and "원화 약세" in body
+    assert "원달러 강세" not in out and "원화 약세" in out
+    assert "자동 교정" not in out   # 내부 교정 내역은 사용자에게 노출하지 않는다
+
+
+def test_zero_pct_index_is_hidden():
+    blk = bf.build_market_block({}, {"kospi": {"current": 5668.0, "change_pct": 0.0}}, "pre_market")
+    assert "5,668" in blk and "0.00%" not in blk
 
 
 def test_contradictions_detected():

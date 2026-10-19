@@ -38,8 +38,8 @@ def check_position_sizing(ceo_decisions: dict) -> list[str]:
         if not (band[0] <= size <= band[1]):
             violations.append(
                 f"{pos.get('name', '')}({pos.get('code', '')}) "
-                f"확신도 {conviction} — 비중 {size}%가 권고 범위 "
-                f"{band[0]}~{band[1]}% 밖"
+                f"확신도 {conviction}에 비해 비중 {size}%가 너무 크거나 작습니다 "
+                f"(권장 {band[0]}~{band[1]}%)"
             )
     if violations:
         logger.warning("[리스크게이트] 비중 밴드 위반 %d건: %s", len(violations), violations)
@@ -68,12 +68,12 @@ def check_portfolio_rules(ceo_decisions: dict, held_codes: set[str] | None = Non
             blocked.add(code)
         if code and code in held:
             blocked.add(code)
-            warnings.append(f"{pos.get('name', '')}({code}) 이미 보유 중 — '신규 편입'이 아니라 추가매수 판단이어야 함")
+            warnings.append(f"{pos.get('name', '')}({code}) 이미 보유 중인 종목입니다 — 새로 사는 게 아니라 추가 매수로 봐야 합니다")
 
     total_new = sum(p.get("size_pct") or 0 for p in decisions.get("new_positions", []) or [])
     room = 100 - (decisions.get("cash_target_pct", 30) or 0)
     if total_new > room:
-        warnings.append(f"신규 비중 합계 {total_new:g}%가 투자 가능 한도 {room:g}%(=100-현금목표)를 초과")
+        warnings.append(f"새로 사려는 비중 합계 {total_new:g}%가 투자 가능 한도 {room:g}%(=100-현금목표)를 넘습니다")
 
     if blocked:
         logger.warning("[리스크게이트] 승인 큐 차단 종목: %s", sorted(blocked))

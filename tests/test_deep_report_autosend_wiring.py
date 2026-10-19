@@ -49,7 +49,7 @@ def test_deep_report_summary_sent_as_followup_when_present(monkeypatch):
     assert len(sent) == 2, "메인 브리핑 + 심층 요약 두 통이 나가야 함"
     assert sent[0] == "메인 브리핑 본문"
     assert "미 10Y 금리 급등" in sent[1]
-    assert "심층 분석" in sent[1]
+    assert "시장 배경" in sent[1]
     assert "/insight" in sent[1], "전문 조회 경로를 안내해야 함"
     assert "전문" not in sent[1] or "발송되면 안 됨" not in sent[1], \
         "요약이 아니라 전문 원문이 그대로 새어나가면 안 됨"

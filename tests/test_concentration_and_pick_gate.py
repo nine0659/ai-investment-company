@@ -45,7 +45,7 @@ def test_sector_violation_only_when_multiple_stocks():
 
 def test_alert_text_has_numbers_and_loss_warning():
     txt = cr.format_alert(cr.evaluate(POS, CAPS)[0])
-    assert "80.0%" in txt and "상한 50%" in txt and "손실이 확정" in txt and "거래일" in txt
+    assert "80.0%" in txt and "한도 50%" in txt and "손실이 확정" in txt and "거래일" in txt
 
 
 def test_check_decisions_flags_adding_to_overweight():

@@ -40,6 +40,6 @@ def test_warn_threshold():
     report = " ".join(f"{n}%" for n in (11.1, 22.2, 33.3, 44.4, 55.5))
     r = ofc.check_report_numbers(report, "아무 숫자 없음")
     assert r["warn"] is True
-    assert "수치 검증" in ofc.format_warning(r)
+    assert "숫자 확인" in ofc.format_warning(r)
     r2 = ofc.check_report_numbers("11.1% 22.2%", "아무 숫자 없음")
     assert r2["warn"] is False

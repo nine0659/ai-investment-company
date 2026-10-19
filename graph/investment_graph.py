@@ -561,9 +561,9 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
             except Exception as _cde:
                 logger.debug("[텔레그램] 집중도 결정 점검 실패 (무시): %s", _cde)
             if blocked:
-                violations.append(f"→ 승인 큐 미등록 처리: {', '.join(sorted(blocked))} (직접 판단 후 필요하면 /holdings로 반영)")
+                violations.append(f"→ 위 사유로 매수 승인 버튼은 만들지 않았습니다:{', '.join(sorted(blocked))}")
             if violations:
-                send_message("⚠️ *리스크 게이트* (CEO 자체 비중 규칙 위반 감지)\n\n" + "\n".join(violations))
+                send_message("⚠️ *비중 점검* — 오늘 제안에서 확인할 점\n\n" + "\n".join(violations))
                 logger.info("[텔레그램] 리스크 게이트 경고 발송 완료")
         except Exception as e:
             logger.warning("[텔레그램] 리스크 게이트 검사 실패 (무시): %s", e)
@@ -573,8 +573,8 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
             from services.output_fact_check import format_warning
             _fc = state.get("ceo_fact_check") or {}
             if _fc.get("warn"):
-                send_message(format_warning(_fc))
-                logger.info("[텔레그램] 수치 검증 경고 발송 완료")
+                # 시스템 검증 내용이라 브리핑 채팅엔 보내지 않고 로그로만 남긴다 (투자 정보만 발송)
+                logger.warning("[수치검증] %s", format_warning(_fc))
         except Exception as e:
             logger.warning("[텔레그램] 수치 검증 경고 실패 (무시): %s", e)
 
@@ -599,7 +599,7 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
     summary = state.get("deep_report_summary", "")
     if summary:
         try:
-            send_message("🔍 *심층 분석 요약* (전문은 /insight)\n\n" + summary)
+            send_message("🔍 *시장 배경 요약* (자세히: /insight)\n\n" + summary)
             logger.info("[텔레그램] 심층 분석 요약 발송 완료")
         except Exception as e:
             logger.warning("[텔레그램] 심층 분석 요약 발송 실패 (메인 브리핑은 정상 발송됨): %s", e)
