@@ -64,14 +64,94 @@ def stale_tag(as_of: str, max_age: int) -> str:
 # ── 조립 ───────────────────────────────────────────────────────────
 
 def _collect() -> dict:
+    """키 없이 되는 5묶음 + 키가 설정된 묶음(ecos/fred/eia)을 병렬 수집. 키가 없는 묶음은 dict에 넣지 않는다
+    (그래야 '키 미설정'이 수집 실패로 집계되지 않는다)."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
     from clients import official_stats_client as osc
-    return {
-        "curve": osc.fetch_treasury_curve(),
-        "sofr": osc.fetch_sofr(),
-        "bis": osc.fetch_bis_policy_rates(),
-        "cli": osc.fetch_oecd_cli(),
-        "bls": osc.fetch_bls(),
-    }
+    jobs = {"curve": osc.fetch_treasury_curve, "sofr": osc.fetch_sofr, "bis": osc.fetch_bis_policy_rates,
+            "cli": osc.fetch_oecd_cli, "bls": osc.fetch_bls}
+    for name, env, fn in (("ecos", "ECOS_API_KEY", osc.fetch_ecos), ("fred", "FRED_API_KEY", osc.fetch_fred),
+                          ("eia", "EIA_API_KEY", osc.fetch_eia)):
+        if (os.getenv(env) or "").strip():
+            jobs[name] = fn
+    out = {}
+    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+        futs = {k: ex.submit(fn) for k, fn in jobs.items()}
+        for k, f in futs.items():
+            try:
+                out[k] = f.result(timeout=90)
+            except Exception as e:
+                logger.warning("[매크로대시보드] %s 수집 실패: %s", k, e)
+                out[k] = [] if k == "curve" else {}
+    return out
+
+
+# ── 키 필요 소스(ECOS·FRED·EIA) 포맷 ───────────────────────────────
+
+def _fmt_ecos(e: dict) -> list[str]:
+    items = []
+    br = e.get("base_rate")
+    if br:
+        prev = f"(전월 {br[-2][1]:.2f}%)" if len(br) > 1 and br[-2][1] != br[-1][1] else ""
+        items.append(f"기준금리 {br[-1][1]:.2f}%{prev}[{br[-1][0]}]")
+    y = yoy_pct(e.get("cpi") or [])
+    if y:
+        items.append(f"소비자물가 전년비 {y[1]:+.2f}%[{y[0]}]")
+    ca = e.get("current_account")
+    if ca:
+        items.append(f"경상수지 {ca[-1][1] / 100:+,.0f}억달러[{ca[-1][0]}]")
+    ex = yoy_pct(e.get("exports") or [])
+    if ex:
+        items.append(f"수출 전년비 {ex[1]:+.1f}%[{ex[0]}]")
+    fx = e.get("usdkrw")
+    if fx:
+        ch = f"({fx[-1][1] - fx[-2][1]:+.1f}원)" if len(fx) > 1 else ""
+        items.append(f"원/달러 {fx[-1][1]:,.1f}{ch}[{fx[-1][0]}]")
+    if not items:
+        return []
+    monthly = [x[-1][0] for x in (br, e.get("cpi"), ca, e.get("exports")) if x]
+    oldest = max(monthly, key=lambda a: age_days(a) or 0) if monthly else ""
+    return ["[한국 거시 — 한국은행 ECOS (월간은 발표 지연, 대괄호=기준월)]" + (stale_tag(oldest, 75) if oldest else ""),
+            "  " + " | ".join(items)]
+
+
+def _fmt_fred(f: dict) -> list[str]:
+    spec = (("vix", "VIX", "{:.2f}", 6), ("hy_spread", "하이일드 스프레드", "{:.2f}%p", 6),
+            ("fed_funds", "연방기금 실효금리", "{:.2f}%", 6), ("dollar_index", "달러지수(광의)", "{:.1f}", 6),
+            ("jobless_claims", "신규실업수당청구", "{:,.0f}건", 14), ("sentiment", "미시간 소비자심리", "{:.1f}", 75))
+    items = []
+    for key, label, fmt, max_age in spec:
+        pts = f.get(key)
+        if not pts:
+            continue
+        d, v = pts[-1]
+        if key == "sentiment":
+            d = d[:7]          # 월간 시리즈는 매월 1일로 찍혀 나온다 — 월 단위로 신선도 판정
+        ch = ""
+        if len(pts) > 1:
+            diff = v - pts[-2][1]
+            ch = f", 직전 대비 {diff:+,.0f}" if key == "jobless_claims" else f", 직전 대비 {diff:+.2f}"
+        items.append(f"{label} {fmt.format(v)}({d}{ch}){stale_tag(d, max_age)}")
+    return ["[미국 시장·심리 지표 — FRED(세인트루이스 연준)]", "  " + " | ".join(items)] if items else []
+
+
+def _fmt_eia(e: dict) -> list[str]:
+    items = []
+    for key, label in (("wti", "WTI"), ("brent", "브렌트")):
+        pts = e.get(key)
+        if pts:
+            d, v = pts[-1]
+            ch = f", 직전 대비 {v - pts[-2][1]:+.2f}" if len(pts) > 1 else ""
+            items.append(f"{label} ${v:.2f}({d}{ch}){stale_tag(d, 10)}")
+    cs = e.get("crude_stocks")
+    if cs:
+        d, v = cs[-1]
+        ch = f", 전주 대비 {(v - cs[-2][1]) / 1000:+.1f}백만배럴" if len(cs) > 1 else ""
+        items.append(f"미국 상업용 원유재고 {v / 1000:,.1f}백만배럴({d}{ch}){stale_tag(d, 14)}")
+    return ["[에너지 — 미국 EIA (현물가는 주 단위로 갱신되어 며칠 지연)]", "  " + " | ".join(items)] if items else []
+
+
 
 
 def format_dashboard(d: dict) -> tuple[str, int, int]:
@@ -157,7 +237,17 @@ def format_dashboard(d: dict) -> tuple[str, int, int]:
             lines.append(f"[미국 물가·고용 — 노동통계국 BLS]{stale_tag(asof, 60)}")
             lines.append("  " + " | ".join(items))
 
-    return "\n".join(lines), ok, 5
+    total = 5
+    for key, fmt in (("ecos", _fmt_ecos), ("fred", _fmt_fred), ("eia", _fmt_eia)):
+        if key not in d:          # 키 미설정 → 집계 대상 아님
+            continue
+        total += 1
+        got = fmt(d.get(key) or {})
+        if got:
+            ok += 1
+            lines.extend(got)
+
+    return "\n".join(lines), ok, total
 
 
 def build_macro_dashboard(force: bool = False) -> str:

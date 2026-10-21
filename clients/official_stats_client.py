@@ -27,8 +27,8 @@ _TREASURY = ("https://home.treasury.gov/resource-center/data-chart-center/intere
 _TREASURY_FIELDS = {"3M": "BC_3MONTH", "2Y": "BC_2YEAR", "5Y": "BC_5YEAR", "10Y": "BC_10YEAR", "30Y": "BC_30YEAR"}
 
 
-def _get(url: str, **kw):
-    r = requests.get(url, headers=_H, timeout=_T, **kw)
+def _get(url: str, timeout: int = _T, **kw):
+    r = requests.get(url, headers=_H, timeout=timeout, **kw)
     r.raise_for_status()
     return r
 
@@ -103,6 +103,112 @@ def fetch_oecd_cli(areas=("KOR", "USA", "CHN", "JPN"), n: int = 3) -> dict:
     except Exception as e:
         logger.warning("[공식통계] OECD CLI 실패: %s", e)
         return {}
+
+
+def _key(name: str) -> str:
+    """API 키는 환경변수(.env는 db.database가 자체 로드). 없으면 빈 문자열 → 해당 수집기는 건너뛴다."""
+    import os
+    return (os.getenv(name) or "").strip()
+
+
+def _ecos_rows(stat: str, cycle: str, start: str, end: str, item: str) -> list[tuple[str, float]]:
+    k = _key("ECOS_API_KEY")
+    url = f"https://ecos.bok.or.kr/api/StatisticSearch/{k}/json/kr/1/400/{stat}/{cycle}/{start}/{end}/{item}"
+    rows = _get(url).json().get("StatisticSearch", {}).get("row", [])
+    out = []
+    for x in rows:
+        t = x.get("TIME", "")
+        t = f"{t[:4]}-{t[4:6]}" + (f"-{t[6:8]}" if len(t) == 8 else "")
+        try:
+            out.append((t, float(x["DATA_VALUE"])))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return sorted(out)
+
+
+def fetch_ecos() -> dict:
+    """한국은행 ECOS — 기준금리·소비자물가지수·경상수지·수출금액·원/달러. {이름: [(기준일, 값), ... 오래된→최신]}.
+    키가 없으면 {}. 한 통계가 실패해도 나머지는 돌려준다."""
+    if not _key("ECOS_API_KEY"):
+        return {}
+    now = datetime.now()
+    m_end = now.strftime("%Y%m")
+    m_start = f"{now.year - 2}{now.month:02d}"
+    specs = {
+        "base_rate": ("722Y001", "M", m_start, m_end, "0101000"),
+        "cpi": ("901Y009", "M", m_start, m_end, "0"),                 # 소비자물가지수 총지수(2020=100)
+        "current_account": ("301Y013", "M", m_start, m_end, "000000"),  # 백만달러
+        "exports": ("901Y118", "M", m_start, m_end, "T002"),           # 수출금액 천불
+        "usdkrw": ("731Y001", "D", (now - timedelta(days=21)).strftime("%Y%m%d"), now.strftime("%Y%m%d"), "0000001"),
+    }
+    out = {}
+    for name, args in specs.items():
+        try:
+            pts = _ecos_rows(*args)
+            if pts:
+                out[name] = pts
+        except Exception as e:
+            logger.warning("[공식통계] ECOS %s 실패: %s", name, str(e).replace(_key("ECOS_API_KEY"), "***")[:120])
+    return out
+
+
+_FRED_SERIES = {"VIXCLS": "vix", "BAMLH0A0HYM2": "hy_spread", "DFF": "fed_funds", "DTWEXBGS": "dollar_index",
+                "ICSA": "jobless_claims", "UMCSENT": "sentiment"}
+
+
+def fetch_fred(n: int = 6) -> dict:
+    """FRED — VIX, 하이일드 스프레드, 연방기금 실효금리, 달러지수, 신규실업수당청구, 미시간 소비자심리.
+    {이름: [(기준일, 값), ... 오래된→최신]}. 결측('.')은 제외. 키가 없으면 {}."""
+    k = _key("FRED_API_KEY")
+    if not k:
+        return {}
+    out = {}
+    for sid, name in _FRED_SERIES.items():
+        try:
+            j = _get("https://api.stlouisfed.org/fred/series/observations",
+                     params={"series_id": sid, "api_key": k, "file_type": "json", "limit": n + 4,
+                             "sort_order": "desc"}).json()
+            pts = []
+            for o in j.get("observations", []):
+                try:
+                    pts.append((o["date"], float(o["value"])))
+                except (KeyError, ValueError):
+                    continue
+            if pts:
+                out[name] = sorted(pts[:n])
+        except Exception as e:
+            logger.warning("[공식통계] FRED %s 실패: %s", sid, str(e).replace(k, "***")[:120])
+    return out
+
+
+def fetch_eia() -> dict:
+    """미국 에너지정보청 — WTI·브렌트 현물가(일간), 미국 원유 재고(주간, 천배럴).
+    {이름: [(기준일, 값), ...]}. 응답이 느릴 수 있어 3건을 병렬로 받는다. 키가 없으면 {}."""
+    k = _key("EIA_API_KEY")
+    if not k:
+        return {}
+    specs = {"wti": ("petroleum/pri/spt", "RWTC", "daily"), "brent": ("petroleum/pri/spt", "RBRTE", "daily"),
+             "crude_stocks": ("petroleum/stoc/wstk", "WCESTUS1", "weekly")}
+    def one(item):
+        name, (route, sid, freq) = item
+        try:
+            p = {"api_key": k, "frequency": freq, "data[0]": "value", "facets[series][]": sid,
+                 "sort[0][column]": "period", "sort[0][direction]": "desc", "length": 6}
+            data = _get(f"https://api.eia.gov/v2/{route}/data/", params=p, timeout=45).json()["response"]["data"]
+            pts = []
+            for x in data:
+                try:
+                    pts.append((x["period"], float(x["value"])))
+                except (KeyError, ValueError, TypeError):
+                    continue
+            return name, sorted(pts)
+        except Exception as e:
+            logger.warning("[공식통계] EIA %s 실패: %s", sid, str(e).replace(k, "***")[:120])
+            return name, []
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        return {n: pts for n, pts in ex.map(one, specs.items()) if pts}
 
 
 _BLS_SERIES = {"CUUR0000SA0": "cpi_index", "LNS14000000": "unemployment", "CES0000000001": "payrolls"}

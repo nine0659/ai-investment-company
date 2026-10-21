@@ -122,3 +122,73 @@ def test_official_doc_sources_include_policy_speeches():
     from clients.official_docs_client import _SOURCES
     names = {s[0] for s in _SOURCES}
     assert {"Fed", "한국은행", "ECB", "Fed 연설", "BIS 연설"} <= names
+
+
+# ── 키 필요 소스 (ECOS·FRED·EIA, 2026-10-21) ──────────────────────────
+
+def _ecos():
+    cpi = [(f"2025-{m:02d}", 100.0 + m * 0.1) for m in range(1, 13)] + [("2026-01", 104.0)]
+    cpi = [("2025-01", 100.0), ("2026-01", 102.5)]
+    return {"base_rate": [("2026-08", 3.0), ("2026-09", 3.0)], "cpi": cpi,
+            "current_account": [("2026-08", 46113.0)],
+            "exports": [("2025-08", 58000000.0), ("2026-08", 98000000.0)],
+            "usdkrw": [("2026-10-20", 1332.1), ("2026-10-21", 1328.0)]}
+
+
+def test_ecos_formatting_units_and_yoy():
+    out = md._fmt_ecos(_ecos())
+    text = "\n".join(out)
+    assert "기준금리 3.00%[2026-09]" in text
+    assert "소비자물가 전년비 +2.50%[2026-01]" in text
+    assert "경상수지 +461억달러[2026-08]" in text      # 46,113 백만달러 = 461억달러
+    assert "수출 전년비 +69.0%[2026-08]" in text
+    assert "원/달러 1,328.0(-4.1원)" in text
+
+
+def test_fred_monthly_sentiment_uses_month_for_staleness():
+    f = {"sentiment": [("2026-07-01", 55.2), ("2026-08-01", 51.7)], "vix": [("2026-10-15", 16.46), ("2026-10-19", 18.44)]}
+    text = "\n".join(md._fmt_fred(f))
+    assert "VIX 18.44(2026-10-19, 직전 대비 +1.98)" in text
+    assert "미시간 소비자심리 51.7(2026-08, 직전 대비 -3.50)" in text
+
+
+def test_eia_formatting():
+    e = {"wti": [("2026-10-13", 100.86), ("2026-10-14", 101.91)],
+         "crude_stocks": [("2026-10-02", 424134.0), ("2026-10-09", 415577.0)]}
+    text = "\n".join(md._fmt_eia(e))
+    assert "WTI $101.91(2026-10-14, 직전 대비 +1.05)" in text
+    assert "415.6백만배럴" in text and "전주 대비 -8.6백만배럴" in text
+
+
+def test_keyed_groups_count_only_when_configured():
+    base = {"curve": _curve()}
+    _, ok, total = md.format_dashboard(base)
+    assert total == 5                                   # 키 미설정은 실패로 집계하지 않는다
+    _, ok2, total2 = md.format_dashboard({**base, "ecos": _ecos(), "fred": {}, "eia": {}})
+    assert total2 == 8 and ok2 == 2                     # 키는 있는데 수집 실패한 fred·eia는 집계됨
+
+
+def test_keyed_fetchers_are_silent_without_key(monkeypatch):
+    for k in ("ECOS_API_KEY", "FRED_API_KEY", "EIA_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    assert osc.fetch_ecos() == {} and osc.fetch_fred() == {} and osc.fetch_eia() == {}
+
+
+def test_collect_skips_unconfigured_keyed_sources(monkeypatch):
+    for k in ("ECOS_API_KEY", "FRED_API_KEY", "EIA_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ECOS_API_KEY", "x")
+    for n in ("fetch_treasury_curve", "fetch_sofr", "fetch_bis_policy_rates", "fetch_oecd_cli", "fetch_bls"):
+        monkeypatch.setattr(osc, n, lambda: {})
+    monkeypatch.setattr(osc, "fetch_ecos", lambda: {"base_rate": [("2026-09", 3.0)]})
+    d = md._collect()
+    assert "ecos" in d and "fred" not in d and "eia" not in d
+
+
+def test_ecos_key_never_logged(monkeypatch, caplog):
+    monkeypatch.setenv("ECOS_API_KEY", "SECRETKEY123")
+    def boom(url, **k): raise RuntimeError(f"fail {url}")
+    monkeypatch.setattr(osc, "_get", boom)
+    with caplog.at_level("WARNING"):
+        assert osc.fetch_ecos() == {}
+    assert "SECRETKEY123" not in caplog.text

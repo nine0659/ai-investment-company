@@ -420,6 +420,15 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
   새 시리즈는 as_of가 최근인지 먼저 확인. FRED는 키 없이 접속 불가(타임아웃). official_docs에 Fed 연설·증언,
   뉴욕연준 연구, 샌프란시스코연준, BIS 연설, 일본은행 추가. 사용자 발급이 필요한 키(ECOS·FRED·공공데이터포털·KOSIS·EIA)는 미적용.
 
+- **[개선, 2026-10-21 후속2] 키 필요 공식 통계 3종 연결 — ECOS·FRED·EIA.** `official_stats_client.fetch_ecos/fetch_fred/fetch_eia`
+  (키는 환경변수 `ECOS_API_KEY`/`FRED_API_KEY`/`EIA_API_KEY`, 없으면 조용히 건너뜀 — **키 미설정은 `branch:macro_data`
+  실패로 집계하지 않는다**: `_collect`가 키 있는 묶음만 dict에 넣고 `format_dashboard`의 total이 그만큼만 늘어난다).
+  ECOS=기준금리·CPI·경상수지(백만달러→억달러)·수출(천불, 전년비)·원/달러, FRED=VIX·하이일드스프레드·연방기금금리·달러지수·
+  신규실업수당·미시간심리(월간 시리즈는 매월 1일로 찍혀 나오므로 월 단위로 신선도 판정), EIA=WTI·브렌트·원유재고
+  (현물가는 주 단위 갱신이라 약 1주 지연 — as_of 병기). 수집은 병렬(스레드), 로그에 키가 새지 않게 예외 문구에서 키를 치환.
+  **미완:** 공공데이터포털(`DATA_GO_KR_KEY`, 관세청 수출입)은 2026-10-21 호출 시 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`
+  (활용신청 승인/반영 대기 추정), KOSIS(`KOSIS_API_KEY`)는 키는 유효하나 통계표 파라미터(orgId/tblId/itmId) 미확정 — 둘 다 코드 없음.
+
 ## 장애 대응 런북
 
 - **08:05 헬스체크 경보 수신 시**: ① Render 대시보드에서 서비스 상태 확인(슬립/크래시)
