@@ -404,6 +404,10 @@ def main():
         help="기업 종합 투자 분석 (종목코드 또는 회사명). 예: --research 005930 또는 --research 삼성전자"
     )
     parser.add_argument(
+        "--thesis", metavar="CODE_OR_NAME",
+        help="보유 종목 판단서 (이익 추정·시장 반영·내 계좌 기준 행동). 예: --thesis 000660"
+    )
+    parser.add_argument(
         "--telegram", action="store_true",
         help="--research 결과를 텔레그램으로도 발송"
     )
@@ -465,6 +469,17 @@ def main():
         return
     if args.order:
         _run_order_cmd(args)
+        return
+
+    # ── 종목 판단서 (출력만 — 텔레그램 발송 경로 없음) ──────────────
+    if args.thesis:
+        from services.research_service import resolve_code
+        from services.stock_thesis import write_thesis
+        code, name = resolve_code(args.thesis)
+        if not code:
+            console.print(f"[red]❌ 종목을 찾지 못했습니다: {args.thesis}[/red]")
+            sys.exit(1)
+        console.print(write_thesis(code, name), markup=False)
         return
 
     # ── 기업 리서치 ─────────────────────────────────────────────
