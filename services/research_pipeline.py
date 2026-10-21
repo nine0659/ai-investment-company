@@ -41,7 +41,14 @@ def run(naver_reports: list[dict]) -> str:
         broken = stats["selected"] > 0 and stats["analyzed"] == 0 and stats["no_text"] < stats["selected"]
         _record(not broken, f"후보 {len(candidates)}(네이버 {n_naver}·공식 {len(official)}·보유종목 {len(company)}) {stats}")
 
-        return research_synthesis.build_research_context()
+        parts = []
+        try:
+            from services.macro_dashboard import build_macro_dashboard
+            parts.append(build_macro_dashboard())
+        except Exception as e:
+            logger.warning("[리서치] 공식통계 대시보드 실패: %s", e)
+        parts.append(research_synthesis.build_research_context())
+        return "\n\n".join(p for p in parts if p)
     except Exception as e:
         logger.error("[리서치] 파이프라인 실패: %s", e)
         _record(False, f"예외: {str(e)[:150]}")

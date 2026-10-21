@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 
 # 한 번 실행당 새로 읽을 문서 수 상한 (유형별) — 비용·시간 상한
-CAPS = {"경제분석": 5, "투자전략": 4, "산업분석": 3, "공식문서": 3, "종목분석": 4}
+CAPS = {"경제분석": 5, "투자전략": 4, "산업분석": 3, "공식문서": 6, "종목분석": 4}
 PER_BROKER_MAX = 2
 MIN_TEXT_CHARS = 400
 LLM_INPUT_CHARS = 10000

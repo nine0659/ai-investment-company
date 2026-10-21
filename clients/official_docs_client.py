@@ -30,6 +30,14 @@ _SOURCES = [
      r"금융통화위원회|통화정책|경제전망|물가|금융안정"),
     ("ECB", "https://www.ecb.europa.eu/rss/press.html", 14,
      r"monetary policy|inflation|economic bulletin|projection|Lagarde|Lane|Schnabel"),
+    # 연설·증언·연구노트 — 정책 방향의 단서 (2026-10-21 추가)
+    ("Fed 연설", "https://www.federalreserve.gov/feeds/speeches.xml", 14, r"."),
+    ("Fed 의회증언", "https://www.federalreserve.gov/feeds/testimony.xml", 45, r"."),
+    ("뉴욕연준 연구", "https://libertystreeteconomics.newyorkfed.org/feed/", 10, r"."),
+    ("샌프란시스코연준", "https://www.frbsf.org/feed/?post_type=economic-letter", 21, r"."),
+    ("BIS 연설", "https://www.bis.org/doclist/cbspeeches.rss", 10, r"."),
+    ("일본은행", "https://www.boj.or.jp/en/rss/whatsnew.xml", 14,
+     r"outlook|monetary|policy|summary|opinions|Governor|Ueda"),
 ]
 
 # 한국은행 상세 페이지는 menuNo가 비면 404 — 보도자료 게시판 메뉴 번호
