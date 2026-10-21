@@ -192,3 +192,52 @@ def test_ecos_key_never_logged(monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         assert osc.fetch_ecos() == {}
     assert "SECRETKEY123" not in caplog.text
+
+
+# ── 관세청 수출입 (공공데이터포털 Newtrade, 2026-10-21) ─────────────────
+
+def _customs():
+    return {"exports": [("2025-09", 60e9), ("2026-08", 98.4e9), ("2026-09", 121e9), ("2026-10", 61.6e9)],
+            "imports": [("2025-09", 50e9), ("2026-09", 71e9), ("2026-10", 47e9)],
+            "balance": [("2026-09", 50e9), ("2026-10", 14.5e9)]}
+
+
+def test_customs_excludes_partial_month_from_yoy_and_balance():
+    text = "\n".join(md._fmt_customs(_customs(), today="2026-10-21"))
+    assert "수출 1,210억달러(전년비 +101.7%)[2026-09]" in text
+    assert "수입 710억달러(전년비 +42.0%)[2026-09]" in text
+    assert "무역수지 +500억달러[2026-09]" in text            # 10월 부분치(145억)가 아니라 9월
+    assert "당월(2026-10) 수출 누계 616억달러(집계 중·전년 동기 비교 불가)" in text
+
+
+def test_customs_parser_and_period_split(monkeypatch):
+    monkeypatch.setenv("DATA_GO_KR_KEY", "SECRETKEY999")
+    calls = []
+
+    def fake_get(url, **kw):
+        p = kw["params"]
+        calls.append((p["strtYymm"], p["endYymm"]))
+        xml = ("<response><header><resultCode>00</resultCode></header><body><items>"
+               f"<item><balPayments>10</balPayments><expDlr>300</expDlr><impDlr>290</impDlr><year>{p['endYymm'][:4]}.{p['endYymm'][4:]}</year></item>"
+               "<item><balPayments>1</balPayments><expDlr>1</expDlr><impDlr>1</impDlr><year>총계</year></item>"
+               "</items></body></response>")
+        return _R(text=xml)
+    monkeypatch.setattr(osc, "_get", fake_get)
+    out = osc.fetch_customs()
+    assert len(calls) == 2 and calls[0][1] > calls[1][1]       # 1년 이내 두 구간으로 나눠 요청
+    assert all(len(v) == 2 for v in out.values())              # '총계' 행은 제외, 구간당 1건씩
+    assert out["exports"][-1][1] == 300.0
+
+
+def test_customs_error_response_returns_empty_and_hides_key(monkeypatch, caplog):
+    monkeypatch.setenv("DATA_GO_KR_KEY", "SECRETKEY999")
+    monkeypatch.setattr(osc, "_get", lambda url, **k: _R(text="<response><header><resultCode>99</resultCode>"
+                                                              "<resultMsg>SECRETKEY999 bad</resultMsg></header></response>"))
+    with caplog.at_level("WARNING"):
+        assert osc.fetch_customs() == {}
+    assert "SECRETKEY999" not in caplog.text
+
+
+def test_customs_silent_without_key(monkeypatch):
+    monkeypatch.delenv("DATA_GO_KR_KEY", raising=False)
+    assert osc.fetch_customs() == {}

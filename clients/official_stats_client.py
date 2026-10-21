@@ -152,6 +152,43 @@ def fetch_ecos() -> dict:
     return out
 
 
+def fetch_customs() -> dict:
+    """관세청 수출입총괄(공공데이터포털 `Newtrade`) — 월별 수출·수입·무역수지(달러). 키 없으면 {}.
+    {이름: [(YYYY-MM, 달러), ... 오래된→최신]}. 응답은 XML(year='2026.01', expDlr/impDlr/balPayments).
+    주의: `nitemtrade`/`Itemtrade`는 품목별 API로 활용신청이 따로 필요하다(총괄과 서비스키 등록이 별개)."""
+    k = _key("DATA_GO_KR_KEY")
+    if not k:
+        return {}
+    try:
+        now = datetime.now()
+
+        def ym_shift(months_back: int) -> str:
+            t = now.year * 12 + now.month - 1 - months_back
+            return f"{t // 12}{t % 12 + 1:02d}"
+
+        out: dict[str, dict] = {"exports": {}, "imports": {}, "balance": {}}
+        # 조회기간은 1년 이내만 가능(초과 시 resultCode 99) — 최근 12개월 + 그 전 12개월 두 번에 나눠 받는다(전년비용)
+        for a, b in ((11, 0), (23, 12)):
+            xml = _get("https://apis.data.go.kr/1220000/Newtrade/getNewtradeList",
+                       params={"serviceKey": k, "strtYymm": ym_shift(a), "endYymm": ym_shift(b)}, timeout=40).text
+            if "<resultCode>00</resultCode>" not in xml:
+                logger.warning("[공식통계] 관세청 응답 이상: %s", re.sub(r"\s+", " ", xml)[:150].replace(k, "***"))
+                return {}
+            for item in re.findall(r"<item>(.*?)</item>", xml, re.S):
+                ym = re.search(r"<year>(\d{4})\.(\d{2})</year>", item)
+                if not ym:      # '총계' 행 등은 제외
+                    continue
+                label = f"{ym.group(1)}-{ym.group(2)}"
+                for name, tag in (("exports", "expDlr"), ("imports", "impDlr"), ("balance", "balPayments")):
+                    m = re.search(rf"<{tag}>(-?\d+)</{tag}>", item)
+                    if m:
+                        out[name][label] = float(m.group(1))
+        return {n: sorted(v.items()) for n, v in out.items() if v}
+    except Exception as e:
+        logger.warning("[공식통계] 관세청 실패: %s", str(e).replace(k, "***")[:120])
+        return {}
+
+
 _FRED_SERIES = {"VIXCLS": "vix", "BAMLH0A0HYM2": "hy_spread", "DFF": "fed_funds", "DTWEXBGS": "dollar_index",
                 "ICSA": "jobless_claims", "UMCSENT": "sentiment"}
 

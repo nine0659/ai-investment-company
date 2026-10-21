@@ -72,7 +72,7 @@ def _collect() -> dict:
     jobs = {"curve": osc.fetch_treasury_curve, "sofr": osc.fetch_sofr, "bis": osc.fetch_bis_policy_rates,
             "cli": osc.fetch_oecd_cli, "bls": osc.fetch_bls}
     for name, env, fn in (("ecos", "ECOS_API_KEY", osc.fetch_ecos), ("fred", "FRED_API_KEY", osc.fetch_fred),
-                          ("eia", "EIA_API_KEY", osc.fetch_eia)):
+                          ("eia", "EIA_API_KEY", osc.fetch_eia), ("customs", "DATA_GO_KR_KEY", osc.fetch_customs)):
         if (os.getenv(env) or "").strip():
             jobs[name] = fn
     out = {}
@@ -114,6 +114,31 @@ def _fmt_ecos(e: dict) -> list[str]:
     oldest = max(monthly, key=lambda a: age_days(a) or 0) if monthly else ""
     return ["[한국 거시 — 한국은행 ECOS (월간은 발표 지연, 대괄호=기준월)]" + (stale_tag(oldest, 75) if oldest else ""),
             "  " + " | ".join(items)]
+
+
+def _fmt_customs(c: dict, today: str | None = None) -> list[str]:
+    """관세청 월별 수출입. 진행 중인 당월은 집계가 끝나지 않아 전년비를 내면 왜곡된다 —
+    전년비·무역수지는 '직전 완결 월'로, 당월은 누계 원값만 라벨을 달아 따로 보여준다."""
+    cur_ym = (today or datetime.now().strftime("%Y-%m-%d"))[:7]
+    done = {k: [p for p in v if p[0] < cur_ym] for k, v in c.items()}
+    items = []
+    asof = ""
+    for key, label in (("exports", "수출"), ("imports", "수입")):
+        y = yoy_pct(done.get(key) or [])
+        if y:
+            asof = max(asof, y[0])
+            val = done[key][-1][1] / 1e8
+            items.append(f"{label} {val:,.0f}억달러(전년비 {y[1]:+.1f}%)[{y[0]}]")
+    bal = done.get("balance")
+    if bal:
+        items.append(f"무역수지 {bal[-1][1] / 1e8:+,.0f}억달러[{bal[-1][0]}]")
+    part = [p for p in (c.get("exports") or []) if p[0] == cur_ym]
+    if part:
+        items.append(f"당월({cur_ym}) 수출 누계 {part[0][1] / 1e8:,.0f}억달러(집계 중·전년 동기 비교 불가)")
+    if not items:
+        return []
+    return ["[한국 수출입 — 관세청 (공공데이터포털, 월 완결치 기준)]" + stale_tag(asof, 60) if asof else
+            "[한국 수출입 — 관세청]", "  " + " | ".join(items)]
 
 
 def _fmt_fred(f: dict) -> list[str]:
@@ -238,7 +263,7 @@ def format_dashboard(d: dict) -> tuple[str, int, int]:
             lines.append("  " + " | ".join(items))
 
     total = 5
-    for key, fmt in (("ecos", _fmt_ecos), ("fred", _fmt_fred), ("eia", _fmt_eia)):
+    for key, fmt in (("ecos", _fmt_ecos), ("fred", _fmt_fred), ("eia", _fmt_eia), ("customs", _fmt_customs)):
         if key not in d:          # 키 미설정 → 집계 대상 아님
             continue
         total += 1
