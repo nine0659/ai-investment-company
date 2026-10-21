@@ -35,3 +35,18 @@ def _no_naver_client_network(monkeypatch):
     except Exception:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_research_pipeline_network(monkeypatch, request):
+    """리서치 파이프라인(증권사·중앙은행 수집 + LLM 읽기)이 다른 테스트에서 실망·LLM을 타지 않게 차단.
+    전용 테스트(test_research_pipeline)는 실제 함수를 그대로 검증한다."""
+    if request.module.__name__.endswith("test_research_pipeline"):
+        yield
+        return
+    try:
+        import services.research_pipeline as rp
+        monkeypatch.setattr(rp, "run", lambda *a, **k: "")
+    except Exception:
+        pass
+    yield

@@ -151,6 +151,11 @@ def run(state: InvestmentState) -> InvestmentState:
             report_text = fmt_reports(reports)
             if report_text:
                 lines.append(f"\n{report_text}")
+        # 본문·PDF·중앙은행 원문을 실제로 읽고 코드가 검증·집계한 결과 (실패해도 빈 문자열)
+        from services import research_pipeline
+        research_text = research_pipeline.run(reports)
+        if research_text:
+            lines.append(f"\n{research_text}")
 
         # 국내 투자 블로그 직접 수집 포스트
         if blog_posts:
@@ -179,6 +184,9 @@ def run(state: InvestmentState) -> InvestmentState:
 
         context = "\n".join(lines)
         result  = chat(_SYSTEM, context, max_tokens=1200)
+        # LLM 서술을 거치지 않은 코드 검증 블록을 원문 그대로 덧붙여 CEO가 직접 보게 한다
+        if research_text:
+            result = f"{result}\n\n{research_text[:6000]}"
         state["market_intelligence_report"] = result
 
         logger.info(

@@ -56,3 +56,6 @@ PyYAML>=6.0
 
 # 관측성 — Langfuse Cloud (선택사항, 미설정 시 clients/langfuse_client.py가 no-op)
 langfuse>=3.0.0
+
+# 증권사 리포트 PDF 전문 추출 (services/report_analyzer)
+pymupdf>=1.24.0

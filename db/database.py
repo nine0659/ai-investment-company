@@ -567,6 +567,28 @@ broker_reports = Table("broker_reports", metadata,
     UniqueConstraint("source", "link", name="uq_broker_reports_source_link"),
 )
 
+# 리포트/공식문서 본문 분석 결과 캐시: 같은 문서를 매번 다시 읽지 않고(비용), 쌓인 분석으로 합의·엇갈림을 코드가 집계한다.
+# analysis_json은 코드가 원문 대조로 검증한 주장·수치만 담는다(검증 실패분은 버림).
+report_analysis = Table("report_analysis", metadata,
+    Column("id",              Integer, primary_key=True, autoincrement=True),
+    Column("source",          Text,    nullable=False),         # naver | official
+    Column("link",            Text,    nullable=False),
+    Column("rtype",           Text),                            # 경제분석|투자전략|산업분석|종목분석|공식문서
+    Column("firm",            Text),
+    Column("title",           Text),
+    Column("code",            Text),                            # 종목코드(종목분석)
+    Column("stock",           Text),
+    Column("report_date",     Text),
+    Column("opinion",         Text),                            # 종목분석 투자의견(원문)
+    Column("goal_price",      Integer),
+    Column("price_at_write",  Integer),                         # 리포트 작성일 주가(목표 괴리 계산용)
+    Column("stance",          Text),                            # 강세|중립|약세|판단불가
+    Column("analysis_json",   Text),
+    Column("text_chars",      Integer),
+    Column("analyzed_at",     Text,    server_default=text("CURRENT_TIMESTAMP")),
+    UniqueConstraint("source", "link", name="uq_report_analysis_source_link"),
+)
+
 # ── 초기화 ─────────────────────────────────────────────────────────
 
 def init_db():

@@ -396,6 +396,22 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
 
 - **[개선, 2026-10-14 저녁] 성적 진단 후속 — 계좌성과 개편·집중도 규칙·주간 추천 관문.** 진단(실측): AI 추천 7건 중 시장(KOSPI)을 이긴 건 1건, 독립 표본은 4종목·3추천일, 계좌 -25%의 시장 몫 ≈ 2/3 · 하이닉스 하나가 손실의 79%(비중 84%). 원인 가설: ① 후보 풀 KOSPI 시총30 고정이라 같은 경기민감 대형주 반복 ② 계좌 84%가 반도체인데 같은 업종 재추천 ③ 지수 7,000선 고점권에 3종목 일괄 추천. 조치: `services/account_perf.py`(시장/종목 몫 분해·손실 기여도·실현손익—2026-08-14 KIS 동기화 사고의 가짜 매도 `memo`에 'KIS 동기화' 포함 건 제외·마지막 NAV 0% 재설정 이후만 비교), `rec_scorecard.py`(추천 시장 대비 성적표, 오래전 종료된 추적가는 현재가로 쓰지 않음), `/성과` 줄마다 시장 대비 병기, `/holdings date 코드 날짜`(매수일 보정), nav_service KOSPI NaN 방지. `services/concentration_rule.py`: 종목 상한 50%·섹터 60%(system_settings `rule.cap.*`, `상한` 명령으로 변경), 위반 시 현금화/재투자 두 경우의 매도 수량·하루 10% 한도 분할 일수를 코드가 계산해 매 브리핑 확정 블록에 항상 노출(LLM 서술 무관), CEO가 위반 종목 추가/신규 편입을 제안하면 리스크 게이트 경고, 원장 매수 시 경고. `services/pick_gate.py`(agents/midterm_agent 연결): 최근 28일 추천·보유·내 쏠림 업종 후보 제외(후보 8개 미만이면 업종 제외 해제), 시장 관문(급락 직후 최대 2·과열 최대 1·평시 3종목, 분할 진입 문구), LLM 출력 후 업종 중복 제거·개수 초과 잘라내기. 미국 추천(us_invest_agent)에는 아직 적용하지 않음. 회귀 테스트: tests/test_account_perf_v2.py, tests/test_concentration_and_pick_gate.py.
 
+- **[개선, 2026-10-21] 리서치 인텔리전스 — 증권사 리포트·중앙은행 문서를 "본문까지 읽고 코드가 검증".**
+  발견: 네이버가 리서치 페이지를 stock.naver.com으로 이전해 기존 HTML 스크래퍼가 에러 없이 **조용히 0건**
+  (언제부터인지 불명, 메타 패턴 ②와 동형). 제목 키워드 집계(`services/report_digest.py`)만으로는 얕아 본문 분석 구축:
+  `clients/securities_report_client.py`(모바일 JSON 목록 `front-api/research/list` + 상세 `api/research/{cat}/{id}`의
+  본문·PDF 주소, pymupdf로 PDF 전문 추출, 보유종목 리포트 필터) · `clients/official_docs_client.py`(Fed 성명·의사록,
+  한국은행 금통위/보도자료, ECB 원문) · `services/report_analyzer.py`(LLM이 주장·수치 추출 → **코드가 인용문·수치가
+  원문에 실제로 있는지 대조해 없으면 폐기**, 검증 주장 0개면 입장 '판단불가', `report_analysis` 테이블에 캐시해
+  같은 문서는 한 번만 읽음) · `services/research_synthesis.py`(증권사당 1표 집계, '전망' claim만 투표, 4곳+ 쏠림은
+  경고, 보유종목 투자의견·목표가 통계) · `services/research_pipeline.py`(market_intelligence_team이 호출, 결과를
+  LLM 서술을 거치지 않고 리포트 뒤에 그대로 덧붙임). 수집 0건/읽기 전멸은 `branch:report_sources`·
+  `branch:report_analysis` fail → daily_health 경보. **함정: 네이버 상세 API의 `prevGoalPrice`는 이전 목표가가
+  아니라 작성일 주가와 같은 값** — 처음에 "목표가 상향 7건"으로 잘못 집계했다. 목표가 변경은 같은 증권사의
+  직전 리포트와 비교해서만 센다(`tests/test_research_pipeline.py`). 한계: claim의 *요약문*은 LLM이 쓴 것이라
+  인용문보다 과하게 일반화할 수 있어 출력에 [AI 요약] 표기·원문 인용 병기. 매파/비둘기 성향은 실행마다 달라져 제외.
+  한경컨센서스·네이버는 robots.txt가 전체 금지 — 개인용 저빈도로 네이버만 사용 중. 새 발송 경로·스케줄 없음.
+
 ## 장애 대응 런북
 
 - **08:05 헬스체크 경보 수신 시**: ① Render 대시보드에서 서비스 상태 확인(슬립/크래시)
