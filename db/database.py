@@ -551,6 +551,22 @@ forecast_log = Table("forecast_log", metadata,
     Column("created_at",  Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# 증권사 리포트 보관: 하루치 제목만으로는 '의견 흐름'을 못 본다 → 쌓아서 테마별 언급 추이를 코드가 계산.
+broker_reports = Table("broker_reports", metadata,
+    Column("id",         Integer, primary_key=True, autoincrement=True),
+    Column("source",     Text,    nullable=False),            # naver 등 수집처
+    Column("link",       Text,    nullable=False),            # 중복 방지 키
+    Column("rtype",      Text),                               # 경제분석|투자전략|산업분석|종목분석
+    Column("firm",       Text),
+    Column("title",      Text),
+    Column("stock",      Text),
+    Column("report_date", Text),
+    Column("themes",     Text),                               # 쉼표 구분 테마 태그(코드 분류)
+    Column("tone",       Text),                               # 경계|긍정|혼재|중립 (제목 키워드 기반)
+    Column("created_at", Text,    server_default=text("CURRENT_TIMESTAMP")),
+    UniqueConstraint("source", "link", name="uq_broker_reports_source_link"),
+)
+
 # ── 초기화 ─────────────────────────────────────────────────────────
 
 def init_db():

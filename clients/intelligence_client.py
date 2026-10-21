@@ -21,17 +21,21 @@ _MAX_AGE_HOURS = 36  # 36시간 이내 기사만 수집
 # weight: 신뢰도/선행성/전문성 기준 (0~1) — LLM 컨텍스트 정렬 우선순위에 사용
 INTELLIGENCE_SOURCES: dict[str, list[dict]] = {
     "global_macro": [
-        {"name": "Reuters Markets",   "url": "https://feeds.reuters.com/reuters/businessNews",           "weight": 0.90},
         {"name": "MarketWatch",       "url": "https://feeds.marketwatch.com/marketwatch/topstories/",    "weight": 0.80},
         {"name": "CNBC Finance",      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "weight": 0.80},
     ],
     "investment_analysis": [
-        {"name": "Barrons",           "url": "https://www.barrons.com/xml/rss/3_7551.xml",               "weight": 0.85},
         {"name": "Seeking Alpha",     "url": "https://seekingalpha.com/market-outlook/rss.xml",           "weight": 0.75},
         {"name": "Motley Fool",       "url": "https://www.fool.com/feeds/index.aspx",                     "weight": 0.65},
     ],
-    "korea_global_view": [
-        {"name": "Korea Herald Biz",  "url": "https://www.koreaherald.com/rss/020100000000.xml",          "weight": 0.70},
+    # 중앙은행·국제기구 1차 자료 (2026-10-21 추가). 발표 빈도가 낮아 7일 창을 쓴다.
+    # 죽은 소스(Reuters feeds.reuters.com 종료, Barrons 403, Korea Herald 0건)는 제거.
+    "official_institutions": [
+        {"name": "Fed 통화정책",      "url": "https://www.federalreserve.gov/feeds/press_monetary.xml",  "weight": 0.95, "max_age_hours": 336},
+        {"name": "Fed 보도자료",      "url": "https://www.federalreserve.gov/feeds/press_all.xml",       "weight": 0.90, "max_age_hours": 168},
+        {"name": "한국은행",          "url": "https://www.bok.or.kr/portal/bbs/P0000559/news.rss",       "weight": 0.95, "max_age_hours": 336},
+        {"name": "ECB",               "url": "https://www.ecb.europa.eu/rss/press.html",                 "weight": 0.85, "max_age_hours": 168},
+        {"name": "BIS",               "url": "https://www.bis.org/doclist/bis_fsi_publs.rss",            "weight": 0.75, "max_age_hours": 336},
     ],
 }
 
@@ -74,12 +78,12 @@ def _is_fresh(entry, max_hours: int = _MAX_AGE_HOURS) -> bool:
         return True
 
 
-def _fetch_rss(url: str, max_items: int = 5) -> list[dict]:
+def _fetch_rss(url: str, max_items: int = 5, max_age_hours: int = _MAX_AGE_HOURS) -> list[dict]:
     try:
         feed = feedparser.parse(url)
         items: list[dict] = []
         for entry in feed.entries:
-            if not _is_fresh(entry):
+            if not _is_fresh(entry, max_age_hours):
                 continue
             items.append({
                 "title":     entry.get("title", "").strip(),
@@ -103,7 +107,7 @@ def fetch_intelligence_feeds(max_per_source: int = 4) -> dict[str, list[dict]]:
         sorted_sources = sorted(sources, key=lambda s: s["weight"], reverse=True)
         items: list[dict] = []
         for src in sorted_sources:
-            fetched = _fetch_rss(src["url"], max_per_source)
+            fetched = _fetch_rss(src["url"], max_per_source, src.get("max_age_hours", _MAX_AGE_HOURS))
             for item in fetched:
                 item["source_name"]   = src["name"]
                 item["source_weight"] = src["weight"]

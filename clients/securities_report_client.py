@@ -1,65 +1,51 @@
 """
 clients/securities_report_client.py
-네이버 금융 증권사 리포트 수집 (서버사이드 렌더링 — 별도 인증 불필요)
+네이버 증권 리서치(증권사 리포트) 수집.
 
-수집 대상:
-  - 종목분석 리포트: 목표주가·투자의견·실적 전망
-  - 산업분석 리포트: 섹터 전망·업황 분석
-  - 시장분석 리포트: 매크로·투자전략
+2026-10 이전엔 finance.naver.com/research HTML 표를 긁었으나, 네이버가 이 페이지를
+stock.naver.com/research(Next.js)로 이전해 표가 사라졌고 수집이 조용히 0건이 됐다
+(에러 없이 빈 목록 반환 → 알 수 있는 경로가 없었음). 지금은 모바일 증권이 쓰는
+JSON 목록 API를 사용한다 — HTML 구조 변경에 덜 민감하고 필드가 구조화돼 있다.
 
-출처: https://finance.naver.com/research/
+수집 대상(시장·매크로 분석 우선):
+  - 경제분석 / 투자전략 : 매크로·시장 전망 (가장 중요)
+  - 산업분석           : 섹터 업황
+  - 종목분석           : 개별 종목 (보조)
+
+주의: 이 리포트들은 '참고 대상'이다. 증권사 의견은 낙관 편향이 있고 목표가는 주가를
+뒤따르는 경향이 있어, 그대로 결론으로 쓰지 않고 서로 비교·반박하는 재료로만 쓴다.
 """
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import requests
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
+_API = "https://m.stock.naver.com/front-api/research/list"
 _HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://finance.naver.com/research/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "ko-KR,ko;q=0.9",
 }
-_BASE = "https://finance.naver.com"
 _TIMEOUT = 10
-_DETAIL_TIMEOUT = 6  # 상세 페이지 fetch 타임아웃
 
-# 종목분석 상세 페이지 요약 추출 셀렉터 (우선순위 순)
-_DETAIL_SELECTORS = [
-    "td.text",
-    ".research_txt",
-    ".view_txt",
-    "#report_contents",
-    "table.view_tb td",
-    "div.report_view td",
-    ".cont_area",
-]
-
-# 수집 대상 리포트 유형
-REPORT_PAGES: dict[str, str] = {
-    "종목분석": f"{_BASE}/research/company_list.naver",
-    "산업분석": f"{_BASE}/research/industry_list.naver",
-    "투자전략": f"{_BASE}/research/invest_list.naver",
-    "채권분석": f"{_BASE}/research/debenture_list.naver",
+# API category → 표시용 유형 (매크로·시장 유형을 앞에)
+REPORT_CATEGORIES: dict[str, str] = {
+    "economy":  "경제분석",
+    "invest":   "투자전략",
+    "industry": "산업분석",
+    "company":  "종목분석",
 }
 
-_MAX_PER_TYPE = 15   # 유형별 최대 수집 건수
-_MAX_DAYS_OLD = 2    # 최근 N일 이내 리포트만
-_DETAIL_TOP_N = 7    # 종목분석 중 상세 본문을 fetch할 최대 건수
-_DETAIL_MAX_CHARS = 350  # 상세 요약 최대 문자
+_MAX_DAYS_OLD = 3          # 주말·휴일을 넘기려면 2일로는 부족
+_PAGE_SIZE = 40
+_LIMIT_PER_TYPE = {"경제분석": 15, "투자전략": 15, "산업분석": 15, "종목분석": 12}
 
 
 def _parse_report_date(date_str: str) -> date | None:
-    """'25.05.26' 또는 '2025.05.26' 형식 파싱."""
-    for fmt in ("%y.%m.%d", "%Y.%m.%d", "%y-%m-%d", "%Y-%m-%d"):
+    for fmt in ("%Y-%m-%d", "%y.%m.%d", "%Y.%m.%d", "%y-%m-%d"):
         try:
-            return datetime.strptime(date_str.strip(), fmt).date()
+            return datetime.strptime(str(date_str).strip(), fmt).date()
         except ValueError:
             continue
     return None
@@ -68,167 +54,87 @@ def _parse_report_date(date_str: str) -> date | None:
 def _is_recent(date_str: str, max_days: int = _MAX_DAYS_OLD) -> bool:
     d = _parse_report_date(date_str)
     if d is None:
-        return True  # 날짜 파싱 실패 시 포함
+        return False  # 날짜를 모르는 리포트는 오래된 것일 수 있어 제외
     return (date.today() - d).days <= max_days
 
 
-def _fetch_report_page(label: str, url: str, max_items: int) -> list[dict]:
-    """네이버 금융 리포트 목록 페이지 파싱."""
+def _normalize(item: dict, label: str) -> dict | None:
+    title = (item.get("title") or "").strip()
+    firm = (item.get("brokerName") or "").strip()
+    if not title or not firm:
+        return None
+    return {
+        "type":    label,
+        "title":   title,
+        "stock":   (item.get("itemName") or "").strip(),
+        "code":    (item.get("itemCode") or "").strip(),
+        "firm":    firm,
+        "date":    str(item.get("writeDate") or "").strip(),
+        "link":    item.get("endUrl") or "",
+        "summary": "",
+    }
+
+
+def _fetch_category(category: str, label: str) -> list[dict]:
+    """한 유형의 최근 리포트 목록. 실패하면 빈 목록(예외 없음) — 호출부가 0건을 감지한다."""
     try:
-        r = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        r = requests.get(
+            _API, headers=_HEADERS, timeout=_TIMEOUT,
+            params={"category": category, "pageSize": _PAGE_SIZE},
+        )
         r.raise_for_status()
-        soup = BeautifulSoup(r.content, "html.parser", from_encoding="euc-kr")
-
-        rows = soup.select("table.type_1 tr")
-        reports: list[dict] = []
-
-        for row in rows:
-            cols = row.select("td")
-            if len(cols) < 4:
-                continue
-
-            # 종목분석: 제목(0) | 종목명(1) | 증권사(2) | 날짜(3)
-            # 산업/시장: 제목(0) | -(1)      | 증권사(2) | 날짜(3)
-            title_tag = cols[0].select_one("a")
-            if not title_tag:
-                continue
-
-            title    = title_tag.get_text(strip=True)
-            stock    = cols[1].get_text(strip=True) if len(cols) > 1 else ""
-            firm     = cols[2].get_text(strip=True) if len(cols) > 2 else ""
-            date_str = cols[3].get_text(strip=True) if len(cols) > 3 else ""
-
-            if not title or not firm:
-                continue
-            if not _is_recent(date_str):
-                continue
-
-            href = title_tag.get("href", "")
-            link = (_BASE + href) if href.startswith("/") else href
-
-            reports.append({
-                "type":    label,
-                "title":   title,
-                "stock":   stock,
-                "firm":    firm,
-                "date":    date_str,
-                "link":    link,
-                "summary": "",  # 상세 fetch 후 채워짐
-            })
-
-            if len(reports) >= max_items:
+        data = r.json()
+        if not data.get("isSuccess"):
+            logger.warning("[증권사리포트] %s 응답 실패: %s", label, str(data)[:150])
+            return []
+        out: list[dict] = []
+        limit = _LIMIT_PER_TYPE.get(label, 12)
+        for item in data.get("result") or []:
+            rep = _normalize(item, label)
+            if rep and _is_recent(rep["date"]):
+                out.append(rep)
+            if len(out) >= limit:
                 break
-
-        logger.debug("[증권사리포트] %s: %d건", label, len(reports))
-        return reports
-
+        logger.debug("[증권사리포트] %s: %d건", label, len(out))
+        return out
     except Exception as e:
         logger.warning("[증권사리포트] %s 수집 실패: %s", label, e)
         return []
 
 
-def _fetch_detail_summary(link: str) -> str:
-    """네이버 금융 리포트 상세 페이지에서 요약 텍스트 추출.
+def fetch_securities_reports(max_per_type: int | None = None, enrich_details: bool = False) -> list[dict]:
+    """전체 유형 수집 후 통합 반환.
 
-    실패 시 빈 문자열 반환 (예외 없음).
-    """
-    if not link or "finance.naver.com" not in link:
-        return ""
-    try:
-        r = requests.get(link, headers=_HEADERS, timeout=_DETAIL_TIMEOUT)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.content, "html.parser", from_encoding="euc-kr")
-
-        # 스크립트·스타일 제거
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-
-        for sel in _DETAIL_SELECTORS:
-            tag = soup.select_one(sel)
-            if not tag:
-                continue
-            text = " ".join(tag.get_text(separator=" ", strip=True).split())
-            if len(text) >= 40:
-                return text[:_DETAIL_MAX_CHARS]
-
-        return ""
-    except Exception as e:
-        logger.debug("[리포트상세] 실패 [%.60s]: %s", link, e)
-        return ""
-
-
-def _enrich_company_reports(reports: list[dict]) -> list[dict]:
-    """종목분석 리포트 상위 N건에 상세 요약 추가 (병렬 fetch)."""
-    targets = [r for r in reports if r["type"] == "종목분석"][:_DETAIL_TOP_N]
-    if not targets:
-        return reports
-
-    summaries: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        future_map = {ex.submit(_fetch_detail_summary, r["link"]): r["link"] for r in targets}
-        for future in as_completed(future_map):
-            link = future_map[future]
-            try:
-                s = future.result()
-                if s:
-                    summaries[link] = s
-            except Exception:
-                pass
-
-    result = []
-    for r in reports:
-        if r["link"] in summaries:
-            result.append({**r, "summary": summaries[r["link"]]})
-        else:
-            result.append(r)
-
-    fetched = len(summaries)
-    if fetched:
-        logger.info("[리포트상세] 종목분석 %d/%d건 요약 추가", fetched, len(targets))
-    return result
-
-
-def fetch_securities_reports(
-    max_per_type: int = _MAX_PER_TYPE,
-    enrich_details: bool = True,
-) -> list[dict]:
-    """전체 리포트 유형 수집 후 통합 반환.
-
-    반환: [{"type", "title", "stock", "firm", "date", "link", "summary"}, ...]
+    반환: [{"type", "title", "stock", "code", "firm", "date", "link", "summary"}, ...]
+    max_per_type/enrich_details는 옛 시그니처 호환용(본문 상세 API가 없어 요약은 비어 있음).
     """
     all_reports: list[dict] = []
-    for label, url in REPORT_PAGES.items():
-        reports = _fetch_report_page(label, url, max_per_type)
-        all_reports.extend(reports)
-
-    if enrich_details and all_reports:
-        all_reports = _enrich_company_reports(all_reports)
-
-    logger.info("[증권사리포트] 총 %d건 수집 (유형: %d개)", len(all_reports), len(REPORT_PAGES))
+    for category, label in REPORT_CATEGORIES.items():
+        reps = _fetch_category(category, label)
+        if max_per_type:
+            reps = reps[:max_per_type]
+        all_reports.extend(reps)
+    logger.info("[증권사리포트] 총 %d건 수집 (유형: %d개)", len(all_reports), len(REPORT_CATEGORIES))
     return all_reports
 
 
 def format_for_context(reports: list[dict]) -> str:
-    """수집된 리포트를 LLM 컨텍스트용 텍스트로 포맷.
-
-    종목분석 리포트는 요약(summary)이 있으면 2번째 줄에 들여쓰기로 표시.
-    """
+    """수집된 리포트를 LLM 컨텍스트용 텍스트로 포맷."""
     if not reports:
         return ""
-
     by_type: dict[str, list[dict]] = {}
     for r in reports:
         by_type.setdefault(r["type"], []).append(r)
 
-    lines: list[str] = ["=== 증권사 리포트 (네이버 금융) ==="]
-    for rtype, items in by_type.items():
+    lines: list[str] = ["=== 증권사 리포트 (네이버 증권 리서치) ==="]
+    for rtype in REPORT_CATEGORIES.values():
+        items = by_type.get(rtype)
+        if not items:
+            continue
         lines.append(f"\n[{rtype}]")
         for item in items:
             stock_part = f" | {item['stock']}" if item.get("stock") else ""
-            lines.append(
-                f"  [{item['firm']}] {item['title']}{stock_part} ({item['date']})"
-            )
+            lines.append(f"  [{item['firm']}] {item['title']}{stock_part} ({item['date']})")
             if item.get("summary"):
                 lines.append(f"    → {item['summary']}")
-
     return "\n".join(lines)

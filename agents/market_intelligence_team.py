@@ -78,6 +78,9 @@ _SYSTEM = """당신은 글로벌 투자 인텔리전스 분석가입니다.
 [주의사항]
 - 수집된 기사 제목/요약 기반 분석 — 확인 안 된 수치 단정 금지
 - 전문가·기관 이름이 나오면 구체적으로 인용
+- '증권사 리포트 집계'는 코드가 센 값이다. 증권사 의견은 낙관 편향이 있고 시장을 뒤따르므로 결론이
+  아니라 참고로만 쓰고, 다수가 한 방향이면 쏠림 가능성을 약세/강세 캠프 비교에서 함께 짚을 것
+- 중앙은행·국제기구(Fed·한국은행·ECB·BIS) 항목은 1차 자료이므로 언론 해석보다 우선 인용
 - "~할 것 같다" → "~를 지지하는 전문가 시각이 우세" 형태로 표현
 - 국내 투자 블로그 포스트(직접 수집)가 있으면 국내 개인 투자자 시각으로 별도 반영
 - 인텔리전스 부족 시 "데이터 부족으로 판단 유보" 명시"""
@@ -137,7 +140,14 @@ def run(state: InvestmentState) -> InvestmentState:
                         lines.append(f"    → {item['summary'][:150]}")
 
         # 증권사 리포트 (네이버 금융)
+        # 수집 상태 기록(0건이면 daily_health 경보) → 보관 → 코드가 센 주제·톤 집계를 앞에 둔다.
+        from services import report_digest
+        report_digest.record_collection_health(reports)
         if reports:
+            report_digest.store_reports(reports)
+            digest_text = report_digest.build_digest(reports)
+            if digest_text:
+                lines.append(f"\n{digest_text}")
             report_text = fmt_reports(reports)
             if report_text:
                 lines.append(f"\n{report_text}")
