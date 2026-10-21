@@ -26,6 +26,29 @@ _CIRCUIT_COOLDOWN = timedelta(minutes=10)
 _circuit_open_until: datetime | None = None
 
 
+def _safe_change_pct(o: dict, price: int) -> float:
+    """당일 등락률 — KIS의 prdy_ctrt를 믿지 않고 현재가/기준가로 직접 계산한다.
+
+    개장 직후(09:00 동시호가 직후)엔 prdy_ctrt가 아직 갱신되지 않아 '어제 등락률'을
+    그대로 주는 경우가 있다 (2026-10-21 하이닉스: 어제 -4.23%가 오늘 급락으로 발송,
+    실제 오늘은 +6.62%). 그래서 ① 오늘 체결이 없으면(누적거래량 0) 0.0
+    ② 기준가(stck_sdpr)가 있으면 (현재가-기준가)/기준가로 계산
+    ③ 기준가가 없을 때만 KIS 원값을 쓴다.
+    """
+    def _num(k):
+        try:
+            return float(o.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    if o.get("acml_vol") is not None and _num("acml_vol") <= 0:
+        return 0.0
+    base = _num("stck_sdpr")
+    if base > 0 and price > 0:
+        return round((price - base) / base * 100, 2)
+    return _num("prdy_ctrt")
+
+
 def _rank_api_available() -> bool:
     now = datetime.now(_KST)
     if now.weekday() >= 5:
@@ -283,7 +306,7 @@ class KISClient:
                     "market_cap_억":  _int("hts_avls"),
                     "52w_high":       _int("d250_hgpr"),
                     "52w_low":        _int("d250_lwpr"),
-                    "change_pct":     _float("prdy_ctrt"),
+                    "change_pct":     _safe_change_pct(o, price),
                 }
             except Exception as e:
                 logger.warning("KIS 주가 조회 실패 (%s/%s): %s", stock_code, m, e)
