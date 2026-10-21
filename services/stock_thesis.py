@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 PEERS = {
     "000660": [("MU", "마이크론"), ("005930.KS", "삼성전자")],
     "005930": [("MU", "마이크론"), ("000660.KS", "SK하이닉스")],
+    "005380": [("000270.KS", "기아"), ("7203.T", "토요타")],
+    "009150": [("6981.T", "무라타제작소"), ("005930.KS", "삼성전자")],
 }
 
 
@@ -223,6 +225,23 @@ def cycle_peaks(ni: dict[int, float], closes: list[tuple[str, float]], shares: f
     return rows
 
 
+def per_band(ni: dict[int, float], closes: list[tuple[str, float]], shares: float | None) -> dict:
+    """이 종목 자신의 과거 연말 PER(흑자 해) 사분위 — 시나리오 배수를 임의로 정하지 않고 자기 역사에서 가져온다.
+    표본 5개 미만이면 빈 값."""
+    if not shares or not ni or not closes:
+        return {}
+    pers = []
+    for y, v in ni.items():
+        ye = next((c for d, c in reversed(closes) if d <= f"{y}-12-31"), None)
+        if v > 0 and ye:
+            pers.append(ye / (v / shares))
+    if len(pers) < 5:
+        return {}
+    pers.sort()
+    n = len(pers)
+    return {"n": n, "p25": round(pers[n // 4], 1), "p50": round(pers[n // 2], 1), "p75": round(pers[(3 * n) // 4], 1)}
+
+
 def fetch_cycle(code: str, price: float | None, shares: float | None) -> dict:
     """DART 연간 순이익(최대 12년) + yfinance 주가 이력. 실패하면 빈 값."""
     try:
@@ -233,7 +252,8 @@ def fetch_cycle(code: str, price: float | None, shares: float | None) -> dict:
               if f.get("period") == "연간" and f.get("당기순이익") is not None}
         h = yf.Ticker(f"{code}.KS").history(period="max")["Close"].dropna()
         closes = [(str(i.date()), float(v)) for i, v in h.items()]
-        return {"ni": ni, "closes": closes, "rows": cycle_peaks(ni, closes, shares or 0)}
+        return {"ni": ni, "closes": closes, "rows": cycle_peaks(ni, closes, shares or 0),
+                "band": per_band(ni, closes, shares)}
     except Exception as e:
         logger.warning("[판단서] 이익 사이클 수집 실패 (%s): %s", code, e)
         return {}
@@ -328,18 +348,31 @@ def format_estimates(e: dict, label: str, krw: bool = True) -> list[str]:
     return lines
 
 
-def format_scenarios(e: dict) -> list[str]:
+def format_scenarios(e: dict, band: dict | None = None) -> list[str]:
     est = e.get("est") or {}
     row = est.get("+1y") or {}
     p = e.get("price")
-    tbl = scenario_table(row.get("low"), row.get("avg"), row.get("high"), p) if p else []
+    if not p or not band:
+        return []      # 자기 역사에서 가져온 배수가 없으면 임의의 PER로 시나리오를 만들지 않는다
+    pers = (band["p25"], band["p50"], band["p75"])
+    tbl = scenario_table(row.get("low"), row.get("avg"), row.get("high"), p, pers=pers)
     if not tbl:
         return []
-    lines = ["[내년 EPS × PER 민감도 — '어느 PER이 맞는가'는 판단하지 않고 산술만]",
+    avg, low = row.get("avg"), row.get("low")
+    imp = []
+    for label, per in (("하위25%", pers[0]), ("중앙", pers[1])):
+        eps_imp = p / per
+        imp.append(f"PER {per}배({label})로 보면 현재가가 내포한 내년 EPS {eps_imp:,.0f}"
+                   + (f" = 컨센서스 평균의 {eps_imp / avg * 100:.0f}%" if avg else "")
+                   + (f"·최저 추정의 {eps_imp / low * 100:.0f}%" if low else ""))
+    lines = [f"[내년 EPS × PER — 배수는 이 종목의 과거 {band['n']}개 연말 PER 하위25%·중앙·상위25%({pers[0]}·{pers[1]}·{pers[2]}배)."
+             " 이익이 클 때 PER이 낮게 찍히는 업종이면 중앙·상위 배수는 낙관 편향. 어느 배수가 맞는지는 판단하지 않은 산술]",
              "  현재가가 내포한 내년 PER: " + " · ".join(f"{r['label'][:2]} EPS 기준 {per_at(p, r['eps'])}배" for r in tbl)]
     for r in tbl:
         cells = " | ".join(f"PER {c['per']}배 → {c['price']:,.0f}원({c['vs_now']:+.0f}%)" for c in r["cells"])
         lines.append(f"  {r['label']} EPS {r['eps']:,.0f}: {cells}")
+    lines.append("  [역산 — 시장이 가격에 넣은 이익] " + " / ".join(imp)
+                 + " (100%보다 낮을수록 시장이 컨센서스보다 훨씬 나쁜 이익을 가정한다는 뜻)")
     return lines
 
 
@@ -361,14 +394,15 @@ def build_facts(code: str, name: str) -> tuple[str, dict]:
     sym = f"{code}.KS"
     me = fetch_estimates(sym)
     lines = format_estimates(me, f"{name} — 시장·컨센서스(yfinance)")
-    lines += format_scenarios(me)
     try:
         import yfinance as yf
         info = yf.Ticker(sym).info or {}
         shares = info.get("sharesOutstanding") or ((info.get("marketCap") / me["price"]) if info.get("marketCap") and me.get("price") else None)
     except Exception:
         shares = None
-    lines += format_cycle(fetch_cycle(code, me.get("price"), shares), me, shares)
+    cyc = fetch_cycle(code, me.get("price"), shares)
+    lines += format_scenarios(me, cyc.get("band"))
+    lines += format_cycle(cyc, me, shares)
     peers: dict[str, dict] = {}
     for psym, pname in PEERS.get(code, []):
         pe = fetch_estimates(psym)
@@ -416,10 +450,10 @@ _SYSTEM = """당신은 세계 최고 수준의 투자자입니다. 아래 [사�
 
 [형식 — 짧게]
 ① 결론 두 줄 — "종목 판단:" [보유 유지/추가 매수/관망/정리] + 확신도(상·중·하) + 이유 한 줄 / "계좌 판단:" 비중에 대한 행동 한 줄
-② 시장은 지금 무엇을 가격에 넣고 있나 — 가격 움직임과 이익 추정·리비전·목표가·투자의견을 맞대어, 시장이 컨센서스를 믿는지 불신하는지와 그 이유 후보
+② 시장은 지금 무엇을 가격에 넣고 있나 — 사실 블록의 [역산]을 반드시 해석한다(시장이 가정한 이익이 컨센서스의 몇 %인지, 그게 무엇을 뜻하는지). 가격 움직임과 이익 추정·리비전·목표가·투자의견을 맞대어, 시장이 컨센서스를 믿는지 불신하는지와 그 이유 후보
 ③ 과거와 비교 — 과거 이익 정점 사례 대비 낙폭·PER·이익 방향의 같은 점/다른 점 (숫자로)
 ④ 내 시각 — 시장과 다른 점 최대 2개. 틀릴 수 있는 지점도 같이
-⑤ 시나리오 — 하방/기본/상방: 어떤 조건이면 그 시나리오인지, 민감도 표의 가격대
+⑤ 시나리오 — 하방/기본/상방(가격이 표보다 낮거나 높은 것도 그대로 해석. 예: 하방 가격대가 현재가보다 높으면 '시장은 최저 추정보다 더 나쁜 이익을 가정'이라고 쓴다): 어떤 조건이면 그 시나리오인지, 사실 블록 표의 가격대만(표가 없으면 '근거 있는 배수가 없어 가격대를 내지 않는다'고 쓴다). 다른 PER 배수를 임의로 쓰지 않는다
 ⑥ 내 계좌 기준 행동 — 조건부 계획으로(예: "~이하면 ~, ~이면 ~"). 감축이 필요하면 수량·속도를 [내 계좌] 값으로
 ⑦ 이 판단이 틀렸다는 신호 — 지표와 기준값(숫자). 측정 불가능한 문장 금지
 ⑧ 지금 데이터로 확인 못 하는 것 — 판단을 가장 크게 바꿀 수 있는 정보 2~3개"""

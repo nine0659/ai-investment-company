@@ -87,3 +87,26 @@ def test_account_context_trim_when_over_cap(monkeypatch):
          "current_val": 100.0, "pnl_pct": -16.0}])
     a = st.account_context("000660")
     assert a["weight"] == 90.9 and a["trim"]["sell_cash_qty"] > 0
+
+
+def test_per_band_from_own_history_and_needs_samples():
+    closes = [(f"{y}-12-20", 100.0) for y in range(2010, 2020)]
+    ni = {y: float(10 + y - 2010) for y in range(2010, 2020)}        # EPS = ni/2 → PER = 200/ni
+    b = st.per_band(ni, closes, shares=2.0)
+    assert b["n"] == 10 and b["p25"] < b["p50"] < b["p75"] is False or b["p25"] <= b["p50"] <= b["p75"]
+    assert st.per_band({2018: 5.0}, closes, 2.0) == {}               # 표본 5개 미만이면 배수를 만들지 않는다
+    assert st.per_band(ni, closes, None) == {}
+
+
+def test_scenarios_omitted_without_historical_multiples():
+    e = {"price": 1000.0, "est": {"+1y": {"low": 100.0, "avg": 200.0, "high": 300.0}}}
+    assert st.format_scenarios(e, None) == []                        # 임의 PER(3·5·7·10)로 시나리오를 만들지 않는다
+    out = "\n".join(st.format_scenarios(e, {"n": 8, "p25": 4.0, "p50": 6.0, "p75": 9.0}))
+    assert "4.0·6.0·9.0배" in out and "PER 6.0배 → 1,200원(+20%)" in out
+
+
+def test_reverse_valuation_line():
+    e = {"price": 1000.0, "est": {"+1y": {"low": 100.0, "avg": 200.0, "high": 300.0}}}
+    out = "\n".join(st.format_scenarios(e, {"n": 8, "p25": 5.0, "p50": 10.0, "p75": 20.0}))
+    assert "PER 5.0배(하위25%)로 보면 현재가가 내포한 내년 EPS 200 = 컨센서스 평균의 100%·최저 추정의 200%" in out
+    assert "PER 10.0배(중앙)로 보면 현재가가 내포한 내년 EPS 100 = 컨센서스 평균의 50%" in out
