@@ -418,15 +418,16 @@ def save_daily(res: dict, date: str | None = None) -> int:
             # 추정치·의견 시계열 (이익 리비전 등 앞으로 검증할 신호의 재료)
             "cns_eps": d.get("cns_eps"), "recomm": d.get("recomm"), "bps": d.get("bps"),
             "foreign_rate": d.get("foreign_rate"), "ret_1m": h.get("ret_1m"), "ret_3m": h.get("ret_3m"),
+            "industry": d.get("industry") or None,
         })
     with get_conn() as conn:
         conn.execute(text("DELETE FROM universe_screen_daily WHERE date=:d"), {"d": date})
         if rows:
             conn.execute(text(
                 "INSERT INTO universe_screen_daily (date, code, name, market, close, chg_pct, mcap_eok, per, pbr, "
-                "cns_per, eps, target, high52, score, signals, cns_eps, recomm, bps, foreign_rate, ret_1m, ret_3m) "
+                "cns_per, eps, target, high52, score, signals, cns_eps, recomm, bps, foreign_rate, ret_1m, ret_3m, industry) "
                 "VALUES (:date, :code, :name, :market, :close, :chg_pct, :mcap_eok, :per, :pbr, :cns_per, :eps, :target, "
-                ":high52, :score, :signals, :cns_eps, :recomm, :bps, :foreign_rate, :ret_1m, :ret_3m)"), rows)
+                ":high52, :score, :signals, :cns_eps, :recomm, :bps, :foreign_rate, :ret_1m, :ret_3m, :industry)"), rows)
     return len(rows)
 
 
@@ -509,6 +510,12 @@ def run_daily_job() -> tuple[str, str]:
             board_note = " · ⚠업종 온도계 저장 실패"
     elif "industry_board" in res:
         board_note = " · ⚠업종 온도계 없음"
+    try:                                                    # 업종 전망 기록·채점 (실패해도 스냅샷 저장은 성공 — 단 조용히 넘기지 않고 detail에 남김)
+        from services import sector_outlook
+        board_note += " · " + sector_outlook.run_daily()
+    except Exception as e:
+        logger.warning("[전종목스크린] 업종 전망 실패: %s", e)
+        board_note += " · ⚠업종 전망 실패"
     return "success", (f"저장 {n}종목 · 신호 3묶음+ {len(res['picks'])}종목 · 수신 {res['fetched']}/{res['expected']}"
                        f" · 추세 {hist_ok}/{hist_req}{board_note}")
 

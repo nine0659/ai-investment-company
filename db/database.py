@@ -577,6 +577,7 @@ universe_screen_daily = Table("universe_screen_daily", metadata,
     Column("foreign_rate", Float),                  # 외국인 소진율(%)
     Column("ret_1m",    Float),                     # 1개월 수익률(%) — 일봉 이력 기준
     Column("ret_3m",    Float),
+    Column("industry",  Text),                      # 네이버 업종 코드 — 업종 전망의 사후 채점(업종 구성원 수익률)에 쓴다
 )
 
 # 시장 전체 DART 공시 사건(분류·세부수치 포함): 쌓아야 '최근 N일 사건'을 스크리너·발굴·브리핑이 코드로 조회한다.
@@ -612,6 +613,25 @@ industry_daily = Table("industry_daily", metadata,
     Column("foreign_buy_pct", Float),                   # 최근 3일 중 2일+ 외국인 순매수 종목 비율(%)
     Column("regime",          Text),                    # 강세 | 회복초입 | 약세 | 중립
     Column("created_at",      Text,    server_default=text("CURRENT_TIMESTAMP")),
+)
+
+# 업종 전망 일지: 독립 예측가가 업종별 '시장 대비 우호/중립/비우호' 시나리오·확률·틀리는 조건을 내고, 코드가 N거래일 뒤 채점한다.
+sector_outlook = Table("sector_outlook", metadata,
+    Column("id",        Integer, primary_key=True, autoincrement=True),
+    Column("date",      Text,    nullable=False),
+    Column("ind_no",    Text,    nullable=False),
+    Column("name",      Text),
+    Column("view",      Text),                      # 우호 | 중립 | 비우호  (시장 전체 대비)
+    Column("prob",      Float),                     # 이 판단이 맞을 확률(%)
+    Column("horizon",   Integer),                   # 채점까지 거래일(스냅샷) 수
+    Column("reason",    Text),
+    Column("wrong_if",  Text),
+    Column("evidence",  Text),                      # 예측 시점에 LLM에 준 코드 계산 근거(감사용)
+    Column("model",     Text),
+    Column("actual_rel", Float),                    # 사후: 업종 구성원 수익률 중앙값 - 전 종목 중앙값 (%p)
+    Column("hit",       Integer),
+    Column("scored_on", Text),
+    Column("created_at", Text,  server_default=text("CURRENT_TIMESTAMP")),
 )
 
 # 미국 전 종목 일별 스크리닝 스냅샷 (한국 universe_screen_daily와 같은 목적)
@@ -702,7 +722,7 @@ def init_db():
 # 스냅샷 테이블에 나중에 추가된 컬럼 — 이미 만들어진 운영 DB에는 create_all이 컬럼을 더하지 못하므로 ALTER로 보강한다.
 _SCREEN_EXTRA_COLS = {
     "universe_screen_daily": (("cns_eps", "REAL"), ("recomm", "REAL"), ("bps", "REAL"), ("foreign_rate", "REAL"),
-                              ("ret_1m", "REAL"), ("ret_3m", "REAL")),
+                              ("ret_1m", "REAL"), ("ret_3m", "REAL"), ("industry", "TEXT")),
     "us_screen_daily": (("eps", "REAL"), ("fwd_eps", "REAL"), ("buy_ratio", "REAL"), ("analysts", "REAL"), ("ret_3m", "REAL")),
 }
 

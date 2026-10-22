@@ -109,6 +109,11 @@ def build(raw: dict, kr_rt: dict, run_type: str, kis=None) -> dict:
     if t:
         blocks.append(t)
 
+    from services import sector_outlook
+    t = _safe("업종전망", lambda: _cached("sector_outlook", sector_outlook.context_block, ttl=1800))
+    if t:
+        blocks.append(t)
+
     from services import briefing_mode
     pl = {p["name"]:(p["price"] / p["avg"] - 1) * 100 for p in positions if p.get("avg")}
     mode = briefing_mode.decide(kospi_chg, holding_pl=pl, events=evs)
