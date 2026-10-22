@@ -148,6 +148,28 @@ def _score_sector(d: dict) -> float:
     return round(score, 1)
 
 
+_SCREENER_SHARE = 8         # 전 종목 스크리너에서 성장주 후보로 편입하는 최대 수
+_SCREENER_MAX_AGE_DAYS = 4  # 주말·휴일을 넘기되 오래된 스냅샷은 쓰지 않는다
+_SCREENER_BONUS = 8         # 신호 1묶음당 가점 (모멘텀 점수 최대 ~100과 경쟁하도록)
+
+
+def _screener_picks(fixed_tickers: set[str]) -> list[dict]:
+    """미국 전 종목 스크리너(평일 17:30 스냅샷)의 상위 종목. 없거나 오래됐으면 [] — 기존 방식 그대로 진행."""
+    try:
+        from services.us_universe_screener import load_picks
+        picks = [p for p in load_picks(limit=_SCREENER_SHARE * 2) if p["code"] not in fixed_tickers]
+        if not picks:
+            return []
+        age = (datetime.now(_KST).date() - datetime.strptime(picks[0]["date"], "%Y-%m-%d").date()).days
+        if age > _SCREENER_MAX_AGE_DAYS:
+            logger.warning("[US투자] 전 종목 스냅샷이 %d일 전 것이라 사용 안 함", age)
+            return []
+        return picks[:_SCREENER_SHARE]
+    except Exception as e:
+        logger.warning("[US투자] 전 종목 후보 편입 실패 (고정 목록으로 진행): %s", e)
+        return []
+
+
 def collect_candidates(exclusion=None, excluded_out: list | None = None) -> dict:
     """각 카테고리 후보 데이터 수집 및 스코어링.
     exclusion(d) -> 제외 사유(str)|None  — 성장주·섹터ETF 후보에 적용(추천 관문, 2026-10-14)."""
@@ -166,6 +188,17 @@ def collect_candidates(exclusion=None, excluded_out: list | None = None) -> dict
             if _skip(d):
                 continue
             d["score"] = _score_growth(d)
+            growth_data.append(d)
+
+    # 고정 목록 밖의 종목: 코드가 EDGAR 재무·컨센서스·시세로 신호를 계산해 고른 후보 (가점 부여)
+    for p in _screener_picks({t for t, _ in _GROWTH_STOCKS}):
+        d = _fetch_stock_data(p["code"])
+        if d:
+            d["name"] = p["name"]
+            d["screen_note"] = f"전종목스크린 {p['score']}묶음: {p['signals']}"
+            if _skip(d):
+                continue
+            d["score"] = round(_score_growth(d) + _SCREENER_BONUS * p["score"], 1)
             growth_data.append(d)
 
     for ticker, name in _DIVIDEND_ETFS:
@@ -202,6 +235,7 @@ def _format_candidates(candidates: dict) -> str:
                 f"  {d['ticker']} ({d['name']}) | 현재가 ${d['price']:.2f}"
                 f" | 1주 {d['change_1w']:+.1f}% | 1달 {d['change_1m']:+.1f}%"
                 f" | 거래량배율 {d['vol_ratio']:.1f}x{dy_str}{pe_str} | 점수 {d['score']}"
+                + (f" | [{d['screen_note']}]" if d.get("screen_note") else "")
             )
     return "\n".join(lines)
 
@@ -212,6 +246,9 @@ _SYSTEM = """당신은 미국 주식 투자 전문 애널리스트입니다.
 
 선정 기준:
 - 성장주: 기술적 모멘텀(주간/월간 상승), 거래량 증가, 밸류에이션 적정성
+  ('전종목스크린' 표기가 있는 후보는 SEC 재무·애널리스트 컨센서스·시세로 코드가 신호를 계산해 선별한 종목이다.
+   표기된 신호 이름(수익성·저평가·이익증가기대·컨센서스여력·고점대비낙폭·단기회복)만 근거로 인용하고,
+   그 신호의 구체 수치를 만들어내지 마라 — 제공되지 않았다.)
 - 배당 ETF: 배당수익률, 안정성, 최근 가격 흐름
 - 섹터 ETF: 현재 시장 트렌드와 모멘텀 일치 여부
 
