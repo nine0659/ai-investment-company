@@ -64,3 +64,15 @@ def investor_trend(market: str = "KOSPI") -> dict:
     b = str(j.get("bizdate", ""))
     date = f"{b[:4]}-{b[4:6]}-{b[6:8]}" if len(b) == 8 else ""
     return {"date": date, "personal": p, "foreign": f, "institution": i}
+
+
+def market_value_page(market: str, page: int, size: int = 100) -> dict:
+    """시가총액순 종목 목록 한 페이지. market=KOSPI|KOSDAQ. 실패 시 {} (size는 100이 상한)."""
+    j = _get(f"https://m.stock.naver.com/api/stocks/marketValue/{market}?page={page}&pageSize={size}")
+    return j if isinstance(j, dict) and isinstance(j.get("stocks"), list) else {}
+
+
+def stock_integration(code: str) -> dict:
+    """종목 상세(PER·PBR·EPS·추정치·52주·수급·컨센서스·업종코드). 실패 시 {}."""
+    j = _get(f"https://m.stock.naver.com/api/stock/{code}/integration")
+    return j if isinstance(j, dict) and j.get("totalInfos") else {}

@@ -408,6 +408,10 @@ def main():
         help="보유 종목 판단서 (이익 추정·시장 반영·내 계좌 기준 행동). 예: --thesis 000660"
     )
     parser.add_argument(
+        "--screen", action="store_true",
+        help="한국 전 종목 스크리닝 (코스피·코스닥 전체, 코드 계산·출력만, 약 5분)"
+    )
+    parser.add_argument(
         "--telegram", action="store_true",
         help="--research 결과를 텔레그램으로도 발송"
     )
@@ -480,6 +484,12 @@ def main():
             console.print(f"[red]❌ 종목을 찾지 못했습니다: {args.thesis}[/red]")
             sys.exit(1)
         console.print(write_thesis(code, name), markup=False)
+        return
+
+    # ── 전 종목 스크리닝 (출력만 — 텔레그램 발송 경로 없음) ──────────
+    if args.screen:
+        from services.universe_screener import format_screen, run_screen
+        console.print(format_screen(run_screen()), markup=False)
         return
 
     # ── 기업 리서치 ─────────────────────────────────────────────
