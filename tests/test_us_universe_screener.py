@@ -73,7 +73,8 @@ def test_apply_consensus_computes_forward_pe():
 def test_full_signal_set():
     sig, warn = us.compute_signals(_row(cons=_CONS), {})
     keys = {s["key"] for s in sig}
-    assert {"수익성", "저평가", "이익증가기대", "컨센서스여력", "고점대비낙폭", "단기회복"} <= keys
+    assert {"수익성", "저평가", "이익증가기대", "컨센서스여력", "고점대비낙폭"} <= keys
+    assert "단기회복" not in keys and "단기회복" not in us._GROUP        # 2년 검증에서 효과 없어 점수 제외
     assert any("2배 이상" in w for w in warn)          # EPS 5→10은 정확히 +100%라 이익 정점 경고 대상
 
 

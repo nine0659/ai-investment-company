@@ -294,12 +294,14 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> tuple[list[dict], 
     dd = (close / d["high52"] - 1) if d["high52"] else None
     if dd is not None and dd <= -0.3:
         sig.append({"key": "고점대비낙폭", "text": f"52주 고점 대비 {dd * 100:.0f}%"})
-    if dd is not None and dd <= -0.2 and d["ma50"] and close > d["ma50"]:
-        sig.append({"key": "단기회복", "text": f"고점 대비 {dd * 100:.0f}% 구간에서 50일선({d['ma50']:.2f}) 위로 회복"})
+    # '단기회복'(낙폭 큰 종목이 50일선 위로)은 일부러 넣지 않는다: 2024-10~2026-10 미국 2년 검증에서 시점 평균 +0.22%p, t=+0.6으로
+    # 효과가 없었고 한국에선 유의하게 부진(t=-2.8)해 시장마다 방향이 엇갈렸다 (scripts/backtest_price_signals.py us).
     ins = d.get("insider")
     if ins and ((ins["buyers"] >= 2 and ins["value"] >= 100_000) or ins["value"] >= 500_000):
-        sig.append({"key": "내부자매수",
-                    "text": f"임원·이사 {ins['buyers']}명이 공개시장에서 ${ins['value']:,.0f} 매수 (마지막 {ins['last']}, 최근 90일)"})
+        # 참고용(info) — 점수에 넣지 않는다. 2024-10~2026-10 시총 $30억+ 미국 종목 검증에서 임원·이사 매수 군집 이후 초과수익이 없었고
+        # 강한 군집(3명+ $50만+)은 60일 뒤 시점 평균 -1.63%p·이긴 시점 29%(t=-3.8)로 오히려 부진했다 (scripts/backtest_event_signals.py insider).
+        sig.append({"key": "내부자매수", "info": True,
+                    "text": f"(참고) 임원·이사 {ins['buyers']}명이 공개시장에서 ${ins['value']:,.0f} 매수 (마지막 {ins['last']}, 최근 90일)"})
     if d["roe"] is not None and d["roe"] >= 1.0:
         warn.append("ROE 100%+ — 자기자본이 작거나 자사주 매입 영향일 수 있어 수익성 지표로 과대평가될 수 있음")
     if d["debt_eq"] is not None and d["debt_eq"] >= 300 and d["sector"] != "Finance":
@@ -310,11 +312,12 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> tuple[list[dict], 
 
 
 _GROUP = {"수익성": "질", "저평가": "가치", "업종대비저평가": "가치", "이익증가기대": "이익",
-          "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "단기회복": "회복", "내부자매수": "수급"}
+          "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "내부자매수": "참고"}
 
 
 def score(signals: list[dict]) -> int:
-    return len({_GROUP[s["key"]] for s in signals})
+    """신호 묶음 수. 참고용(info) 신호는 세지 않는다."""
+    return len({_GROUP[s["key"]] for s in signals if not s.get("info")})
 
 
 def score_all(rows: list[dict]) -> list[dict]:
@@ -378,7 +381,7 @@ def save_daily(res: dict, date: str | None = None) -> int:
         rows.append({"date": date, "code": r["code"], "name": r["name"], "sector": r["sector"], "close": d["close"],
                      "chg_pct": r["chg_pct"], "mcap_usd": r["mcap_usd"], "fwd_pe": d["fwd_pe"], "roe": d["roe"],
                      "target": d["target"], "high52": d["high52"], "score": r["score"],
-                     "signals": ",".join(s["key"] for s in r["signals"])})
+                     "signals": ",".join(s["key"] + ("(참고)" if s.get("info") else "") for s in r["signals"])})
     with get_conn() as conn:
         conn.execute(text("DELETE FROM us_screen_daily WHERE date=:d"), {"d": date})
         if rows:

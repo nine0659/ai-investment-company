@@ -128,6 +128,29 @@ def test_insider_signal_thresholds(ins, expect):
     assert ("내부자매수" in {s["key"] for s in sig}) is expect
 
 
-def test_insider_counts_as_its_own_group():
-    sig, _ = us.compute_signals(_row({"buyers": 3, "value": 300_000.0, "last": date(2026, 9, 5)}), {})
-    assert us.score([s for s in sig if s["key"] == "내부자매수"]) == 1
+def test_insider_is_info_only_and_does_not_add_to_score():
+    """검증(scripts/backtest_event_signals.py insider): 임원·이사 매수 군집 이후 초과수익 없음(강한 군집 60일 t=-3.8) → 점수 제외, 참고 표시만."""
+    with_ins, _ = us.compute_signals(_row({"buyers": 3, "value": 300_000.0, "last": date(2026, 9, 5)}), {})
+    without, _ = us.compute_signals(_row(None), {})
+    ins = [s for s in with_ins if s["key"] == "내부자매수"]
+    assert len(ins) == 1 and ins[0]["info"] is True and ins[0]["text"].startswith("(참고)")
+    assert us.score(with_ins) == us.score(without)
+
+
+def test_saved_signal_string_marks_info_signals():
+    """저장되는 신호 문자열에서 참고용은 '(참고)'로 구분돼 점수 신호처럼 보이지 않는다."""
+    from services import stock_explain
+    r = _row({"buyers": 3, "value": 300_000.0, "last": date(2026, 9, 5)})
+    sig, warn = us.compute_signals(r, {})
+    rec = {**r, "signals": sig, "warnings": warn, "score": us.score(sig)}
+    from db.database import get_conn, init_db
+    from sqlalchemy import text
+    init_db()
+    with get_conn() as c:
+        c.execute(text("DELETE FROM us_screen_daily"))
+    us.save_daily({"scored": [rec]}, date="2026-10-22")
+    with get_conn() as c:
+        saved = c.execute(text("SELECT signals FROM us_screen_daily")).scalar()
+        c.execute(text("DELETE FROM us_screen_daily"))
+    assert "내부자매수(참고)" in saved
+    assert "참고용" in "\n".join(stock_explain._signal_lines(saved))
