@@ -2,6 +2,7 @@
 
   insider : 미국 임원·이사 공개시장 매수 군집(SEC Form 4 분기 데이터셋 8분기) 이후 수익률 vs 같은 시점 전 종목 중앙값
   dart    : 한국 DART 공시 사건(자사주취득·소각·배당 = 호재 / 유상증자·메자닌·감자 = 악재) 이후 수익률 vs 전 종목 중앙값
+  usbuy   : 미국 8-K "자사주 매입 승인" 공시(SEC 전문 검색) 이후 수익률 — 한국에서 검증된 유일한 신호가 미국에서도 통하는지
   dart2   : 한국 거래소공시 중 공급계약(매출액대비 규모별)·잠정실적(영업이익 증감·흑자적자전환별) 이후 수익률 — 본문 숫자를 뽑아 표본 추출 검증
 
 룩어헤드 방지: 내부자는 *제출일*이 시점 이전인 거래만, DART 사건은 접수일 **다음 거래일 종가**에 진입한다.
@@ -284,12 +285,94 @@ def dart2_study() -> str:
     return "\n".join(summarize(k, by[k], pdt[k]) for k in conds)
 
 
+# ── 미국 자사주 매입 승인 8-K ─────────────────────────────────────────────────
+
+def us_buyback_events(months: int = 24) -> list[dict]:
+    """EDGAR 전문 검색으로 '자사주 매입 승인' 8-K 목록. [{cik, date, items}] (같은 회사·같은 날은 1건)."""
+    import requests
+    from clients.sec_insider_client import _SEC
+    sess = requests.Session()
+    out, seen = [], set()
+    end = date.today()
+    cur = end - timedelta(days=months * 30)
+    while cur < end:
+        win_end = min(cur + timedelta(days=30), end)
+        frm = 0
+        while True:
+            try:
+                r = sess.get("https://efts.sec.gov/LATEST/search-index", headers=_SEC, timeout=30, params={
+                    "q": '"share repurchase program" "authorized"', "forms": "8-K", "dateRange": "custom",
+                    "startdt": cur.isoformat(), "enddt": win_end.isoformat(), "from": frm}).json()
+            except Exception:
+                break
+            hits = (r.get("hits") or {}).get("hits") or []
+            for h in hits:
+                src = h.get("_source") or {}
+                for c in src.get("ciks") or []:
+                    key = (int(c), src.get("file_date"))
+                    if key not in seen:
+                        seen.add(key)
+                        out.append({"cik": int(c), "date": datetime.strptime(src["file_date"], "%Y-%m-%d").date(),
+                                    "items": src.get("items") or []})
+            total = ((r.get("hits") or {}).get("total") or {}).get("value", 0)
+            frm += len(hits)
+            if not hits or frm >= total or frm >= 1000:
+                break
+        print(f"  8-K {cur}~{win_end}: 누적 {len(out)}건", flush=True)
+        cur = win_end + timedelta(days=1)
+    return out
+
+
+def usbuy_study() -> str:
+    import requests
+    from clients.sec_insider_client import _SEC
+    closes = load_prices("us")
+    t2c = {v["ticker"].upper(): int(v["cik_str"]) for v in requests.get(
+        "https://www.sec.gov/files/company_tickers.json", headers=_SEC, timeout=30).json().values()}
+    c2t = {c: t for t, c in t2c.items() if t in closes.columns}
+    cache = os.path.join(tempfile.gettempdir(), "us_buyback_events.pkl")
+    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
+        with open(cache, "rb") as f:
+            evs = pickle.load(f)
+    else:
+        evs = us_buyback_events()
+        with open(cache, "wb") as f:
+            pickle.dump(evs, f)
+    idx = pd.DatetimeIndex(closes.index).tz_localize(None).normalize()
+    groups = {"전체 8-K(승인 문구 포함)": lambda e: True,
+              "단독 공시(8.01, 실적발표 2.02 없음)": lambda e: "8.01" in e["items"] and "2.02" not in e["items"],
+              "실적발표와 함께(2.02 포함)": lambda e: "2.02" in e["items"]}
+    by = {k: {h: [] for h in HORIZONS} for k in groups}
+    pdt = {k: {h: {} for h in HORIZONS} for k in groups}
+    n_used = 0
+    for e in evs:
+        tk = c2t.get(e["cik"])
+        if not tk:
+            continue
+        n_used += 1
+        pos = idx.searchsorted(pd.Timestamp(e["date"]), side="right")           # 제출일 다음 거래일 (룩어헤드 방지)
+        if pos >= len(idx):
+            continue
+        for name, f in groups.items():
+            if f(e):
+                for h in HORIZONS:
+                    x = fwd_excess(closes, tk, pos, h)
+                    if x is not None:
+                        by[name][h].append(x)
+                        pdt[name][h].setdefault(pos // 10, []).append(x)
+    print(f"  유니버스 내 공시 {n_used}건 / 전체 {len(evs)}건", flush=True)
+    return "\n".join(summarize(k, by[k], pdt[k]) for k in groups)
+
+
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "insider"
     t0 = time.time()
     if which == "insider":
         print("미국 내부자 매수 군집 이후 수익률 vs 같은 시점 전 종목 중앙값 (제출일 이후 정보만 사용)", flush=True)
         print(insider_study())
+    elif which == "usbuy":
+        print("미국 8-K 자사주 매입 승인 공시 제출일 다음 거래일 이후 수익률 vs 전 종목 중앙값", flush=True)
+        print(usbuy_study())
     elif which == "dart2":
         print("한국 공급계약·잠정실적(본문 숫자별) 접수일 다음 거래일 이후 수익률 vs 전 종목 중앙값 (유형별 무작위 표본)", flush=True)
         print(dart2_study())
@@ -297,5 +380,5 @@ if __name__ == "__main__":
         print("한국 DART 공시 사건 접수일 다음 거래일 이후 수익률 vs 전 종목 중앙값", flush=True)
         print(dart_study())
     else:
-        sys.exit("사용법: insider | dart | dart2")
+        sys.exit("사용법: insider | dart | dart2 | usbuy")
     print(f"\n※ 생존 편향·겹치는 표본·짧은 기간 — 방향성 참고용. ({time.time() - t0:.0f}초)")
