@@ -272,3 +272,26 @@ def test_snapshots_ready_reflects_today_rows(db):
     assert dd.snapshots_ready() == (True, False)
     _us(_d(0), "AAA")
     assert dd.snapshots_ready() == (True, True)
+
+
+def test_digest_attaches_headlines_to_top_candidates_only(db, monkeypatch):
+    _kr(_d(1), "999999")
+    for i in range(1, 6):
+        _kr(_d(0), f"22222{i}")
+    _us(_d(1), "ZZZ")
+    _us(_d(0), "AAA")
+    import services.candidate_news as cn
+    asked = []
+    monkeypatch.setattr(cn, "lines_for", lambda name, market="KR", n=2, fetch_fn=None: asked.append((name, market)) or [f"     📰 뉴스-{name}"])
+    t = dd.build()["text"]
+    kr_asked = [a for a in asked if a[1] == "KR"]
+    assert len(kr_asked) == dd._NEWS_TOP and t.count("📰 뉴스-") == dd._NEWS_TOP + 1       # 한국 3 + 미국 1
+    assert "기사 제목 원문" in t
+
+
+def test_digest_survives_news_failure(db, monkeypatch):
+    _kr(_d(1), "999999"); _kr(_d(0), "222222")
+    _us(_d(1), "ZZZ"); _us(_d(0), "AAA")
+    import services.candidate_news as cn
+    monkeypatch.setattr(cn, "lines_for", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("net")))
+    assert dd.build()["text"]

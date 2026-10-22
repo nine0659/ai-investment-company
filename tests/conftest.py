@@ -50,3 +50,17 @@ def _no_research_pipeline_network(monkeypatch, request):
     except Exception:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_candidate_news_network(monkeypatch, request):
+    """후보 뉴스(구글뉴스 RSS)가 다른 테스트에서 실망을 타지 않게 차단. 전용 테스트(test_candidate_news)는 실제 함수를 검증한다."""
+    if request.module.__name__.endswith("test_candidate_news"):
+        yield
+        return
+    try:
+        import services.candidate_news as cn
+        monkeypatch.setattr(cn, "fetch_headlines", lambda *a, **k: [])
+    except Exception:
+        pass
+    yield

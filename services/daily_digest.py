@@ -43,6 +43,23 @@ def _us_line(p: dict) -> str:
             f"신호 {p['score']}묶음 [{p['signals']}]" + (" " + " · ".join(stats) if stats else ""))
 
 
+_NEWS_TOP = 3          # 시장당 헤드라인을 붙이는 후보 수 (메시지 길이 때문에 상위 몇 개만)
+
+
+def _with_news(lines: list[str], names: list[str], market: str) -> list[str]:
+    """후보 줄 아래에 최근 뉴스 헤드라인을 붙인다(상위 _NEWS_TOP개). 수집 실패는 조용히 건너뛴다 — 필수 요소가 아니다."""
+    out = []
+    for i, (line, name) in enumerate(zip(lines, names)):
+        out.append(line)
+        if i < _NEWS_TOP:
+            try:
+                from services.candidate_news import lines_for
+                out += lines_for(name, market)
+            except Exception as e:
+                logger.debug("[일일요약] 뉴스 실패(%s): %s", name, e)
+    return out
+
+
 def holdings_events(codes: set[str], days: int = 2) -> list[str]:
     from services.disclosure_events import recent_events
     out = []
@@ -84,7 +101,8 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
             head = "🇰🇷 오늘의 상위 후보 (비교할 어제 기록이 아직 없어 '신규' 표시는 내일부터)"
         if new:
             counts["kr_new"] = len(new)
-            sections.append(head + "\n" + "\n".join(_kr_line(p, evs.get(p["code"], [])) for p in new))
+            sections.append(head + "\n" + "\n".join(_with_news(
+                [_kr_line(p, evs.get(p["code"], [])) for p in new], [p["name"] for p in new], "KR")))
     elif not kr_ok:
         sections.append("🇰🇷 오늘분 한국 스크리닝 없음 (수집 지연 — 내일 헬스체크 확인)")
 
@@ -98,7 +116,8 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
             head = "🇺🇸 오늘의 상위 후보 (비교할 어제 기록이 아직 없어 '신규' 표시는 내일부터)"
         if new:
             counts["us_new"] = len(new)
-            sections.append(head + "\n" + "\n".join(_us_line(p) for p in new))
+            sections.append(head + "\n" + "\n".join(_with_news(
+                [_us_line(p) for p in new], [p["name"] for p in new], "US")))
     elif not us_ok:
         sections.append("🇺🇸 오늘분 미국 스크리닝 없음 (수집 지연 — 내일 헬스체크 확인)")
 
@@ -139,7 +158,7 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
         return {"text": None, "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
     now = datetime.now(_KST)
     header = (f"📌 오늘의 발굴·공시 요약 ({now.strftime('%m/%d')} {_WEEK[now.weekday()]})\n"
-              "코드 계산 · LLM 미사용 · 매수 권고가 아닌 '볼 만한 후보' 목록입니다.")
+              "코드 계산 · LLM 미사용 · 매수 권고가 아닌 '볼 만한 후보' 목록입니다. 📰는 기사 제목 원문이며 코드가 판단하지 않았습니다.")
     return {"text": header + "\n\n" + "\n\n".join(sections), "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
 
 
