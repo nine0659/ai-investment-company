@@ -271,7 +271,9 @@ def save_daily(res: dict, date: str | None = None) -> int:
             "date": date, "code": r["code"], "name": r["name"], "market": r["market"], "close": r["close"],
             "chg_pct": r["chg_pct"], "mcap_eok": r["mcap_eok"], "per": d["per"], "pbr": d["pbr"],
             "cns_per": d["cns_per"], "eps": d["eps"], "target": d["target"], "high52": d["high52"],
-            "score": 0 if r.get("blocked") else r["score"],   # 중대 악재 공시 종목은 후보 조회(load_picks)에서 빠지게 0점 처리 "signals": ",".join(s["key"] for s in r["signals"]),
+            # 중대 악재 공시 종목은 후보 조회(load_picks)에서 빠지게 0점으로 저장
+            "score": 0 if r.get("blocked") else r["score"],
+            "signals": ",".join(s["key"] for s in r["signals"]),
         })
     with get_conn() as conn:
         conn.execute(text("DELETE FROM universe_screen_daily WHERE date=:d"), {"d": date})

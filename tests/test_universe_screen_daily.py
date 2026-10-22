@@ -124,3 +124,14 @@ def test_discovery_screener_failure_falls_back(monkeypatch):
         raise RuntimeError("db down")
     monkeypatch.setattr(us, "load_picks", boom)
     assert discovery_agent._screener_candidates(set()) == []
+
+
+def test_save_persists_signals_and_zeroes_blocked(clean_db):
+    """사고(2026-10-22): 저장 dict의 score 줄에 주석을 붙이다 같은 줄의 signals까지 주석이 돼 저장이 통째로 깨졌다.
+    저장 행에 signals가 실제로 들어가는지, 중대 악재(blocked) 종목은 0점으로 저장돼 후보 조회에서 빠지는지 고정한다."""
+    ok, bad = _scored("111111", 3), _scored("222222", 3)
+    bad["blocked"] = True
+    us.save_daily(_res([ok, bad]), date="2026-10-22")
+    picks = us.load_picks()
+    assert [p["code"] for p in picks] == ["111111"]
+    assert picks[0]["signals"] and "저평가" in picks[0]["signals"]
