@@ -91,7 +91,7 @@ def _frame(concept: str, unit: str, period: str) -> dict[int, float]:
 
 
 def fetch_edgar() -> dict:
-    """{by_ticker: {ticker: {ni, equity, revenue, liabilities, eps}}, ok}. 못 받은 항목은 키가 없다."""
+    """{by_ticker: {ticker: {cik, ni, equity, revenue, liabilities, eps}}, ok}. 못 받은 항목은 키가 없다."""
     try:
         import requests
         r = requests.get("https://www.sec.gov/files/company_tickers.json", headers=_SEC, timeout=30)
@@ -116,8 +116,7 @@ def fetch_edgar() -> dict:
     for tk, cik in t2c.items():
         rec = {k: m[cik] for k, m in (("ni", ni), ("eps", eps), ("revenue", rev), ("equity", eq), ("liabilities", liab))
                if cik in m}
-        if rec:
-            out[tk] = rec
+        out[tk] = {**rec, "cik": cik}                       # 재무가 없어도 CIK는 내부자 거래 매칭에 쓴다
     return {"by_ticker": out, "ok": len(ni) >= 2000}        # 순이익 프레임이 이보다 적으면 수신 이상
 
 
@@ -184,7 +183,7 @@ def fetch_consensus(sym: str) -> dict:
 
 # ── 조립·신호 ───────────────────────────────────────────────────────────────
 
-def build_detail(row: dict, edgar: dict | None, price: dict | None) -> dict | None:
+def build_detail(row: dict, edgar: dict | None, price: dict | None, insider: dict | None = None) -> dict | None:
     """① 행 + ② 재무 + ③ 시세 → 신호 계산용 수치. 시세가 없으면 None."""
     if not price:
         return None
@@ -200,6 +199,7 @@ def build_detail(row: dict, edgar: dict | None, price: dict | None) -> dict | No
         "debt_eq": li / eq * 100 if li is not None and eq and eq > 0 else None,
         "industry": row.get("industry") or "", "sector": row.get("sector") or "",
         "target": None, "buy_ratio": None, "analysts": None, "fwd_eps": None, "fwd_pe": None,
+        "insider": insider if insider and insider.get("buyers") else None,
     }
 
 
@@ -283,6 +283,10 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> tuple[list[dict], 
         sig.append({"key": "고점대비낙폭", "text": f"52주 고점 대비 {dd * 100:.0f}%"})
     if dd is not None and dd <= -0.2 and d["ma50"] and close > d["ma50"]:
         sig.append({"key": "단기회복", "text": f"고점 대비 {dd * 100:.0f}% 구간에서 50일선({d['ma50']:.2f}) 위로 회복"})
+    ins = d.get("insider")
+    if ins and ((ins["buyers"] >= 2 and ins["value"] >= 100_000) or ins["value"] >= 500_000):
+        sig.append({"key": "내부자매수",
+                    "text": f"임원·이사 {ins['buyers']}명이 공개시장에서 ${ins['value']:,.0f} 매수 (마지막 {ins['last']}, 최근 90일)"})
     if d["roe"] is not None and d["roe"] >= 1.0:
         warn.append("ROE 100%+ — 자기자본이 작거나 자사주 매입 영향일 수 있어 수익성 지표로 과대평가될 수 있음")
     if d["debt_eq"] is not None and d["debt_eq"] >= 300 and d["sector"] != "Finance":
@@ -293,7 +297,7 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> tuple[list[dict], 
 
 
 _GROUP = {"수익성": "질", "저평가": "가치", "업종대비저평가": "가치", "이익증가기대": "이익",
-          "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "단기회복": "회복"}
+          "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "단기회복": "회복", "내부자매수": "수급"}
 
 
 def score(signals: list[dict]) -> int:
@@ -321,9 +325,16 @@ def run_screen(exclude: set[str] | None = None, top: int = 20) -> dict:
     pool = sorted(tradable(uni["rows"]), key=lambda r: -r["mcap_usd"])[:MAX_UNIVERSE]
     edgar = fetch_edgar()
     prices = fetch_prices([r["code"] for r in pool]) if pool else {}
+    try:
+        from clients.sec_insider_client import fetch_recent_purchases
+        ins = fetch_recent_purchases()
+    except Exception as e:
+        logger.warning("[미국스크린] 내부자 거래 수신 실패 (이 신호 없이 진행): %s", e)
+        ins = {"by_cik": {}, "data_through": None, "ok": False}
     rows = []
     for r in pool:
-        d = build_detail(r, edgar["by_ticker"].get(r["code"].upper()), prices.get(r["code"]))
+        e = edgar["by_ticker"].get(r["code"].upper())
+        d = build_detail(r, e, prices.get(r["code"]), ins["by_cik"].get((e or {}).get("cik")))
         if d:
             rows.append({**r, "detail": d})
     cands = prefilter(rows)
@@ -333,7 +344,10 @@ def run_screen(exclude: set[str] | None = None, top: int = 20) -> dict:
         "as_of": datetime.now(_KST).strftime("%Y-%m-%d %H:%M"),
         "fetched": uni["fetched"], "universe_complete": uni["complete"], "tradable": len(pool),
         "detailed": len(rows), "detail_requested": len(pool),
-        "edgar_ok": edgar["ok"], "edgar_matched": sum(1 for r in rows if r["code"].upper() in edgar["by_ticker"]),
+        "edgar_ok": edgar["ok"],
+        "edgar_matched": sum(1 for r in rows if "eps" in edgar["by_ticker"].get(r["code"].upper(), {})),
+        "insider_ok": ins["ok"], "insider_through": ins["data_through"],
+        "insider_hits": sum(1 for r in rows if r["detail"]["insider"]),
         "consensus_ok": cons_ok, "consensus_requested": len(cands),
         "scored": scored, "picks": pick_from(scored, exclude, top),
     }
@@ -396,15 +410,18 @@ def run_daily_job() -> tuple[str, str]:
     n = save_daily(res)
     if n == 0:
         return "empty", "저장 0건"
+    note = "" if res.get("insider_ok") else " · ⚠내부자거래 미수신(해당 신호 없이 저장)"
     return "success", (f"저장 {n}종목 · 신호 3묶음+ {len(res['picks'])}종목 · 목록 {res['fetched']} · "
-                       f"재무매칭 {res['edgar_matched']} · 컨센서스 {res['consensus_ok']}/{res['consensus_requested']}")
+                       f"재무매칭 {res['edgar_matched']} · 컨센서스 {res['consensus_ok']}/{res['consensus_requested']}{note}")
 
 
 def format_screen(res: dict) -> str:
     lines = [f"=== 미국 전 종목 스크리닝 ({res['as_of']}) ===",
              f"전체 {res['fetched']}종목 수신" + ("" if res["universe_complete"] else " ⚠불완전")
              + f" → 시총 $30억+ {res['tradable']}종목 → 시세 확인 {res['detailed']}/{res['detail_requested']}"
-             + f" · SEC 재무 매칭 {res['edgar_matched']} · 애널리스트 {res['consensus_ok']}/{res['consensus_requested']}"]
+             + f" · SEC 재무 매칭 {res['edgar_matched']} · 애널리스트 {res['consensus_ok']}/{res['consensus_requested']}"
+             + (f" · 내부자 매수 {res.get('insider_hits', 0)}종목(데이터는 {res.get('insider_through')}까지, 분기 공개라 최근 몇 주 지연)"
+                if res.get("insider_ok") else " · ⚠내부자거래 미수신")]
     if not res["picks"]:
         lines.append("신호가 3묶음 이상 겹치는 종목 없음")
     for p in res["picks"]:
