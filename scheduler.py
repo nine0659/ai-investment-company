@@ -438,6 +438,21 @@ def job_universe_screen():
         record_job("universe_screen", "fail", str(e))
 
 
+def job_us_universe_screen():
+    """평일 17:30 — 미국 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
+
+    17:30 KST는 미국장 마감 후라 직전 미국 거래일 종가 기준이다(미국 휴장일엔 같은 데이터가 반복될 뿐 해는 없다).
+    """
+    from services.job_ledger import record_job
+    try:
+        from services.us_universe_screener import run_daily_job
+        status, detail = run_daily_job()
+        record_job("us_universe_screen", status, detail)
+    except Exception as e:
+        logger.warning("미국 전 종목 스크리닝 실패 (무시): %s", e)
+        record_job("us_universe_screen", "fail", str(e))
+
+
 def job_daily_health():
     """매일 08:05 — 어제 예정 잡의 누락·실패 점검. 문제 있을 때만 경보."""
     from services.job_ledger import run_daily_health_check
@@ -655,6 +670,16 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 평일 17:00[/cyan] 전 종목 스크리닝 스냅샷 (무발송)")
+
+    scheduler.add_job(
+        job_us_universe_screen,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=30, timezone=TIMEZONE_STR),
+        id="us_universe_screen",
+        name="[17:30] 미국 전 종목 스크리닝 스냅샷 (무발송)",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 평일 17:30[/cyan] 미국 전 종목 스크리닝 스냅샷 (무발송)")
 
     # 일일 헬스체크: 매일 08:05 — 어제 예정 잡 누락·실패 감지 (문제 있을 때만 경보)
     scheduler.add_job(

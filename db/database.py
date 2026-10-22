@@ -572,6 +572,25 @@ universe_screen_daily = Table("universe_screen_daily", metadata,
     Column("created_at", Text,   server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# 미국 전 종목 일별 스크리닝 스냅샷 (한국 universe_screen_daily와 같은 목적)
+us_screen_daily = Table("us_screen_daily", metadata,
+    Column("id",        Integer, primary_key=True, autoincrement=True),
+    Column("date",      Text,    nullable=False),
+    Column("code",      Text,    nullable=False),
+    Column("name",      Text),
+    Column("sector",    Text),
+    Column("close",     Float),
+    Column("chg_pct",   Float),
+    Column("mcap_usd",  Float),
+    Column("fwd_pe",    Float),
+    Column("roe",       Float),
+    Column("target",    Float),
+    Column("high52",    Float),
+    Column("score",     Integer),
+    Column("signals",   Text),
+    Column("created_at", Text,   server_default=text("CURRENT_TIMESTAMP")),
+)
+
 # 증권사 리포트 보관: 하루치 제목만으로는 '의견 흐름'을 못 본다 → 쌓아서 테마별 언급 추이를 코드가 계산.
 broker_reports = Table("broker_reports", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),
