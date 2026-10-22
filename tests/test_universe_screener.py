@@ -140,48 +140,25 @@ def test_hist_stats_none_when_too_short():
     assert us._hist_stats(pd.Series([1.0] * 100))["ma200"] is None          # 200봉 미만이면 200일선은 비움
 
 
-def test_rs_percentiles_ranks_within_universe():
-    rows = [_trend_row(c, ret_3m=r) for c, r in (("A", -30.0), ("B", 0.0), ("C", 40.0))]
-    rs = us.rs_percentiles(rows)
-    assert rs == {"A": 0.0, "B": 50.0, "C": 100.0}
+def test_price_trend_signals_are_not_scored():
+    """2024-10~2026-10 한국 2년 검증(scripts/backtest_price_signals.py): 상대강도는 효과 없음(t=-0.9), 추세회복은 시점의 21%에서만
+    시장을 이겨 유의하게 부진(t=-2.8)했다 → 점수에 넣지 않는다. 강한 상대강도·추세회복 조건을 모두 갖춰도 신호가 생기면 안 된다."""
+    strong = _trend_row(close=10000.0, ma50=9000.0, ret_1m=5.0, ret_3m=80.0)       # 고점 대비 -50%, 50일선 위, 3개월 +80%
+    keys = {s["key"] for s in us.compute_signals(strong, {})}
+    assert "상대강도" not in keys and "추세회복" not in keys
+    scored = us.score_all([_trend_row(f"{i:06d}", ret_3m=float(i)) for i in range(10)])
+    assert all(s["key"] not in ("상대강도", "추세회복") for r in scored for s in r["signals"])
+    assert "상대강도" not in us._GROUP and "추세회복" not in us._GROUP
 
 
-def test_rs_percentiles_skips_missing_history():
-    r = _trend_row("A")
-    r["detail"]["hist"] = None
-    assert us.rs_percentiles([r]) == {}
-
-
-def test_relative_strength_signal_only_for_top_30pct():
-    rows = [_trend_row(f"{i:06d}", ret_3m=float(i)) for i in range(10)]
-    scored = us.score_all(rows)
-    keys = {r["code"]: {s["key"] for s in r["signals"]} for r in scored}
-    assert "상대강도" in keys["000009"] and "상대강도" in keys["000007"]
-    assert "상대강도" not in keys["000005"]
-
-
-def test_trend_recovery_requires_drawdown_and_close_above_ma50_and_positive_month():
-    ok = us.compute_signals(_trend_row(close=10000.0, ma50=9000.0, ret_1m=5.0), {})
-    assert "추세회복" in {s["key"] for s in ok}
-    below = us.compute_signals(_trend_row(close=10000.0, ma50=11000.0), {})
-    assert "추세회복" not in {s["key"] for s in below}
-    falling = us.compute_signals(_trend_row(close=10000.0, ma50=9000.0, ret_1m=-3.0), {})
-    assert "추세회복" not in {s["key"] for s in falling}
-    shallow = us.compute_signals(_trend_row(close=19000.0, ma50=9000.0), {})
-    assert "추세회복" not in {s["key"] for s in shallow}                # 고점 대비 -5%는 '회복'이 아니다
-
-
-def test_trend_warnings():
-    broken = _trend_row(close=10000.0, ma200=14000.0)                  # 200일선 대비 -29%
+def test_trend_warnings_are_neutral_and_independent():
+    below = _trend_row(close=10000.0, ma200=14000.0)                    # 200일선 대비 -29%
     hot = _trend_row(close=10000.0, ma200=9000.0, ret_1m=55.0)
-    w1, w2 = us.trend_warnings(broken), us.trend_warnings(hot)
-    assert any("추세 훼손" in w for w in w1) and not any("과열" in w for w in w1)
-    assert any("단기 과열" in w for w in w2) and not any("추세 훼손" in w for w in w2)
+    w1, w2 = us.trend_warnings(below), us.trend_warnings(hot)
+    assert any("장기 추세 아래" in w for w in w1) and not any("급등" in w for w in w1)
+    assert any("단기 급등" in w for w in w2) and not any("장기 추세 아래" in w for w in w2)
+    assert not any("싸 보이는 이유" in w for w in w1)                    # 검증되지 않은 인과 주장을 하지 않는다
     assert us.trend_warnings({"detail": {"hist": None}, "close": 1.0}) == []
-
-
-def test_new_signals_count_as_their_own_groups():
-    assert us.score([{"key": "상대강도"}, {"key": "추세회복"}, {"key": "저평가"}]) == 3
 
 
 def test_job_fails_when_history_mostly_missing(monkeypatch):

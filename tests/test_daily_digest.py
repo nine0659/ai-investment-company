@@ -228,7 +228,7 @@ def test_friday_digest_appends_scorecard_only_when_observations_exist(db, monkey
     assert dd.build(force_scorecard=True)["counts"]["scorecard"] == 1
     monkeypatch.setattr(screen_scorecard, "format_report", lambda *a, **k: "")
     r = dd.build(force_scorecard=True)
-    assert "성적표" not in r["text"] and r["counts"]["scorecard"] == 0
+    assert "🧪" not in r["text"] and r["counts"]["scorecard"] == 0          # 성적표 섹션 표식(머리말의 '성적표' 단어와 구분)
 
 
 def test_scorecard_failure_does_not_break_digest(db, monkeypatch):
@@ -295,3 +295,15 @@ def test_digest_survives_news_failure(db, monkeypatch):
     import services.candidate_news as cn
     monkeypatch.setattr(cn, "lines_for", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("net")))
     assert dd.build()["text"]
+
+
+def test_digest_states_signals_are_not_validated(db):
+    _kr(_d(1), "111111"); _kr(_d(0), "222222")
+    _us(_d(1), "AAA"); _us(_d(0), "BBB")
+    t = dd.build()["text"]
+    assert "검증은 아직 없습니다" in t and "예측이 아닙니다" in t
+
+
+def test_llm_block_header_warns_against_overconfidence():
+    from services import market_ideas as mi
+    assert "검증은 아직 없다" in mi._HEADER and "확신도를 높이는 근거로 쓰지 마라" in mi._HEADER

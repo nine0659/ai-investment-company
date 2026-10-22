@@ -181,14 +181,6 @@ def fetch_history(rows: list[dict], chunk: int = 100) -> dict[str, dict]:
     return out
 
 
-def rs_percentiles(rows: list[dict]) -> dict[str, float]:
-    """3개월 수익률의 전 종목 내 순위(0=최하위 … 100=최상위). 이력이 없는 종목은 빠진다."""
-    vals = sorted((r["detail"]["hist"]["ret_3m"], r["code"]) for r in rows
-                  if (r.get("detail") or {}).get("hist") and r["detail"]["hist"].get("ret_3m") is not None)
-    n = len(vals)
-    return {code: (i / (n - 1) * 100 if n > 1 else 50.0) for i, (_, code) in enumerate(vals)}
-
-
 def industry_medians(rows: list[dict], min_members: int = 5) -> dict[str, float]:
     """업종별 추정PER 중앙값 (표본 5개 미만 업종은 비교 불가라 제외)."""
     by: dict[str, list[float]] = {}
@@ -230,15 +222,9 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
         dd = close / d["high52"] - 1
         if dd <= -0.3:
             sig.append({"key": "고점대비낙폭", "text": f"52주 고점 대비 {dd * 100:.0f}%"})
-    h = d.get("hist")
-    if h:
-        rs = d.get("rs_pct")
-        if rs is not None and rs >= 70 and h.get("ret_3m") is not None:
-            sig.append({"key": "상대강도", "text": f"3개월 {h['ret_3m']:+.0f}% — 전 종목 중 상위 {100 - rs:.0f}%"})
-        hi = max(x for x in (d.get("high52"), h.get("hi_hist")) if x) if (d.get("high52") or h.get("hi_hist")) else None
-        if hi and close and close / hi - 1 <= -0.2 and h["ma50"] and close > h["ma50"] and (h.get("ret_1m") or 0) > 0:
-            sig.append({"key": "추세회복",
-                        "text": f"고점 대비 {(close / hi - 1) * 100:.0f}%에서 50일선({h['ma50']:,.0f}) 위로 회복 (1개월 {h['ret_1m']:+.0f}%)"})
+    # 가격 추세 신호(상대강도·추세회복)는 일부러 넣지 않는다: 2024-10~2026-10 한국 2년 검증에서 상대강도는 효과 없음(t=-0.9),
+    # 추세회복(낙폭 큰 종목이 50일선 위로)은 시점의 21%에서만 시장을 이겨 유의하게 부진(t=-2.8)했다 (scripts/backtest_price_signals.py).
+    # 이력(hist)은 업종 온도계·시장 폭·경고에만 쓴다.
     if d["flow_days"] >= 3 and d["foreign_buy_days"] >= 2 and d["organ_buy_days"] >= 2:
         sig.append({"key": "쌍끌이매수",
                     "text": f"최근 3일 중 외국인 {d['foreign_buy_days']}일·기관 {d['organ_buy_days']}일 순매수"})
@@ -247,7 +233,7 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
 
 # 같은 성격의 신호가 겹쳐 점수가 부풀지 않게 묶음 단위로 센다
 _GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대비저평가": "가치",
-          "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건", "상대강도": "모멘텀", "추세회복": "회복"}
+          "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건"}
 
 
 def score(signals: list[dict]) -> int:
@@ -265,9 +251,9 @@ def trend_warnings(r: dict) -> list[str]:
         return []
     out = []
     if h.get("ma200") and r["close"] < h["ma200"] * 0.8:
-        out.append(f"추세 훼손: 200일선({h['ma200']:,.0f}) 대비 {(r['close'] / h['ma200'] - 1) * 100:.0f}% — 싸 보이는 이유가 하락 추세일 수 있음")
+        out.append(f"장기 추세 아래: 200일선({h['ma200']:,.0f}) 대비 {(r['close'] / h['ma200'] - 1) * 100:.0f}%")
     if (h.get("ret_1m") or 0) >= 40:
-        out.append(f"단기 과열: 1개월 {h['ret_1m']:+.0f}% — 추격 매수 주의")
+        out.append(f"단기 급등: 1개월 {h['ret_1m']:+.0f}% — 과거 2년 검증에서 이런 종목은 이후 시장보다 부진한 경향(약함)")
     return out
 
 
@@ -300,10 +286,6 @@ def event_warnings(events: list[dict]) -> list[str]:
 def score_all(enriched: list[dict]) -> list[dict]:
     """상세 데이터가 있는 모든 종목에 신호·점수를 붙인다 (신호 없는 종목은 score 0)."""
     med = industry_medians(enriched)
-    rs = rs_percentiles(enriched)
-    for r in enriched:
-        if r.get("detail") is not None:
-            r["detail"]["rs_pct"] = rs.get(r["code"])
     out = []
     for r in enriched:
         sig = compute_signals(r, med)
