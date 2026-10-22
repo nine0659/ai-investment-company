@@ -159,6 +159,9 @@ def _download_part(part: list[str], tmap: dict[str, str], out: dict) -> int:
                 ok += 1
         except Exception:
             continue
+    del df                                            # 묶음마다 즉시 해제 — 무료 플랜(512MB)에서 메모리 여유가 약 200MB뿐이다
+    import gc
+    gc.collect()
     return ok
 
 
@@ -170,7 +173,9 @@ def fetch_history(rows: list[dict], chunk: int = 100) -> dict[str, dict]:
     items = list(tmap)
     out: dict[str, dict] = {}
     failed = []
+    from services import memory_watch
     for i in range(0, len(items), chunk):
+        memory_watch.guard("한국 스크리너 이력 수집")          # 한도 근접 시 스스로 중단(잡 fail) — OOM 재시작 방지
         part = items[i:i + chunk]
         if _download_part(part, tmap, out) == 0:
             failed.append(part)

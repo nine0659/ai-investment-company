@@ -55,6 +55,23 @@ def trim() -> None:
         pass
 
 
+GUARD_MB = 460           # 이 이상이면 대형 배치 작업이 스스로 중단한다 (한도 512MB — OS가 조용히 프로세스를 죽이기 전에)
+
+
+def guard(what: str = "", threshold_mb: float = GUARD_MB) -> None:
+    """대형 배치(전 종목 스크리너)의 묶음 사이에서 호출: 컨테이너 메모리가 임계값 이상이면 한 번 정리해 보고,
+    그래도 높으면 MemoryError로 작업을 중단한다 → 잡이 'fail'로 기록돼 헬스체크가 알린다
+    (2026-10-12 무료 플랜 OOM 재시작 전례: 서비스 전체가 조용히 재시작되면 다른 잡도 같이 사라진다).
+    측정 불가(Windows 등)면 아무것도 하지 않는다."""
+    mb = container_rss_mb()
+    if mb is None or mb < threshold_mb:
+        return
+    trim()
+    mb2 = container_rss_mb()
+    if mb2 is not None and mb2 >= threshold_mb:
+        raise MemoryError(f"메모리 {mb2:.0f}MB ≥ {threshold_mb:.0f}MB — {what or '배치 작업'} 중단 (한도 {LIMIT_MB}MB)")
+
+
 def after_job(job_name: str) -> float | None:
     """잡 종료 직후 호출: 정리 전/후 메모리를 로그로 남기고, 높으면 경보(6시간 1회)."""
     global _last_alert_ts

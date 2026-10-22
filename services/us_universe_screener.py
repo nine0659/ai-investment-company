@@ -129,7 +129,9 @@ def fetch_prices(tickers: list[str], chunk: int = 100) -> dict[str, dict]:
         import yfinance as yf
     except Exception:
         return out
+    from services import memory_watch
     for i in range(0, len(tickers), chunk):
+        memory_watch.guard("미국 스크리너 시세 수집")          # 한도 근접 시 스스로 중단(잡 fail) — OOM 재시작 방지
         part = tickers[i:i + chunk]
         if len(part) < 2:
             part = part + ["SPY"]                              # 단일 종목은 열 구조가 달라 더미를 붙인다
@@ -151,6 +153,9 @@ def fetch_prices(tickers: list[str], chunk: int = 100) -> dict[str, dict]:
                            "ma200": float(cl.tail(200).mean()) if len(cl) >= 200 else None}
             except Exception:
                 continue
+        del df                                          # 묶음마다 즉시 해제 — 무료 플랜(512MB)에서 메모리 여유가 약 200MB뿐이다
+        import gc
+        gc.collect()
     return out
 
 
