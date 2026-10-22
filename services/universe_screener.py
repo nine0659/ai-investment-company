@@ -176,34 +176,132 @@ def score(signals: list[dict]) -> int:
     return len({_GROUP[s["key"]] for s in signals})
 
 
-def screen(enriched: list[dict], exclude: set[str] | None = None, top: int = 20, min_score: int = 3) -> list[dict]:
-    exclude = exclude or set()
+def score_all(enriched: list[dict]) -> list[dict]:
+    """상세 데이터가 있는 모든 종목에 신호·점수를 붙인다 (신호 없는 종목은 score 0)."""
     med = industry_medians(enriched)
     out = []
     for r in enriched:
-        if r["code"] in exclude:
-            continue
         sig = compute_signals(r, med)
-        sc = score(sig)
-        if sc >= min_score:
-            out.append({**r, "signals": sig, "score": sc})
+        out.append({**r, "signals": sig, "score": score(sig)})
+    return out
+
+
+def pick_from(scored: list[dict], exclude: set[str] | None = None, top: int = 20, min_score: int = 3) -> list[dict]:
+    exclude = exclude or set()
+    out = [r for r in scored if r["score"] >= min_score and r["code"] not in exclude]
     out.sort(key=lambda x: (-x["score"], -x["mcap_eok"]))
     return out[:top]
 
 
+def screen(enriched: list[dict], exclude: set[str] | None = None, top: int = 20, min_score: int = 3) -> list[dict]:
+    return pick_from(score_all(enriched), exclude, top, min_score)
+
+
 def run_screen(exclude: set[str] | None = None, top: int = 20, max_detail: int = MAX_DETAIL) -> dict:
-    """전 종목 스크리닝 전체 실행. 결과 dict (발송·저장 없음)."""
+    """전 종목 스크리닝 전체 실행. 결과 dict (발송·저장 없음). 'scored'는 상세 확인된 전 종목."""
     uni = fetch_universe()
     pool = tradable(uni["rows"])
     pool.sort(key=lambda r: -r["mcap_eok"])            # 시총 큰 종목부터 상세 조회
     detail_rows = enrich(pool[:max_detail])
     got = sum(1 for r in detail_rows if r.get("detail"))
+    scored = score_all([r for r in detail_rows if r.get("detail")])
     return {
         "as_of": datetime.now(_KST).strftime("%Y-%m-%d %H:%M"),
         "expected": uni["expected"], "fetched": uni["fetched"], "universe_complete": uni["complete"],
         "tradable": len(pool), "detailed": got, "detail_requested": len(detail_rows),
-        "picks": screen(detail_rows, exclude, top),
+        "scored": scored, "picks": pick_from(scored, exclude, top),
     }
+
+
+# ── 일별 스냅샷 저장·조회 (쌓아야 '새로 켜진 신호'를 알 수 있다) ──────────────────
+
+def save_daily(res: dict, date: str | None = None) -> int:
+    """오늘 스냅샷을 날짜 단위로 통째 교체 저장. 저장 행 수 반환."""
+    from db.database import get_conn
+    from sqlalchemy import text
+    date = date or datetime.now(_KST).strftime("%Y-%m-%d")
+    rows = []
+    for r in res.get("scored") or []:
+        d = r["detail"]
+        rows.append({
+            "date": date, "code": r["code"], "name": r["name"], "market": r["market"], "close": r["close"],
+            "chg_pct": r["chg_pct"], "mcap_eok": r["mcap_eok"], "per": d["per"], "pbr": d["pbr"],
+            "cns_per": d["cns_per"], "eps": d["eps"], "target": d["target"], "high52": d["high52"],
+            "score": r["score"], "signals": ",".join(s["key"] for s in r["signals"]),
+        })
+    with get_conn() as conn:
+        conn.execute(text("DELETE FROM universe_screen_daily WHERE date=:d"), {"d": date})
+        if rows:
+            conn.execute(text(
+                "INSERT INTO universe_screen_daily (date, code, name, market, close, chg_pct, mcap_eok, per, pbr, "
+                "cns_per, eps, target, high52, score, signals) VALUES (:date, :code, :name, :market, :close, "
+                ":chg_pct, :mcap_eok, :per, :pbr, :cns_per, :eps, :target, :high52, :score, :signals)"), rows)
+    return len(rows)
+
+
+def load_picks(date: str | None = None, min_score: int = 3, limit: int = 20) -> list[dict]:
+    """저장된 스냅샷에서 신호 묶음 min_score 이상 종목. date 생략 시 가장 최근 저장일. 없으면 []."""
+    from db.database import get_conn
+    from sqlalchemy import text
+    try:
+        with get_conn() as conn:
+            if not date:
+                date = conn.execute(text("SELECT max(date) FROM universe_screen_daily")).scalar()
+            if not date:
+                return []
+            rows = conn.execute(text(
+                "SELECT date, code, name, market, close, chg_pct, mcap_eok, score, signals FROM universe_screen_daily "
+                "WHERE date=:d AND score>=:m ORDER BY score DESC, mcap_eok DESC LIMIT :n"),
+                {"d": date, "m": min_score, "n": limit}).fetchall()
+        return [dict(zip(("date", "code", "name", "market", "close", "chg_pct", "mcap_eok", "score", "signals"), r))
+                for r in rows]
+    except Exception as e:
+        logger.warning("[전종목스크린] 스냅샷 조회 실패: %s", e)
+        return []
+
+
+def streaks(picks: list[dict], lookback_days: int = 10) -> dict[str, int]:
+    """picks 각 종목이 최근 며칠 연속(저장된 날 기준) 신호 3묶음 이상이었는지. {code: 연속일수}"""
+    from db.database import get_conn
+    from sqlalchemy import text
+    if not picks:
+        return {}
+    try:
+        with get_conn() as conn:
+            dates = [r[0] for r in conn.execute(text(
+                "SELECT DISTINCT date FROM universe_screen_daily ORDER BY date DESC LIMIT :n"), {"n": lookback_days})]
+            hit = conn.execute(text(
+                "SELECT date, code FROM universe_screen_daily WHERE score>=3 AND date>=:oldest"),
+                {"oldest": dates[-1]}).fetchall() if dates else []
+    except Exception as e:
+        logger.warning("[전종목스크린] 연속일수 조회 실패: %s", e)
+        return {}
+    by_code: dict[str, set[str]] = {}
+    for d, c in hit:
+        by_code.setdefault(c, set()).add(d)
+    out = {}
+    for p in picks:
+        n = 0
+        for d in dates:                                 # 최신일부터 끊기기 전까지
+            if d in by_code.get(p["code"], ()):
+                n += 1
+            else:
+                break
+        out[p["code"]] = n
+    return out
+
+
+def run_daily_job() -> tuple[str, str]:
+    """매일 장마감 후 무발송 잡 본체. (status, detail) — job_runs 규약: 0건=empty, 부분실패=fail."""
+    res = run_screen()
+    if not res["universe_complete"]:
+        return "fail", f"목록 수신 불완전 {res['fetched']}/{res['expected']}"
+    if res["detail_requested"] and res["detailed"] < res["detail_requested"] * 0.8:
+        return "fail", f"상세 조회 {res['detailed']}/{res['detail_requested']}만 성공 (80% 미만)"
+    n = save_daily(res)
+    if n == 0:
+        return "empty", "저장 0건"
+    return "success", f"저장 {n}종목 · 신호 3묶음+ {len(res['picks'])}종목 · 수신 {res['fetched']}/{res['expected']}"
 
 
 def format_screen(res: dict) -> str:

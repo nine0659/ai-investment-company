@@ -551,6 +551,27 @@ forecast_log = Table("forecast_log", metadata,
     Column("created_at",  Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# 한국 전 종목 일별 스크리닝 스냅샷: 쌓아야 '새로 켜진 신호'·연속 일수·며칠 추세를 코드가 계산한다.
+universe_screen_daily = Table("universe_screen_daily", metadata,
+    Column("id",        Integer, primary_key=True, autoincrement=True),
+    Column("date",      Text,    nullable=False),
+    Column("code",      Text,    nullable=False),
+    Column("name",      Text),
+    Column("market",    Text),
+    Column("close",     Float),
+    Column("chg_pct",   Float),
+    Column("mcap_eok",  Float),
+    Column("per",       Float),
+    Column("pbr",       Float),
+    Column("cns_per",   Float),
+    Column("eps",       Float),
+    Column("target",    Float),
+    Column("high52",    Float),
+    Column("score",     Integer),                   # 신호 묶음 수 (0이면 신호 없음)
+    Column("signals",   Text),                      # 신호 키들(쉼표 구분)
+    Column("created_at", Text,   server_default=text("CURRENT_TIMESTAMP")),
+)
+
 # 증권사 리포트 보관: 하루치 제목만으로는 '의견 흐름'을 못 본다 → 쌓아서 테마별 언급 추이를 코드가 계산.
 broker_reports = Table("broker_reports", metadata,
     Column("id",         Integer, primary_key=True, autoincrement=True),

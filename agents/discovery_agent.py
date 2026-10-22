@@ -122,7 +122,43 @@ def _build_candidate_pool(kis: KISClient, exclude: set[str]) -> list[dict]:
 
     # 신호 수 많은 순 (수급이 여러 경로로 확인될수록 우선)
     ranked = sorted(pool.values(), key=lambda x: -len(set(x["signals"])))
-    return ranked[:_MAX_CANDIDATES]
+
+    # 전 종목 스크리너(평일 17:00 스냅샷)의 상위 후보를 우선 편입 — KIS 순위표 밖 저평가 종목을 보기 위함.
+    # 스냅샷이 없거나 오래됐으면 조용히 기존 방식 그대로(전부-아니면-전무 방지).
+    screened = _screener_candidates(exclude)
+    merged: dict[str, dict] = {c["code"]: c for c in screened}
+    for c in ranked:
+        if c["code"] in merged:
+            merged[c["code"]]["signals"] = merged[c["code"]]["signals"] + c["signals"]
+        else:
+            merged[c["code"]] = c
+    return list(merged.values())[:_MAX_CANDIDATES]
+
+
+_SCREENER_SHARE = 8        # 후보 풀 15개 중 전 종목 스크리너에 배정하는 최대 수
+_SCREENER_MAX_AGE_DAYS = 4 # 주말·휴일을 넘기되 오래된 스냅샷은 쓰지 않는다
+
+
+def _screener_candidates(exclude: set[str]) -> list[dict]:
+    try:
+        from services.universe_screener import load_picks, streaks
+        picks = [p for p in load_picks(limit=_SCREENER_SHARE * 2) if p["code"] not in exclude]
+        if not picks:
+            return []
+        age = (datetime.now(_TZ).date() - datetime.strptime(picks[0]["date"], "%Y-%m-%d").date()).days
+        if age > _SCREENER_MAX_AGE_DAYS:
+            logger.warning("[발굴] 전 종목 스냅샷이 %d일 전 것이라 사용 안 함", age)
+            return []
+        st = streaks(picks)
+        out = []
+        for p in picks[:_SCREENER_SHARE]:
+            n = st.get(p["code"], 1)
+            out.append({"code": p["code"], "name": p["name"], "market": p["market"],
+                        "signals": [f"전종목스크린{p['score']}묶음({n}일 연속)"]})
+        return out
+    except Exception as e:
+        logger.warning("[발굴] 전 종목 후보 편입 실패 (기존 방식으로 진행): %s", e)
+        return []
 
 
 def _enrich_candidates(kis: KISClient, candidates: list[dict]) -> list[dict]:

@@ -420,6 +420,24 @@ def job_daily_tracker():
         record_job("daily_tracker", "fail", str(e))
 
 
+def job_universe_screen():
+    """평일 17:00 — 코스피·코스닥 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
+
+    종목 발굴(discovery_agent)이 후보 풀로 쓰고, 쌓인 기록으로 '새로 켜진 신호'를 본다.
+    """
+    from services.job_ledger import record_job
+    if not is_krx_trading_day():
+        record_job("universe_screen", "skipped", "KRX 비거래일")
+        return
+    try:
+        from services.universe_screener import run_daily_job
+        status, detail = run_daily_job()
+        record_job("universe_screen", status, detail)
+    except Exception as e:
+        logger.warning("전 종목 스크리닝 실패 (무시): %s", e)
+        record_job("universe_screen", "fail", str(e))
+
+
 def job_daily_health():
     """매일 08:05 — 어제 예정 잡의 누락·실패 점검. 문제 있을 때만 경보."""
     from services.job_ledger import run_daily_health_check
@@ -626,6 +644,17 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 평일 16:20[/cyan] AI 추천 성과 추적 + 예측 검증")
+
+    # 전 종목 스크리닝: 평일 17:00 — 무발송 스냅샷 기록 (종목 발굴의 후보 풀 + 신호 추세용)
+    scheduler.add_job(
+        job_universe_screen,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=0, timezone=TIMEZONE_STR),
+        id="universe_screen",
+        name="[17:00] 한국 전 종목 스크리닝 스냅샷 (무발송)",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 평일 17:00[/cyan] 전 종목 스크리닝 스냅샷 (무발송)")
 
     # 일일 헬스체크: 매일 08:05 — 어제 예정 잡 누락·실패 감지 (문제 있을 때만 경보)
     scheduler.add_job(
