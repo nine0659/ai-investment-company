@@ -145,3 +145,45 @@ def test_names_flag_recorded_when_groups_missing(monkeypatch):
     monkeypatch.setattr(nv, "industry_groups", lambda: [])
     board = us._industry_board(_ind("a", "1", 6))
     assert board["names_ok"] is False and board["industries"][0]["name"] == "업종1"
+
+
+# ── 시장 폭 (전체 시장 'ALL' 행) ─────────────────────────────────────────────
+
+def _mkt(a200, a50, fb=50.0, n=1000):
+    return {"ind_no": ib.MARKET_KEY, "name": "전체 시장", "n": n, "change_rate": None, "med_ret_1m": 0.0, "med_ret_3m": 0.0,
+            "pct_above_ma50": a50, "pct_above_ma200": a200, "med_cns_per": None, "med_growth": None,
+            "foreign_buy_pct": fb, "regime": "-"}
+
+
+def test_market_row_saved_and_separated_from_industries(db):
+    board = {"market": {"n": 1280, "med_ret_1m": 1.0, "med_ret_3m": -5.0, "pct_above_ma50": 40.0, "pct_above_ma200": 20.0,
+                        "med_cns_per": 7.0, "med_growth": 10.0, "foreign_buy_pct": 55.0},
+             "industries": [_item("1", "반도체", "강세")]}
+    assert ib.save_daily(board, date="2026-10-22") == 2                       # 업종 1 + 전체 시장 1
+    snaps = ib.load_snapshots()
+    txt = ib.format_board(snaps)
+    assert "📊 시장 폭 (전 종목 1280개 중)" in txt and "200일선 위 20%" in txt
+    assert "전체 시장(" not in txt                                             # 시장 행이 업종 목록에 섞이지 않는다
+
+
+def test_breadth_line_shows_change_vs_previous_and_interpretation():
+    line = ib.breadth_line(_mkt(18.0, 35.0), _mkt(10.0, 20.0), "2026-10-15")
+    assert "200일선 위 18%(10-15 10%)" in line and "50일선 위 35%(10-15 20%)" in line
+    assert "바닥 다지기 초기일 수 있으나 확정 아님" in line              # 단기 추세 +15p 개선 + 장기 추세 아래 다수
+
+
+def test_breadth_interpretation_variants():
+    assert "과열" in ib.breadth_line(_mkt(80.0, 85.0), None)
+    assert "반등 신뢰도 낮음" in ib.breadth_line(_mkt(15.0, 20.0), _mkt(15.0, 21.0), "2026-10-15")
+    assert "통상 해석" not in ib.breadth_line(_mkt(50.0, 50.0), None)           # 중간 구간엔 해석을 붙이지 않는다
+    assert ib.breadth_line(None, None) == "" and ib.breadth_line({"pct_above_ma200": None}, None) == ""
+
+
+def test_board_with_only_market_row_still_formats(db):
+    ib.save_daily({"market": {"n": 100, "med_ret_1m": 0.0, "med_ret_3m": 0.0, "pct_above_ma50": 30.0,
+                              "pct_above_ma200": 20.0, "foreign_buy_pct": 50.0}, "industries": []}, date="2026-10-22")
+    assert "시장 폭" in ib.format_board()
+
+
+def test_build_records_sample_size_in_market():
+    assert ib.build(_ind("a", "1", 6), _GROUPS)["market"]["n"] == 6

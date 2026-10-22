@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
+MARKET_KEY = "ALL"                 # industry_daily에서 전체 시장 행을 가리키는 키
 MIN_MEMBERS = 5                    # 우리 유니버스에서 이 수 미만인 업종은 중앙값이 불안정해 제외
 # 시장 대비 분류 임계값(%p) — 초기 추정치. 성적이 쌓이면 조정한다.
 _REL_RET = 5.0
@@ -66,6 +67,7 @@ def build(rows: list[dict], groups: list[dict]) -> dict:
         if ind:
             by_ind.setdefault(str(ind), []).append(r)
     mkt = _metrics(rows)
+    mkt["n"] = len(rows)
     out = []
     for no, members in by_ind.items():
         if len(members) < MIN_MEMBERS:
@@ -90,6 +92,13 @@ def save_daily(board: dict, date: str | None = None) -> int:
     rows = [{"date": date, **{k: i[k] for k in ("ind_no", "name", "n", "change_rate", "med_ret_1m", "med_ret_3m",
                                                 "pct_above_ma50", "pct_above_ma200", "med_cns_per", "med_growth",
                                                 "foreign_buy_pct", "regime")}} for i in board["industries"]]
+    m = board.get("market") or {}
+    if m:                                                   # 전체 시장 폭 지표를 'ALL' 행으로 함께 쌓는다(시계열로 변화를 본다)
+        rows.append({"date": date, "ind_no": MARKET_KEY, "name": "전체 시장", "n": m.get("n"), "change_rate": None,
+                     "med_ret_1m": m.get("med_ret_1m"), "med_ret_3m": m.get("med_ret_3m"),
+                     "pct_above_ma50": m.get("pct_above_ma50"), "pct_above_ma200": m.get("pct_above_ma200"),
+                     "med_cns_per": m.get("med_cns_per"), "med_growth": m.get("med_growth"),
+                     "foreign_buy_pct": m.get("foreign_buy_pct"), "regime": "-"})
     with get_conn() as conn:
         conn.execute(text("DELETE FROM industry_daily WHERE date=:d"), {"d": date})
         if rows:
@@ -123,6 +132,32 @@ def load_snapshots(limit: int = 6) -> list[tuple[str, list[dict]]]:
         return []
 
 
+def breadth_line(now: dict | None, prev: dict | None, prev_date: str | None = None) -> str:
+    """시장 폭 한 줄 + 통상 해석(참고). 값이 없으면 ''. 해석은 확정 예측이 아니라 일반적으로 쓰이는 읽는 법이다."""
+    if not now or now.get("pct_above_ma200") is None:
+        return ""
+
+    def with_prev(key, label):
+        v = now.get(key)
+        if v is None:
+            return ""
+        pv = prev.get(key) if prev else None
+        return f"{label} {v:.0f}%" + (f"({prev_date[5:]} {pv:.0f}%)" if pv is not None and prev_date else "")
+    parts = [x for x in (with_prev("pct_above_ma200", "200일선 위"), with_prev("pct_above_ma50", "50일선 위"),
+                         with_prev("foreign_buy_pct", "외국인 매수 종목")) if x]
+    line = f"📊 시장 폭 (전 종목 {now.get('n') or '?'}개 중): " + " · ".join(parts)
+    b200, b50 = now["pct_above_ma200"], now.get("pct_above_ma50")
+    p50 = prev.get("pct_above_ma50") if prev else None
+    note = ""
+    if b200 >= 75:
+        note = "대부분 종목이 장기 추세 위 — 과열 구간일 수 있어 추격 매수 주의"
+    elif b200 <= 25 and b50 is not None and p50 is not None and b50 - p50 >= 10:
+        note = "장기 추세 아래 종목이 많은 가운데 단기 추세는 개선 중 — 바닥 다지기 초기일 수 있으나 확정 아님"
+    elif b200 <= 25:
+        note = "대부분 종목이 장기 추세 아래 — 단기 추세(50일선 위 비율) 개선이 확인되기 전엔 반등 신뢰도 낮음"
+    return line + ("\n   ↳ 통상 해석(참고): " + note if note else "")
+
+
 def _line(i: dict, prev: dict | None) -> str:
     bits = [f"{i['name']}({i['n']}종목)"]
     if i["med_ret_3m"] is not None:
@@ -148,13 +183,19 @@ def format_board(snaps: list[tuple[str, list[dict]]] | None = None, top: int = 4
     snaps = snaps if snaps is not None else load_snapshots()
     if not snaps or not snaps[0][1]:
         return ""
-    date, cur = snaps[0]
+    date, cur_all = snaps[0]
+    cur = [i for i in cur_all if i["ind_no"] != MARKET_KEY]
+    mkt_now = next((i for i in cur_all if i["ind_no"] == MARKET_KEY), None)
+    mkt_prev = next((i for i in snaps[-1][1] if i["ind_no"] == MARKET_KEY), None) if len(snaps) > 1 else None
     prev_map = {i["ind_no"]: i for i in snaps[-1][1]} if len(snaps) > 1 else {}
     cmp_note = f"{snaps[-1][0]} 대비 변화 표시" if len(snaps) > 1 else "비교할 과거 기록은 내일부터 쌓임"
     groups = {k: [i for i in cur if i["regime"] == k] for k in ("강세", "회복초입", "약세")}
-    if not any(groups.values()):
+    if not any(groups.values()) and not mkt_now:
         return ""
     lines = [f"🌡 업종 온도계 ({date} 기준, 시장 전체 대비 · 코드 계산 · {cmp_note})"]
+    breadth = breadth_line(mkt_now, mkt_prev, snaps[-1][0] if len(snaps) > 1 else None)
+    if breadth:
+        lines.append(breadth)
     for label, key, rev in (("🔥 강세 업종", "강세", True), ("🌱 회복 초입 업종", "회복초입", True), ("🧊 약세 업종", "약세", False)):
         items = sorted(groups[key], key=lambda x: (x["med_ret_3m"] if x["med_ret_3m"] is not None else -999) if key != "회복초입"
                        else (x["med_ret_1m"] or -999), reverse=True if key != "약세" else False)[:top]
