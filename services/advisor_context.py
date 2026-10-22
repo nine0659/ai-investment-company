@@ -103,8 +103,14 @@ def build(raw: dict, kr_rt: dict, run_type: str, kis=None) -> dict:
     if t:
         blocks.append(t)
 
+    from services import market_ideas
+    t = _safe("시장아이디어", lambda: _cached(
+        "ideas", lambda: market_ideas.build_block({p["code"] for p in positions}), ttl=1800))
+    if t:
+        blocks.append(t)
+
     from services import briefing_mode
-    pl = {p["name"]: (p["price"] / p["avg"] - 1) * 100 for p in positions if p.get("avg")}
+    pl = {p["name"]:(p["price"] / p["avg"] - 1) * 100 for p in positions if p.get("avg")}
     mode = briefing_mode.decide(kospi_chg, holding_pl=pl, events=evs)
     blocks.append(briefing_mode.context_line(mode))
 
