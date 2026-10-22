@@ -420,6 +420,24 @@ def job_daily_tracker():
         record_job("daily_tracker", "fail", str(e))
 
 
+def job_dart_events():
+    """평일 16:50 — 시장 전체 DART 공시(주요사항·거래소공시) 사건 수집·분류 (무발송, LLM 없음).
+
+    17:00 전 종목 스크리너가 이 결과를 신호·경고로 쓴다. 최근 3일치를 매번 훑어 늦은 접수분도 메운다.
+    """
+    from services.job_ledger import record_job
+    if not is_krx_trading_day():
+        record_job("dart_events", "skipped", "KRX 비거래일")
+        return
+    try:
+        from services.disclosure_events import run_daily_job
+        status, detail = run_daily_job()
+        record_job("dart_events", status, detail)
+    except Exception as e:
+        logger.warning("공시 사건 수집 실패 (무시): %s", e)
+        record_job("dart_events", "fail", str(e))
+
+
 def job_universe_screen():
     """평일 17:00 — 코스피·코스닥 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
 
@@ -659,6 +677,17 @@ def setup_jobs():
         coalesce=True,
     )
     console.print("  [cyan]⏰ 평일 16:20[/cyan] AI 추천 성과 추적 + 예측 검증")
+
+    # DART 공시 사건: 평일 16:50 — 전 종목 스크리너(17:00)의 입력
+    scheduler.add_job(
+        job_dart_events,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=50, timezone=TIMEZONE_STR),
+        id="dart_events",
+        name="[16:50] 시장 전체 DART 공시 사건 수집 (무발송)",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 평일 16:50[/cyan] DART 공시 사건 수집 (무발송)")
 
     # 전 종목 스크리닝: 평일 17:00 — 무발송 스냅샷 기록 (종목 발굴의 후보 풀 + 신호 추세용)
     scheduler.add_job(

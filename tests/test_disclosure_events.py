@@ -1,0 +1,215 @@
+"""시장 전체 DART 공시 사건 — 분류 규칙·본문 파싱·극성·스크리너 연동 회귀 테스트.
+
+실측 중 잡은 함정(2026-10-22): ① '주권매매거래정지해제'·'파산신청기각'·'상장유지'가 악재로 잡힘 ② 공급계약 때문의 일시 거래정지가
+악재로 잡힘 ③ 적자전환 잠정실적이 증감률이 없어 중립으로 분류됨 ④ 정정공시가 원공시와 중복.
+"""
+import pytest
+
+from services import disclosure_events as de
+from services import universe_screener as us
+
+
+@pytest.mark.parametrize("title,expect", [
+    ("주요사항보고서(유상증자결정)", ("유상증자", "악재")),
+    ("[기재정정]주요사항보고서(유상증자결정)", None),
+    ("주요사항보고서(전환사채권발행결정)", ("메자닌발행", "악재")),
+    ("주요사항보고서(자기주식취득결정)", ("자사주취득", "호재")),
+    ("주식소각결정", ("자사주소각", "호재")),
+    ("현금ㆍ현물배당결정", ("배당결정", "호재")),
+    ("단일판매ㆍ공급계약체결", ("공급계약", "호재")),
+    ("연결재무제표기준영업(잠정)실적(공정공시)", ("잠정실적", "중립")),
+    ("횡령ㆍ배임혐의발생", ("횡령·배임·회계위반", "악재")),
+    ("불성실공시법인지정(공시번복)", ("불성실공시", "악재")),
+    ("기타시장안내(상장적격성 실질심사 대상 결정)", ("상폐·부도위험", "악재")),
+    ("주권매매거래정지(상장폐지 사유발생)", ("상폐·부도위험", "악재")),
+    ("투자유의안내 (관리종목지정 우려 예고)", ("상폐·부도위험", "악재")),
+    ("주권매매거래정지해제(액면병합)", ("위험해소·절차", "중립")),
+    ("파산신청기각", ("위험해소·절차", "중립")),
+    ("기타시장안내(상장폐지 이의신청서 제출)", ("위험해소·절차", "중립")),
+    ("주권매매거래정지(단일판매공급계약)", None),
+    ("기업설명회(IR)개최(안내공시)", None),
+    ("주주총회소집결의", None),
+    ("전환가액의조정", None),
+    ("", None),
+])
+def test_classify(title, expect):
+    assert de.classify(title) == expect
+
+
+_SUPPLY = ["단일판매ㆍ공급계약 체결", "1. 판매ㆍ공급계약 구분", "기타 판매ㆍ공급계약", "- 체결계약명", "선박엔진 공급계약",
+           "2. 계약내역", "계약금액(원)", "26,825,600,000", "최근매출액(원)", "402,396,221,904", "매출액대비(%)", "6.7",
+           "대규모법인여부", "미해당", "3. 계약상대", "JIANGSU NEW YANGZI SHIPBUILDING COMPANY LIMITED"]
+
+
+def test_parse_supply_contract():
+    d = de.parse_supply_contract(_SUPPLY)
+    assert d["amount"] == 26_825_600_000 and d["sales_pct"] == 6.7 and d["recent_sales"] == 402_396_221_904
+    assert d["counterparty"].startswith("JIANGSU")
+    s, m = de.summarize_supply("HD현대마린엔진", d)
+    assert "268억원" in s and "6.7%" in s and m == 6.7
+
+
+def test_parse_supply_missing_amount_is_not_invented():
+    s, m = de.summarize_supply("X", de.parse_supply_contract(["계약금액(원)", "-"]))
+    assert m is None and "확인 못 함" in s
+
+
+def _earn(op_vals, sales_vals=("1,082,080", "914,640", "18.3", "-", "1,053,003", "2.8", "-")):
+    return (["단위 : 백만원, %", "실적기간", "당기실적", "2026-07-01", "~", "2026-09-30", "매출액", "당해실적", *sales_vals,
+             "누계실적", "2,670,665", "-", "-", "-", "3,121,962", "-14.5", "-",
+             "영업이익", "당해실적", *op_vals, "누계실적", "368,622", "-", "-", "-", "207,265", "77.9", "-"])
+
+
+def test_parse_earnings_growth():
+    d = de.parse_earnings(_earn(("165,762", "122,719", "35.1", "-", "72,987", "127.1", "-")))
+    op = d["rows"]["영업이익"]
+    assert d["unit"] == "백만원" and op["cur"] == 165762 and op["yoy"] == 127.1 and op["qoq"] == 35.1
+    s, m = de.summarize_earnings(d)
+    assert "+127.1%" in s and m == 127.1
+    assert de.earnings_polarity(d, m) == "호재"
+
+
+def test_earnings_turn_to_loss_is_bad_even_without_growth_rate():
+    d = de.parse_earnings(_earn(("-2,137", "1,500", "-242.5", "적자전환", "3,000", "-", "적자전환")))
+    s, m = de.summarize_earnings(d)
+    assert m is None and "적자전환" in s
+    assert de.earnings_polarity(d, m) == "악재"
+
+
+def test_earnings_turn_to_profit_is_good():
+    d = de.parse_earnings(_earn(("500", "-100", "-", "흑자전환", "-300", "-", "흑자전환")))
+    assert de.earnings_polarity(d, None) == "호재"
+
+
+def test_earnings_flat_is_neutral():
+    d = de.parse_earnings(_earn(("640", "590", "9.1", "-", "633", "1.0", "-")))
+    assert de.earnings_polarity(d, 1.0) == "중립"
+
+
+def _item(nm, code="005930", no="20261022000001"):
+    return {"report_nm": nm, "stock_code": code, "corp_name": "테스트", "rcept_no": no, "rcept_dt": "20261022",
+            "corp_cls": "K"}
+
+
+def test_build_event_supply_contract_below_5pct_is_neutral():
+    toks = [t if t != "6.7" else "3.1" for t in _SUPPLY]
+    ev = de.build_event(_item("단일판매ㆍ공급계약체결"), toks)
+    assert ev["event_type"] == "공급계약" and ev["polarity"] == "중립" and ev["metric"] == 3.1
+    assert ev["market"] == "KOSDAQ" and ev["date"] == "2026-10-22"
+
+
+def test_build_event_supply_contract_large_is_positive():
+    toks = [t if t != "6.7" else "19.2" for t in _SUPPLY]
+    assert de.build_event(_item("단일판매ㆍ공급계약체결"), toks)["polarity"] == "호재"
+
+
+def test_build_event_ignores_irrelevant_and_no_stock_code():
+    assert de.build_event(_item("기업설명회(IR)개최(안내공시)")) is None
+    assert de.build_event(_item("주요사항보고서(유상증자결정)", code="")) is None
+
+
+def test_build_event_survives_parse_failure():
+    ev = de.build_event(_item("단일판매ㆍ공급계약체결"), ["엉뚱한", "토큰"])
+    assert ev["event_type"] == "공급계약" and "확인 못 함" in ev["summary"]
+
+
+# ── 스크리너 연동 ────────────────────────────────────────────────────────────
+
+def _ev(typ, pol, summary="", metric=None, date="2026-10-21"):
+    return {"event_type": typ, "polarity": pol, "summary": summary, "metric": metric, "date": date}
+
+
+def test_event_signals_only_meaningful_good_news():
+    sig = us.event_signals([_ev("자사주취득", "호재"), _ev("공급계약", "호재", "계약금액 100억원", 4.0),
+                            _ev("공급계약", "호재", "계약금액 500억원 · 최근매출액 대비 19.2%", 19.2),
+                            _ev("잠정실적", "호재", "영업이익 +127.1%"), _ev("잠정실적", "중립", "x")])
+    texts = " ".join(s["text"] for s in sig)
+    assert all(s["key"] == "공시호재" for s in sig) and len(sig) == 2          # 최대 2개
+    assert "자사주취득" in texts and "4.0" not in texts
+
+
+def test_event_warnings_dedupe_by_type():
+    w = us.event_warnings([_ev("유상증자", "악재"), _ev("유상증자", "악재"), _ev("메자닌발행", "악재"),
+                           _ev("자사주취득", "호재")])
+    assert len(w) == 2 and "유상증자" in w[0]
+
+
+def _scored_row(events, eps=1000.0):
+    d = us.parse_integration({"totalInfos": [
+        {"code": "eps", "value": f"{eps:,.0f}원"}, {"code": "bps", "value": "5,000원"},
+        {"code": "cnsPer", "value": "5.0배"}, {"code": "pbr", "value": "0.5배"},
+        {"code": "highPriceOf52Weeks", "value": "20,000"}], "industryCode": "1",
+        "consensusInfo": {"priceTargetMean": "20,000", "recommMean": "4.0"}, "dealTrendInfos": []})
+    d["events"] = events
+    return {"code": "111111", "name": "A", "market": "KOSPI", "close": 10000.0, "chg_pct": 0.0, "volume": 1.0,
+            "value_eok": 1.0, "mcap_eok": 5000.0, "detail": d}
+
+
+def test_severe_negative_event_blocks_pick_but_keeps_warning():
+    scored = us.score_all([_scored_row([_ev("횡령·배임·회계위반", "악재", "")])])
+    assert scored[0]["blocked"] is True and scored[0]["warnings"]
+    assert us.pick_from(scored) == []
+
+
+def test_mild_negative_event_warns_without_blocking():
+    scored = us.score_all([_scored_row([_ev("유상증자", "악재")])])
+    assert scored[0]["blocked"] is False and scored[0]["warnings"]
+    assert len(us.pick_from(scored)) == 1
+
+
+def test_good_event_adds_event_group():
+    base = us.score_all([_scored_row([])])[0]
+    boosted = us.score_all([_scored_row([_ev("자사주취득", "호재")])])[0]
+    assert boosted["score"] == base["score"] + 1
+
+
+def test_loss_making_stock_gets_no_event_signal():
+    assert us.score_all([_scored_row([_ev("자사주취득", "호재")], eps=-5.0)])[0]["signals"] == []
+
+
+# ── 잡 ─────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("stats,status", [
+    ({"ok": False, "errors": ["x"], "listed": 0, "relevant": 0, "new": 0, "saved": 0, "doc_try": 0, "doc_fail": 0}, "fail"),
+    ({"ok": True, "errors": [], "listed": 0, "relevant": 0, "new": 0, "saved": 0, "doc_try": 0, "doc_fail": 0}, "empty"),
+    ({"ok": True, "errors": [], "listed": 500, "relevant": 80, "new": 40, "saved": 40, "doc_try": 10, "doc_fail": 8}, "fail"),
+    ({"ok": True, "errors": [], "listed": 500, "relevant": 80, "new": 40, "saved": 40, "doc_try": 10, "doc_fail": 1}, "success"),
+])
+def test_run_daily_job_status(monkeypatch, stats, status):
+    monkeypatch.setattr(de, "collect", lambda days=3: stats)
+    assert de.run_daily_job()[0] == status
+
+
+def test_scheduler_job_skips_non_trading_day_and_survives_errors(monkeypatch):
+    import scheduler
+    rec = []
+    monkeypatch.setattr("services.job_ledger.record_job", lambda n, s, d="": rec.append((n, s)))
+    monkeypatch.setattr(scheduler, "is_krx_trading_day", lambda: False)
+    scheduler.job_dart_events()
+    monkeypatch.setattr(scheduler, "is_krx_trading_day", lambda: True)
+    monkeypatch.setattr(de, "run_daily_job", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    scheduler.job_dart_events()
+    assert rec == [("dart_events", "skipped"), ("dart_events", "fail")]
+
+
+def test_job_in_ledger_every_weekday():
+    from services import job_ledger
+    for wd in range(5):
+        assert "dart_events" in job_ledger._EXPECTED_BY_WEEKDAY[wd]
+
+
+def test_save_and_query_roundtrip():
+    from db.database import get_conn, init_db
+    from sqlalchemy import text
+    init_db()
+    with get_conn() as c:
+        c.execute(text("DELETE FROM dart_events WHERE rcept_no LIKE 'T%'"))
+    ev = {"rcept_no": "T1", "date": "2099-01-01", "stock_code": "999999", "corp_name": "T", "market": "KOSPI",
+          "report_nm": "x", "event_type": "유상증자", "polarity": "악재", "summary": "", "metric": None}
+    assert de.save_events([ev]) == 1
+    de.save_events([ev])                                         # 중복 접수번호는 무시돼야 한다
+    got = [e for e in de.recent_events(days=100000) if e["stock_code"] == "999999"]
+    assert len(got) == 1 and got[0]["event_type"] == "유상증자"
+    assert de.by_code(100000)["999999"][0]["polarity"] == "악재"
+    with get_conn() as c:
+        c.execute(text("DELETE FROM dart_events WHERE rcept_no LIKE 'T%'"))

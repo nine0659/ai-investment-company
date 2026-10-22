@@ -25,11 +25,11 @@ _KST = ZoneInfo("Asia/Seoul")
 # 2026-07-06 축소: 귀인·적중률·전략·발굴·장기분석 일시 중단 → 기대 목록에서 제거,
 # 일요일은 통합 추천 1통(weekly_midterm + weekly_us_invest 클레임으로 검증).
 _EXPECTED_BY_WEEKDAY: dict[int, list[str]] = {
-    0: ["pre_market", "daily_nav", "daily_tracker", "universe_screen", "us_universe_screen"],
-    1: ["daily_nav", "daily_tracker", "universe_screen", "us_universe_screen", "discovery_weekly"],
-    2: ["pre_market", "daily_nav", "daily_tracker", "universe_screen", "us_universe_screen"],
-    3: ["daily_nav", "daily_tracker", "universe_screen", "us_universe_screen"],
-    4: ["pre_market", "close_market", "daily_nav", "daily_tracker", "universe_screen", "us_universe_screen", "rebound_screener"],
+    0: ["pre_market", "daily_nav", "daily_tracker", "dart_events", "universe_screen", "us_universe_screen"],
+    1: ["daily_nav", "daily_tracker", "dart_events", "universe_screen", "us_universe_screen", "discovery_weekly"],
+    2: ["pre_market", "daily_nav", "daily_tracker", "dart_events", "universe_screen", "us_universe_screen"],
+    3: ["daily_nav", "daily_tracker", "dart_events", "universe_screen", "us_universe_screen"],
+    4: ["pre_market", "close_market", "daily_nav", "daily_tracker", "dart_events", "universe_screen", "us_universe_screen", "rebound_screener"],
     5: [],
     6: ["weekly_midterm", "weekly_us_invest", "backtest_snapshot"],
 }

@@ -169,11 +169,41 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
 
 # 같은 성격의 신호가 겹쳐 점수가 부풀지 않게 묶음 단위로 센다
 _GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대비저평가": "가치",
-          "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질"}
+          "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건"}
 
 
 def score(signals: list[dict]) -> int:
     return len({_GROUP[s["key"]] for s in signals})
+
+
+# 중대 악재 공시가 최근에 있는 종목은 신호가 아무리 좋아도 후보에서 뺀다 (상폐·횡령·불성실공시는 '싸 보이는 이유'일 수 있다)
+_SEVERE_EVENTS = {"상폐·부도위험", "횡령·배임·회계위반", "불성실공시"}
+
+
+def event_signals(events: list[dict]) -> list[dict]:
+    """최근 공시 사건 중 호재 신호. 수치는 공시 본문에서 코드가 뽑은 summary를 그대로 쓴다."""
+    out = []
+    for e in events or []:
+        t, m = e["event_type"], e.get("metric")
+        if t in ("자사주취득", "자사주소각", "배당결정"):
+            out.append({"key": "공시호재", "text": f"{t} 결정 ({e['date']})"})
+        elif t == "공급계약" and m is not None and m >= 10:
+            out.append({"key": "공시호재", "text": f"공급계약 {e['summary']} ({e['date']})"})
+        elif t == "잠정실적" and e["polarity"] == "호재":
+            out.append({"key": "공시호재", "text": f"잠정실적 {e['summary']} ({e['date']})"})
+    return out[:2]
+
+
+def event_warnings(events: list[dict]) -> list[str]:
+    """최근 악재성 공시 (유상증자·메자닌·감자·횡령·상폐·불성실·적자 실적). 중복 유형은 한 번만."""
+    seen, out = set(), []
+    for e in events or []:
+        if e["polarity"] != "악재" or e["event_type"] in seen:
+            continue
+        seen.add(e["event_type"])
+        extra = f" — {e['summary']}" if e.get("summary") else ""
+        out.append(f"{e['event_type']} 공시 ({e['date']}){extra}")
+    return out
 
 
 def score_all(enriched: list[dict]) -> list[dict]:
@@ -182,13 +212,17 @@ def score_all(enriched: list[dict]) -> list[dict]:
     out = []
     for r in enriched:
         sig = compute_signals(r, med)
-        out.append({**r, "signals": sig, "score": score(sig)})
+        ev = (r.get("detail") or {}).get("events") or []
+        if sig:                                            # 적자 등으로 후보 자격이 없는 종목(sig 빈 목록)엔 붙이지 않는다
+            sig = sig + event_signals(ev)
+        out.append({**r, "signals": sig, "warnings": event_warnings(ev), "score": score(sig),
+                    "blocked": any(e["event_type"] in _SEVERE_EVENTS and e["polarity"] == "악재" for e in ev)})
     return out
 
 
 def pick_from(scored: list[dict], exclude: set[str] | None = None, top: int = 20, min_score: int = 3) -> list[dict]:
     exclude = exclude or set()
-    out = [r for r in scored if r["score"] >= min_score and r["code"] not in exclude]
+    out = [r for r in scored if r["score"] >= min_score and r["code"] not in exclude and not r.get("blocked")]
     out.sort(key=lambda x: (-x["score"], -x["mcap_eok"]))
     return out[:top]
 
@@ -204,11 +238,21 @@ def run_screen(exclude: set[str] | None = None, top: int = 20, max_detail: int =
     pool.sort(key=lambda r: -r["mcap_eok"])            # 시총 큰 종목부터 상세 조회
     detail_rows = enrich(pool[:max_detail])
     got = sum(1 for r in detail_rows if r.get("detail"))
+    try:
+        from services.disclosure_events import by_code
+        events = by_code(days=7)
+    except Exception as e:
+        logger.warning("[전종목스크린] 공시 사건 조회 실패 (이 신호 없이 진행): %s", e)
+        events = {}
+    for r in detail_rows:
+        if r.get("detail"):
+            r["detail"]["events"] = events.get(r["code"], [])
     scored = score_all([r for r in detail_rows if r.get("detail")])
     return {
         "as_of": datetime.now(_KST).strftime("%Y-%m-%d %H:%M"),
         "expected": uni["expected"], "fetched": uni["fetched"], "universe_complete": uni["complete"],
         "tradable": len(pool), "detailed": got, "detail_requested": len(detail_rows),
+        "event_codes": len(events), "blocked": sum(1 for r in scored if r.get("blocked")),
         "scored": scored, "picks": pick_from(scored, exclude, top),
     }
 
@@ -227,7 +271,7 @@ def save_daily(res: dict, date: str | None = None) -> int:
             "date": date, "code": r["code"], "name": r["name"], "market": r["market"], "close": r["close"],
             "chg_pct": r["chg_pct"], "mcap_eok": r["mcap_eok"], "per": d["per"], "pbr": d["pbr"],
             "cns_per": d["cns_per"], "eps": d["eps"], "target": d["target"], "high52": d["high52"],
-            "score": r["score"], "signals": ",".join(s["key"] for s in r["signals"]),
+            "score": 0 if r.get("blocked") else r["score"],   # 중대 악재 공시 종목은 후보 조회(load_picks)에서 빠지게 0점 처리 "signals": ",".join(s["key"] for s in r["signals"]),
         })
     with get_conn() as conn:
         conn.execute(text("DELETE FROM universe_screen_daily WHERE date=:d"), {"d": date})
@@ -308,7 +352,8 @@ def format_screen(res: dict) -> str:
     lines = [f"=== 한국 전 종목 스크리닝 ({res['as_of']}) ===",
              f"전체 {res['fetched']}/{res['expected']}종목 수신"
              + ("" if res["universe_complete"] else " ⚠불완전(수신 90% 미만 — 결과 신뢰 낮음)")
-             + f" → 거래 가능 {res['tradable']}종목 → 상세 확인 {res['detailed']}/{res['detail_requested']}종목"]
+             + f" → 거래 가능 {res['tradable']}종목 → 상세 확인 {res['detailed']}/{res['detail_requested']}종목"
+             + f" · 최근 7일 공시 사건 {res.get('event_codes', 0)}종목 · 중대 악재로 제외 {res.get('blocked', 0)}종목"]
     if not res["picks"]:
         lines.append("신호가 3묶음 이상 겹치는 종목 없음")
     for p in res["picks"]:

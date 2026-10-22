@@ -572,6 +572,22 @@ universe_screen_daily = Table("universe_screen_daily", metadata,
     Column("created_at", Text,   server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# 시장 전체 DART 공시 사건(분류·세부수치 포함): 쌓아야 '최근 N일 사건'을 스크리너·발굴·브리핑이 코드로 조회한다.
+dart_events = Table("dart_events", metadata,
+    Column("id",          Integer, primary_key=True, autoincrement=True),
+    Column("rcept_no",    Text,    nullable=False, unique=True),
+    Column("date",        Text,    nullable=False),     # 접수일 YYYY-MM-DD
+    Column("stock_code",  Text,    nullable=False),
+    Column("corp_name",   Text),
+    Column("market",      Text),                         # KOSPI | KOSDAQ
+    Column("report_nm",   Text),
+    Column("event_type",  Text),                         # 자사주취득 | 공급계약 | 잠정실적 | 유상증자 | ...
+    Column("polarity",    Text),                         # 호재 | 악재 | 중립
+    Column("summary",     Text),                         # 코드가 본문에서 뽑아 계산한 한 줄 (없으면 제목만)
+    Column("metric",      Float),                        # 핵심 수치(공급계약=매출액대비%, 잠정실적=영업이익 전년동기대비%)
+    Column("created_at",  Text,    server_default=text("CURRENT_TIMESTAMP")),
+)
+
 # 미국 전 종목 일별 스크리닝 스냅샷 (한국 universe_screen_daily와 같은 목적)
 us_screen_daily = Table("us_screen_daily", metadata,
     Column("id",        Integer, primary_key=True, autoincrement=True),
