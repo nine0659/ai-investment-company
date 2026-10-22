@@ -1,7 +1,12 @@
 # AI 투자 자문 시스템 — 개발·운영 가이드
 
 전속 투자 자문 AI. 한국·미국 시장 데이터를 수집해 텔레그램으로 브리핑을 발송한다.
-사용자는 중장기 가치투자자이며, 실보유 종목 기반의 신뢰할 수 있는 조언이 목적이다.
+사용자는 중장기 가치투자자다.
+
+**목표 (2026-10-22 사용자 재정의 — 이전의 "실보유 종목 기반 조언"은 폐기)**: 매일 모든 데이터와 뉴스를 분석해
+**시장 분석 → 향후 전망 → 종목 발굴 → 투자 조언**을 전반적으로 하는, 실효성 있는 자문 에이전트.
+보유 종목은 조언을 내 계좌에 맞출 때만 쓰는 *일부*일 뿐 분석의 범위가 아니다. 방어 장치(데이터 가드·검증·중복 방지)는
+이 목표를 지키는 수단이지 목표 자체가 아니다. 데이터 출처를 계속 넓혀 분석 정확도를 높이는 것이 승인된 방향이다.
 
 ## ⚠️ 절대 원칙 5가지 (2026-07 대규모 장애 복구에서 확립 — 위반 금지)
 
@@ -48,7 +53,7 @@ db/database.py        ← SQLAlchemy 테이블 정의. DATABASE_URL=Neon Postgre
 tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지우지 마라.
 ```
 
-## 현재 스케줄 (2026-08-18 백테스트 스냅샷 추가 후 — 정기 메시지 주 6통 + 조건부 1통 + 무발송 잡)
+## 현재 스케줄 (2026-10-22 일일 발굴·공시 요약 추가 후 — 정기 메시지 주 6통 + 평일 일일 요약 5통 + 조건부 1통 + 무발송 잡)
 
 | 시각 | 잡 | 내용 |
 |---|---|---|
@@ -62,6 +67,10 @@ tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지�
 | 매일 08:05 | daily_health | 어제 잡 누락·실패 감지, 문제 시에만 경보 |
 | 매월 첫째 월 19:00 | monthly_thesis | 월간 투자관 (CEO 브리핑 근거 주입용) |
 | 평일 16:10 / 16:20 | daily_nav / daily_tracker | 무발송 데이터 수집 |
+| 평일 16:50 | dart_events | 코스피·코스닥 전체 DART 공시(주요사항·거래소공시) 분류·저장, 공급계약/잠정실적은 본문 숫자를 코드가 추출 (무발송) |
+| 평일 17:00 | universe_screen | 한국 전 종목(약 1,290개) 스크리닝 스냅샷 `universe_screen_daily` — 종목 발굴 후보 풀 (무발송) |
+| 평일 17:10 | us_universe_screen | 미국 전 종목(시총 $30억+ 약 1,600개) 스냅샷 `us_screen_daily` — SEC EDGAR 재무 + 일괄 시세 + 나스닥 애널리스트 + 내부자 매수, **약 14분 소요** (무발송) |
+| 평일 17:40 | daily_digest | **오늘의 발굴·공시 요약 1통** (2026-10-22 사용자 승인, 코드만으로 생성·LLM 없음, 내용 없으면 무발송, 오늘분 스냅샷이 한국·미국 모두 없으면 fail) |
 | 평일 16:45 (GH) | nav-tracker.yml 백업 | Render가 16:10/16:20을 놓친 날만 대신 실행 (job_runs 흔적 확인 후) |
 
 **일시 중단** (추천·거래 데이터 축적 전 공허한 리포트 방지):
@@ -465,3 +474,16 @@ python scripts/backtest_gate_check.py  # 추천/목표가/손절가 로직 변�
 python scripts/judgment_scenario_check.py  # 프롬프트·가드·그래프 배선 변경 전 판단 시나리오 체크리스트 (CI 게이트 아님, 2026-09-11 추가)
 git push origin master              # = 운영 배포 (Render 자동배포 + CI)
 ```
+
+- **[개선, 2026-10-22] 전방위 자문으로 확장 — 시장 전체 스크리닝·공시·내부자 거래.** 목표 재정의(위 참조) 후 구축.
+  ① `services/universe_screener.py`(한국 4,317종목 수신→시총 1,000억+ 약 1,290개 상세, 네이버 JSON, 신호 7종 묶음 점수·흑자 필수)
+  ② `services/us_universe_screener.py`(나스닥 공개 목록 6,956종목 → SEC EDGAR frames 일괄 재무로 ROE·이익률·PER을 **코드 계산** +
+  yfinance **일괄 시세**(52주·이평) + 나스닥 애널리스트 API(후보 250개만) + 내부자 매수). **함정: 종목별 yfinance `info`를 800~1,500회
+  호출하면 Yahoo가 401(Invalid Crumb)/IP 차단으로 62%·0%만 받았다** — 일괄 시세 다운로드와 EDGAR·나스닥으로 우회. 새 미국 데이터 소스는
+  종목별 Yahoo 호출을 늘리지 말 것. ③ `clients/sec_insider_client.py`(Form 4 분기 데이터셋, 임원·이사 공개시장 매수만, **발행사 CIK로 집계**
+  — 티커는 재사용되고 `N/A`를 쪼개면 가짜 종목이 생겼다; SEC 폴더명이 분기마다 바뀌어 페이지에서 링크를 찾는다; 분기 공개라 최근 몇 주 지연)
+  ④ `services/disclosure_events.py`(DART B·I 유형 전체 분류, 거래정지해제·파산신청기각 같은 *해소* 공시는 악재가 아님에 주의, 정정공시 제외,
+  단위 못 읽은 금액은 숨김) ⑤ `services/market_ideas.py`가 위 스냅샷을 `advisor_context`에 주입해 CEO 브리핑·봇이 같은 후보 풀을 본다
+  ⑥ `services/daily_digest.py` 평일 17:40 요약. **실수 기록: `pytest | tail`은 종료 코드를 가린다 — `set -o pipefail`로 `${PIPESTATUS[0]}`를
+  확인한 뒤에만 push할 것(2026-10-22 테스트 4건 실패 상태로 push한 사고).** 회귀 테스트: test_universe_screener, test_universe_screen_daily,
+  test_us_universe_screener, test_sec_insider, test_disclosure_events, test_market_ideas, test_daily_digest, test_us_invest_screener_link.

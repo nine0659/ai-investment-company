@@ -438,6 +438,32 @@ def job_dart_events():
         record_job("dart_events", "fail", str(e))
 
 
+def job_daily_digest():
+    """평일 17:40 — 오늘의 발굴·공시 요약 1통 (코드만으로 생성, LLM 없음). 보낼 내용이 없으면 무발송.
+
+    2026-10-22 사용자 승인으로 추가(주 6통 → 11통). 전 종목 스크리너(17:00·17:10)와 공시 수집(16:50)이 쌓은 결과를 보낸다.
+    """
+    from services.job_ledger import record_job
+    from services.report_service import claim_report_slot, release_report_slot
+    if not is_krx_trading_day():
+        record_job("daily_digest", "skipped", "KRX 비거래일")
+        return
+    date_str = datetime.now(_KST).strftime("%Y-%m-%d")
+    if not claim_report_slot(date_str, "daily_digest"):
+        logger.info("일일 요약 — 이미 다른 트리거가 선점함, 스킵")
+        return
+    try:
+        from services.daily_digest import run_daily_job
+        status, detail, sent = run_daily_job()
+        record_job("daily_digest", status, detail)
+        if status == "fail" or sent is None:
+            release_report_slot(date_str, "daily_digest")      # 무발송/실패면 수동 재실행이 가능하도록 슬롯을 돌려준다
+    except Exception as e:
+        logger.error("일일 요약 실패: %s", e)
+        record_job("daily_digest", "fail", str(e))
+        release_report_slot(date_str, "daily_digest")
+
+
 def job_universe_screen():
     """평일 17:00 — 코스피·코스닥 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
 
@@ -457,9 +483,9 @@ def job_universe_screen():
 
 
 def job_us_universe_screen():
-    """평일 17:30 — 미국 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
+    """평일 17:10 — 미국 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
 
-    17:30 KST는 미국장 마감 후라 직전 미국 거래일 종가 기준이다(미국 휴장일엔 같은 데이터가 반복될 뿐 해는 없다).
+    17:10 KST는 미국장 마감 후라 직전 미국 거래일 종가 기준이다(미국 휴장일엔 같은 데이터가 반복될 뿐 해는 없다).
     """
     from services.job_ledger import record_job
     try:
@@ -702,13 +728,23 @@ def setup_jobs():
 
     scheduler.add_job(
         job_us_universe_screen,
-        CronTrigger(day_of_week="mon-fri", hour=17, minute=30, timezone=TIMEZONE_STR),
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=10, timezone=TIMEZONE_STR),
         id="us_universe_screen",
-        name="[17:30] 미국 전 종목 스크리닝 스냅샷 (무발송)",
+        name="[17:10] 미국 전 종목 스크리닝 스냅샷 (무발송, 약 14분 소요)",
         misfire_grace_time=1800,
         coalesce=True,
     )
-    console.print("  [cyan]⏰ 평일 17:30[/cyan] 미국 전 종목 스크리닝 스냅샷 (무발송)")
+    console.print("  [cyan]⏰ 평일 17:10[/cyan] 미국 전 종목 스크리닝 스냅샷 (무발송)")
+
+    scheduler.add_job(
+        job_daily_digest,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=40, timezone=TIMEZONE_STR),
+        id="daily_digest",
+        name="[17:40] 오늘의 발굴·공시 요약 (코드 생성, 내용 없으면 무발송)",
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 평일 17:40[/cyan] 오늘의 발굴·공시 요약 (LLM 없음)")
 
     # 일일 헬스체크: 매일 08:05 — 어제 예정 잡 누락·실패 감지 (문제 있을 때만 경보)
     scheduler.add_job(

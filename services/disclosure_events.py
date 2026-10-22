@@ -122,7 +122,8 @@ def summarize_earnings(d: dict) -> tuple[str, float | None]:
     op = d["rows"].get("영업이익")
     if not op or op.get("cur") is None:
         return "영업이익 본문에서 확인 못 함", None
-    parts = [f"영업이익 {op['cur']:,.0f}{d.get('unit', '')}"]
+    # 단위를 못 읽은 공시는 금액을 빼고 증감률만 쓴다 (단위 없는 숫자는 억/백만원을 혼동시킨다 — 2026-10-22 LS마린솔루션)
+    parts = [f"영업이익 {op['cur']:,.0f}{d['unit']}"] if d.get("unit") else ["영업이익"]
     if op.get("yoy") is not None:
         parts.append(f"전년동기 대비 {op['yoy']:+.1f}%")
     elif op.get("yoy_flag") not in (None, "-"):

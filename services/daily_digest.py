@@ -1,0 +1,145 @@
+"""평일 17:40 '오늘의 발굴·공시 요약' — 코드만으로 만든 1통 (LLM 없음 → 환각 위험·비용 0).
+
+내용: ① 내 보유 종목 관련 공시 ② 어제 대비 새로 신호가 켜진 한국·미국 종목 ③ 오늘 시장 공시 하이라이트.
+스냅샷·공시 사건은 평일 16:50~17:30에 무발송 잡이 쌓은 것이고, 수치는 전부 저장된 값에서 코드가 계산한다.
+빈 날(보고할 게 없음)은 보내지 않고, 오늘분 스냅샷이 한국·미국 모두 없으면(수집 장애) 조용히 넘어가지 않고 fail로 기록한다.
+"""
+import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
+_KST = ZoneInfo("Asia/Seoul")
+_WEEK = "월화수목금토일"
+_MAX_PER_SECTION = 5
+_FIRST_DAY_TOP = 3        # 비교할 어제 스냅샷이 없으면 상위 몇 개만 보여준다 (신규라고 단정하지 않는다)
+
+
+def _pct(a, b):
+    return (a / b - 1) * 100 if a and b else None
+
+
+def _kr_line(p: dict, ev: list[dict]) -> str:
+    up, dd = _pct(p["target"], p["close"]), _pct(p["close"], p["high52"])
+    stats = [s for s in (f"목표가 대비 {up:+.0f}%" if up is not None else "",
+                         f"52주 고점 대비 {dd:.0f}%" if dd is not None else "") if s]
+    line = f" · {p['name']}({p['code']}) {p['close']:,.0f}원 · 시총 {p['mcap_eok']:,.0f}억 · 신호 {p['score']}묶음 [{p['signals']}]"
+    if stats:
+        line += " " + " · ".join(stats)
+    for e in [e for e in ev if e["polarity"] == "호재"][:1]:
+        line += f"\n     └ 공시: {e['event_type']} {e['summary'] or ''} ({e['date']})".rstrip()
+    for e in [e for e in ev if e["polarity"] == "악재"][:1]:
+        line += f"\n     └ ⚠악재 공시: {e['event_type']} ({e['date']})"
+    return line
+
+
+def _us_line(p: dict) -> str:
+    up, dd = _pct(p["target"], p["close"]), _pct(p["close"], p["high52"])
+    stats = [s for s in (f"선행PER {p['fwd_pe']:.1f}배" if p["fwd_pe"] else "",
+                         f"ROE {p['roe'] * 100:.0f}%" if p["roe"] is not None else "",
+                         f"목표가 대비 {up:+.0f}%" if up is not None else "",
+                         f"52주 고점 대비 {dd:.0f}%" if dd is not None else "") if s]
+    return (f" · {p['name']}({p['code']}) ${p['close']:,.2f} · 시총 ${p['mcap_usd'] / 1e9:,.1f}B · {p['sector']} · "
+            f"신호 {p['score']}묶음 [{p['signals']}]" + (" " + " · ".join(stats) if stats else ""))
+
+
+def holdings_events(codes: set[str], days: int = 2) -> list[str]:
+    from services.disclosure_events import recent_events
+    out = []
+    for e in recent_events(days=days, codes=codes):
+        if e["event_type"] == "위험해소·절차":
+            continue
+        tag = {"호재": "호재", "악재": "⚠악재"}.get(e["polarity"], "참고")
+        out.append(f" · {e['corp_name']}({e['stock_code']}) [{tag}] {e['event_type']}"
+                   f"{(' — ' + e['summary']) if e['summary'] else ''} ({e['date']})")
+    return out
+
+
+def build(today: str | None = None, holding_codes: set[str] | None = None) -> dict:
+    """{text: str|None, kr_ok, us_ok, counts:{...}}. text가 None이면 보낼 내용이 없는 것."""
+    from services import market_ideas as mi
+    from services.disclosure_events import by_code
+    today = today or datetime.now(_KST).strftime("%Y-%m-%d")
+    holding_codes = holding_codes or set()
+
+    kr_date, kr_all, kr_prev = mi.kr_picks(set(), n=60)
+    us_date, us_all, us_prev = mi.us_picks(set(), n=60)
+    kr_ok, us_ok = kr_date == today, us_date == today
+    sections: list[str] = []
+    counts = {"holdings": 0, "kr_new": 0, "us_new": 0, "events": 0}
+
+    hold = holdings_events(holding_codes) if holding_codes else []
+    if hold:
+        counts["holdings"] = len(hold)
+        sections.append("⚠ 내 보유 종목 공시 (최근 2일)\n" + "\n".join(hold))
+
+    if kr_ok and kr_all:
+        evs = by_code(days=7)
+        mine = [p for p in kr_all if p["code"] not in holding_codes]
+        if kr_prev:
+            new = [p for p in mine if p["code"] not in kr_prev][:_MAX_PER_SECTION]
+            head = "🇰🇷 어제 대비 새로 신호가 켜진 종목"
+        else:
+            new = mine[:_FIRST_DAY_TOP]
+            head = "🇰🇷 오늘의 상위 후보 (비교할 어제 기록이 아직 없어 '신규' 표시는 내일부터)"
+        if new:
+            counts["kr_new"] = len(new)
+            sections.append(head + "\n" + "\n".join(_kr_line(p, evs.get(p["code"], [])) for p in new))
+    elif not kr_ok:
+        sections.append("🇰🇷 오늘분 한국 스크리닝 없음 (수집 지연 — 내일 헬스체크 확인)")
+
+    if us_ok and us_all:
+        mine = [p for p in us_all if p["code"] not in holding_codes]
+        if us_prev:
+            new = [p for p in mine if p["code"] not in us_prev][:_MAX_PER_SECTION]
+            head = "🇺🇸 어제 대비 새로 신호가 켜진 종목"
+        else:
+            new = mine[:_FIRST_DAY_TOP]
+            head = "🇺🇸 오늘의 상위 후보 (비교할 어제 기록이 아직 없어 '신규' 표시는 내일부터)"
+        if new:
+            counts["us_new"] = len(new)
+            sections.append(head + "\n" + "\n".join(_us_line(p) for p in new))
+    elif not us_ok:
+        sections.append("🇺🇸 오늘분 미국 스크리닝 없음 (수집 지연 — 내일 헬스체크 확인)")
+
+    try:
+        hl = mi.event_highlights(days=1, n=6)
+    except Exception as e:
+        logger.warning("[일일요약] 공시 하이라이트 실패 (건너뜀): %s", e)
+        hl = []
+    if hl:
+        counts["events"] = len(hl)
+        sections.append("📰 오늘 시장 공시 하이라이트 (시총 3,000억+, 본문 숫자는 코드가 추출)\n" + "\n".join(hl))
+
+    informative = counts["holdings"] + counts["kr_new"] + counts["us_new"] + counts["events"]
+    if not informative:
+        return {"text": None, "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
+    now = datetime.now(_KST)
+    header = (f"📌 오늘의 발굴·공시 요약 ({now.strftime('%m/%d')} {_WEEK[now.weekday()]})\n"
+              "코드 계산 · LLM 미사용 · 매수 권고가 아닌 '볼 만한 후보' 목록입니다.")
+    return {"text": header + "\n\n" + "\n\n".join(sections), "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
+
+
+def run_daily_job(send_fn=None, holding_codes: set[str] | None = None) -> tuple[str, str, str | None]:
+    """(status, detail, 발송한 본문). 오늘분 스냅샷이 둘 다 없으면 fail, 보낼 내용이 없으면 success('무발송')."""
+    if holding_codes is None:
+        try:
+            from services.portfolio_service import get_portfolio
+            holding_codes = {p["code"] for p in get_portfolio()}
+        except Exception as e:
+            logger.warning("[일일요약] 보유 종목 조회 실패 (보유 공시 섹션 없이 진행): %s", e)
+            holding_codes = set()
+    res = build(holding_codes=holding_codes)
+    if not res["kr_ok"] and not res["us_ok"]:
+        return "fail", "오늘분 한국·미국 스냅샷이 모두 없음 (스크리너 잡 확인 필요)", None
+    if res["text"] is None:
+        return "success", "보고할 내용 없음 — 무발송", None
+    if send_fn is None:
+        from clients.telegram_client import send_message as send_fn
+    ok = send_fn(res["text"])
+    c = res["counts"]
+    detail = (f"보유공시 {c['holdings']} · 한국 {c['kr_new']} · 미국 {c['us_new']} · 하이라이트 {c['events']}"
+              + ("" if res["kr_ok"] and res["us_ok"] else " · ⚠일부 스냅샷 없음"))
+    if not ok:
+        return "fail", "텔레그램 발송 실패 — " + detail, None
+    return "success", detail, res["text"]

@@ -213,3 +213,9 @@ def test_save_and_query_roundtrip():
     assert de.by_code(100000)["999999"][0]["polarity"] == "악재"
     with get_conn() as c:
         c.execute(text("DELETE FROM dart_events WHERE rcept_no LIKE 'T%'"))
+
+
+def test_earnings_without_unit_omits_amount():
+    toks = [t for t in _earn(("6,872", "6,120", "12.3", "-", "2,054", "234.6", "-")) if not t.startswith("단위")]
+    s, m = de.summarize_earnings(de.parse_earnings(toks))
+    assert "6,872" not in s and "+234.6%" in s and m == 234.6
