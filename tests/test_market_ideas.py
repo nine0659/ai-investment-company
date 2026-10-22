@@ -132,3 +132,13 @@ def test_advisor_context_survives_block_failure(monkeypatch):
     res = advisor_context.build({}, {}, "pre_market")
     assert isinstance(res["blocks"], list) and not any("TEST-BLOCK" in b for b in res["blocks"])
     advisor_context._CACHE.clear()
+
+
+def test_highlights_mark_validated_event_types(db):
+    _kr(_d(0), "111111", mcap=50000.0, name="대형A")
+    _ev("V1", "111111", "자사주취득", "호재", name="대형A")
+    _ev("V2", "111111", "공급계약", "호재", "계약금액 1000억원", 15.0, name="대형A")
+    hl = "\n".join(mi.event_highlights())
+    line_buyback = [l for l in hl.splitlines() if "자사주취득" in l][0]
+    line_contract = [l for l in hl.splitlines() if "공급계약" in l][0]
+    assert "✔호재(과거 검증)" in line_buyback and "✔" not in line_contract

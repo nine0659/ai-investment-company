@@ -119,13 +119,15 @@ def _ev(typ, pol, summary="", metric=None, date="2026-10-21"):
     return {"event_type": typ, "polarity": pol, "summary": summary, "metric": metric, "date": date}
 
 
-def test_event_signals_only_meaningful_good_news():
-    sig = us.event_signals([_ev("자사주취득", "호재"), _ev("공급계약", "호재", "계약금액 100억원", 4.0),
-                            _ev("공급계약", "호재", "계약금액 500억원 · 최근매출액 대비 19.2%", 19.2),
+def test_event_signals_scored_only_for_validated_events():
+    """과거 검증(scripts/backtest_event_signals.py dart): 자사주 취득·소각·배당만 20일 +1.62%p(t=+3.2)로 통과 → 점수 신호.
+    대형 공급계약·잠정실적 호조는 미검증 → '(참고·미검증)' info 신호로만 표시하고 점수에서 제외."""
+    sig = us.event_signals([_ev("공급계약", "호재", "계약금액 500억원 · 최근매출액 대비 19.2%", 19.2),
+                            _ev("자사주취득", "호재"), _ev("공급계약", "호재", "계약금액 100억원", 4.0),
                             _ev("잠정실적", "호재", "영업이익 +127.1%"), _ev("잠정실적", "중립", "x")])
-    texts = " ".join(s["text"] for s in sig)
-    assert all(s["key"] == "공시호재" for s in sig) and len(sig) == 2          # 최대 2개
-    assert "자사주취득" in texts and "4.0" not in texts
+    assert len(sig) == 2 and all(s["key"] == "공시호재" for s in sig)          # 최대 2개
+    assert not sig[0].get("info") and "자사주취득" in sig[0]["text"]            # 검증된 것이 먼저
+    assert sig[1]["info"] is True and "(참고·미검증)" in sig[1]["text"] and "4.0" not in sig[1]["text"]
 
 
 def test_event_warnings_dedupe_by_type():
@@ -157,10 +159,13 @@ def test_mild_negative_event_warns_without_blocking():
     assert len(us.pick_from(scored)) == 1
 
 
-def test_good_event_adds_event_group():
+def test_validated_event_adds_event_group_but_unvalidated_does_not():
     base = us.score_all([_scored_row([])])[0]
     boosted = us.score_all([_scored_row([_ev("자사주취득", "호재")])])[0]
     assert boosted["score"] == base["score"] + 1
+    contract = us.score_all([_scored_row([_ev("공급계약", "호재", "계약금액 500억원", 19.2)])])[0]
+    assert contract["score"] == base["score"]                                     # 미검증 사건은 점수에 영향 없음
+    assert any(s["key"] == "공시호재" and s.get("info") for s in contract["signals"])
 
 
 def test_loss_making_stock_gets_no_event_signal():

@@ -237,7 +237,8 @@ _GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대�
 
 
 def score(signals: list[dict]) -> int:
-    return len({_GROUP[s["key"]] for s in signals})
+    """신호 묶음 수. 참고용(info) 신호는 세지 않는다."""
+    return len({_GROUP[s["key"]] for s in signals if not s.get("info")})
 
 
 # 중대 악재 공시가 최근에 있는 종목은 신호가 아무리 좋아도 후보에서 뺀다 (상폐·횡령·불성실공시는 '싸 보이는 이유'일 수 있다)
@@ -258,16 +259,22 @@ def trend_warnings(r: dict) -> list[str]:
 
 
 def event_signals(events: list[dict]) -> list[dict]:
-    """최근 공시 사건 중 호재 신호. 수치는 공시 본문에서 코드가 뽑은 summary를 그대로 쓴다."""
+    """최근 공시 사건 중 호재 신호. 수치는 공시 본문에서 코드가 뽑은 summary를 그대로 쓴다.
+
+    점수에 넣는 건 **과거 검증을 통과한 것만**이다: 자사주 취득·소각·배당 결정은 접수일 다음 거래일 이후 20일 중앙 초과수익
+    +1.62%p, 이긴 시점 64%(t=+3.2, 2024-10~2026-10 한국, scripts/backtest_event_signals.py dart).
+    대형 공급계약·잠정실적 호조는 아직 검증 전이라 '(참고)'로만 표시하고 점수에서 뺀다.
+    """
     out = []
     for e in events or []:
         t, m = e["event_type"], e.get("metric")
         if t in ("자사주취득", "자사주소각", "배당결정"):
             out.append({"key": "공시호재", "text": f"{t} 결정 ({e['date']})"})
         elif t == "공급계약" and m is not None and m >= 10:
-            out.append({"key": "공시호재", "text": f"공급계약 {e['summary']} ({e['date']})"})
+            out.append({"key": "공시호재", "info": True, "text": f"(참고·미검증) 공급계약 {e['summary']} ({e['date']})"})
         elif t == "잠정실적" and e["polarity"] == "호재":
-            out.append({"key": "공시호재", "text": f"잠정실적 {e['summary']} ({e['date']})"})
+            out.append({"key": "공시호재", "info": True, "text": f"(참고·미검증) 잠정실적 {e['summary']} ({e['date']})"})
+    out.sort(key=lambda x: bool(x.get("info")))              # 검증된 것 먼저
     return out[:2]
 
 
@@ -368,7 +375,7 @@ def save_daily(res: dict, date: str | None = None) -> int:
             "cns_per": d["cns_per"], "eps": d["eps"], "target": d["target"], "high52": d["high52"],
             # 중대 악재 공시 종목은 후보 조회(load_picks)에서 빠지게 0점으로 저장
             "score": 0 if r.get("blocked") else r["score"],
-            "signals": ",".join(s["key"] for s in r["signals"]),
+            "signals": ",".join(s["key"] + ("(참고)" if s.get("info") else "") for s in r["signals"]),
         })
     with get_conn() as conn:
         conn.execute(text("DELETE FROM universe_screen_daily WHERE date=:d"), {"d": date})
