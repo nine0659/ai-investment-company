@@ -207,11 +207,13 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
     close = r["close"]
     cp = d["cns_per"]
     if d["bps"] and d["bps"] > 0 and d["eps"] / d["bps"] >= 0.1:
-        sig.append({"key": "수익성", "text": f"ROE 약 {d['eps'] / d['bps'] * 100:.0f}% (EPS/BPS)"})
+        # 참고용(info): ROE 10%+ 단독은 한국 17개월 검증에서 효과 없음(60일 +0.13%p, t=+0.8) → 점수 제외 (scripts/backtest_fundamental_signals.py)
+        sig.append({"key": "수익성", "info": True, "text": f"(참고) ROE 약 {d['eps'] / d['bps'] * 100:.0f}% (EPS/BPS)"})
     if cp and 0 < cp <= 10:
-        sig.append({"key": "저평가", "text": f"추정PER {cp:.1f}배"})
+        # ✔검증: 확정 실적 PER 10배 이하는 한국 17개월 검증에서 60일 뒤 +2.14%p, 이긴 시점 78%(t=+3.4). (여기 PER은 컨센서스 추정 기준이라 근사)
+        sig.append({"key": "저평가", "validated": True, "text": f"추정PER {cp:.1f}배"})
     if d["pbr"] and 0 < d["pbr"] < 1:
-        sig.append({"key": "자산대비저평가", "text": f"PBR {d['pbr']:.2f}배"})
+        sig.append({"key": "자산대비저평가", "validated": True, "text": f"PBR {d['pbr']:.2f}배"})   # ✔ PBR<1: 60일 +1.21%p(t=+2.3), <0.5: +1.87%p(t=+2.7)
     med = ind_median.get(d["industry"])
     if cp and med and 0 < cp <= med * 0.7:
         sig.append({"key": "업종대비저평가", "text": f"추정PER {cp:.1f}배 vs 업종 중앙 {med:.1f}배"})
@@ -239,6 +241,21 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
 # 같은 성격의 신호가 겹쳐 점수가 부풀지 않게 묶음 단위로 센다
 _GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대비저평가": "가치",
           "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건"}
+
+
+def validated_count(signals: list[dict]) -> int:
+    """과거 검증을 통과한(validated) 신호의 묶음 수 (참고용 info 신호는 제외)."""
+    return len({_GROUP[x["key"]] for x in signals if x.get("validated") and not x.get("info")})
+
+
+def validated_groups_in(signals_str: str | None) -> int:
+    """저장된 신호 문자열('저평가✔,공시호재✔,수익성(참고)')에서 검증 통과 묶음 수."""
+    keys = [k.split("(")[0].rstrip("✔") for k in (signals_str or "").split(",") if "✔" in k and "(참고" not in k]
+    return len({_GROUP[k] for k in keys if k in _GROUP})
+
+
+def signal_label(sig: dict) -> str:
+    return sig["key"] + ("✔" if sig.get("validated") and not sig.get("info") else "") + ("(참고)" if sig.get("info") else "")
 
 
 def score(signals: list[dict]) -> int:
@@ -274,7 +291,7 @@ def event_signals(events: list[dict]) -> list[dict]:
     for e in events or []:
         t, m = e["event_type"], e.get("metric")
         if t in ("자사주취득", "자사주소각", "배당결정"):
-            out.append({"key": "공시호재", "text": f"{t} 결정 ({e['date']})"})
+            out.append({"key": "공시호재", "validated": True, "text": f"{t} 결정 ({e['date']})"})
         elif t == "공급계약" and m is not None and m >= 10:
             out.append({"key": "공시호재", "info": True, "text": f"(참고·미검증) 공급계약 {e['summary']} ({e['date']})"})
     out.sort(key=lambda x: bool(x.get("info")))              # 검증된 것 먼저
@@ -310,7 +327,7 @@ def score_all(enriched: list[dict]) -> list[dict]:
 def pick_from(scored: list[dict], exclude: set[str] | None = None, top: int = 20, min_score: int = 3) -> list[dict]:
     exclude = exclude or set()
     out = [r for r in scored if r["score"] >= min_score and r["code"] not in exclude and not r.get("blocked")]
-    out.sort(key=lambda x: (-x["score"], -x["mcap_eok"]))
+    out.sort(key=lambda x: (-validated_count(x["signals"]), -x["score"], -x["mcap_eok"]))     # 검증된 신호가 많은 종목 먼저
     return out[:top]
 
 
@@ -379,7 +396,7 @@ def save_daily(res: dict, date: str | None = None) -> int:
             "cns_per": d["cns_per"], "eps": d["eps"], "target": d["target"], "high52": d["high52"],
             # 중대 악재 공시 종목은 후보 조회(load_picks)에서 빠지게 0점으로 저장
             "score": 0 if r.get("blocked") else r["score"],
-            "signals": ",".join(s["key"] + ("(참고)" if s.get("info") else "") for s in r["signals"]),
+            "signals": ",".join(signal_label(s) for s in r["signals"]),
             # 추정치·의견 시계열 (이익 리비전 등 앞으로 검증할 신호의 재료)
             "cns_eps": d.get("cns_eps"), "recomm": d.get("recomm"), "bps": d.get("bps"),
             "foreign_rate": d.get("foreign_rate"), "ret_1m": h.get("ret_1m"), "ret_3m": h.get("ret_3m"),
@@ -408,9 +425,10 @@ def load_picks(date: str | None = None, min_score: int = 3, limit: int = 20) -> 
             rows = conn.execute(text(
                 "SELECT date, code, name, market, close, chg_pct, mcap_eok, score, signals FROM universe_screen_daily "
                 "WHERE date=:d AND score>=:m ORDER BY score DESC, mcap_eok DESC LIMIT :n"),
-                {"d": date, "m": min_score, "n": limit}).fetchall()
-        return [dict(zip(("date", "code", "name", "market", "close", "chg_pct", "mcap_eok", "score", "signals"), r))
-                for r in rows]
+                {"d": date, "m": min_score, "n": max(limit * 5, 100)}).fetchall()
+        picks = [dict(zip(("date", "code", "name", "market", "close", "chg_pct", "mcap_eok", "score", "signals"), r)) for r in rows]
+        picks.sort(key=lambda x: (-validated_groups_in(x["signals"]), -x["score"], -x["mcap_eok"]))   # 검증된 신호가 많은 종목 먼저
+        return picks[:limit]
     except Exception as e:
         logger.warning("[전종목스크린] 스냅샷 조회 실패: %s", e)
         return []
@@ -490,7 +508,7 @@ def format_screen(res: dict) -> str:
         chg = f"{p['chg_pct']:+.2f}%" if p["chg_pct"] is not None else "N/A"
         lines.append(f"\n{p['name']}({p['code']}) [{p['market']}] {p['close']:,.0f}원 · 시총 {p['mcap_eok']:,.0f}억 · 오늘 {chg}  [신호 {p['score']}묶음]")
         for s in p["signals"]:
-            lines.append(f"  · {s['key']}: {s['text']}")
+            lines.append(f"  · {signal_label(s)}: {s['text']}")
     return "\n".join(lines)
 
 

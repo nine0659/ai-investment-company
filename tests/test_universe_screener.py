@@ -167,3 +167,76 @@ def test_job_fails_when_history_mostly_missing(monkeypatch):
     monkeypatch.setattr(us, "run_screen", lambda: {**base, "hist_ok": 100, "hist_requested": 1280})
     st, detail = us.run_daily_job()
     assert st == "fail" and "추세 이력" in detail
+
+
+# ── 검증 통과 신호(✔) 표시·정렬 (2026-10-22 한국 재무 신호 17개월 검증: scripts/backtest_fundamental_signals.py) ────────────
+
+def _vrow(code, cns_per=None, pbr=None, eps=1000.0, bps=5000.0, mcap=5000.0, target=None, recomm=None):
+    infos = [{"code": "eps", "value": f"{eps:,.0f}원"}, {"code": "bps", "value": f"{bps:,.0f}원"}]
+    if cns_per:
+        infos.append({"code": "cnsPer", "value": f"{cns_per}배"})
+    if pbr:
+        infos.append({"code": "pbr", "value": f"{pbr}배"})
+    d = us.parse_integration({"totalInfos": infos, "industryCode": "1",
+                              "consensusInfo": {"priceTargetMean": f"{target:,.0f}" if target else None,
+                                                "recommMean": f"{recomm}" if recomm else None},
+                              "dealTrendInfos": []})
+    return {"code": code, "name": code, "market": "KOSPI", "close": 10000.0, "chg_pct": 0.0, "volume": 1.0,
+            "value_eok": 1.0, "mcap_eok": mcap, "detail": d}
+
+
+def test_value_signals_are_marked_validated_and_roe_is_info_only():
+    sig = us.compute_signals(_vrow("A", cns_per=6.0, pbr=0.8), {})
+    by = {s["key"]: s for s in sig}
+    assert by["저평가"]["validated"] is True and by["자산대비저평가"]["validated"] is True
+    assert by["수익성"].get("info") is True and not by["수익성"].get("validated")
+    assert us.score(sig) == 1                                      # 수익성은 점수 제외, 저평가·자산대비는 같은 '가치' 묶음
+    assert us.validated_count(sig) == 1
+
+
+def test_signal_labels_and_saved_string_roundtrip():
+    sig = us.compute_signals(_vrow("A", cns_per=6.0, pbr=0.8), {})
+    labels = [us.signal_label(s) for s in sig]
+    assert "저평가✔" in labels and "자산대비저평가✔" in labels and "수익성(참고)" in labels
+    assert us.validated_groups_in(",".join(labels)) == 1           # 가치 묶음 하나
+    assert us.validated_groups_in("수익성(참고),컨센서스여력") == 0
+    assert us.validated_groups_in("저평가✔,공시호재✔,쌍끌이매수") == 2
+    assert us.validated_groups_in(None) == 0
+
+
+def test_event_buyback_is_validated_but_contract_is_info():
+    ev = [{"event_type": "자사주취득", "polarity": "호재", "summary": "", "metric": None, "date": "2026-10-21"},
+          {"event_type": "공급계약", "polarity": "호재", "summary": "계약금액 500억원", "metric": 15.0, "date": "2026-10-21"}]
+    sig = us.event_signals(ev)
+    assert sig[0]["validated"] is True and sig[1].get("info") is True and not sig[1].get("validated")
+
+
+def test_picks_ordered_by_validated_signals_before_plain_score():
+    """같은 점수라도 검증된 신호(저평가·자산대비·공시호재)가 있는 종목이 먼저 — 시총이 작아도."""
+    def scored(code, validated_keys, mcap):
+        sig = [{"key": k, "validated": True, "text": ""} for k in validated_keys] + [{"key": "고점대비낙폭", "text": ""},
+                                                                                     {"key": "쌍끌이매수", "text": ""}]
+        return {"code": code, "name": code, "market": "KOSPI", "close": 1.0, "chg_pct": 0.0, "mcap_eok": mcap, "detail": {},
+                "signals": sig, "score": us.score(sig), "warnings": []}
+    a = scored("A", [], 90000.0)                                   # 검증 0, 큰 시총
+    b = scored("B", ["저평가"], 2000.0)                             # 검증 1, 작은 시총
+    c = scored("C", ["저평가"], 5000.0)
+    b["score"] = c["score"] = a["score"] = 3
+    out = us.pick_from([a, b, c])
+    assert [p["code"] for p in out] == ["C", "B", "A"]
+
+
+def test_load_picks_sorts_by_validated_groups():
+    from db.database import get_conn, init_db
+    from sqlalchemy import text
+    init_db()
+    with get_conn() as c:
+        c.execute(text("DELETE FROM universe_screen_daily"))
+        for code, sig, mcap in (("111111", "수익성(참고),쌍끌이매수,고점대비낙폭", 90000), ("222222", "저평가✔,쌍끌이매수,고점대비낙폭", 1500)):
+            c.execute(text("INSERT INTO universe_screen_daily (date, code, name, market, close, mcap_eok, score, signals) "
+                           "VALUES ('2026-10-22', :c, :c, 'KOSPI', 100, :m, 3, :s)"), {"c": code, "m": mcap, "s": sig})
+    try:
+        assert [p["code"] for p in us.load_picks(limit=5)] == ["222222", "111111"]
+    finally:
+        with get_conn() as c:
+            c.execute(text("DELETE FROM universe_screen_daily"))

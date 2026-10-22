@@ -15,7 +15,8 @@ _VALIDATED_GOOD = {"자사주취득", "자사주소각", "배당결정"}
 _HEADER = ("[🔭 시장 전체 스크리닝 — 코드 계산. 보유 여부와 무관한 '관심 후보'이며 매수 권고가 아니다. "
            "이 블록의 수치만 인용하고 없는 수치는 만들지 마라. 신규 편입을 판단할 땐 이 후보 풀을 먼저 검토하고, "
            "목록 밖 종목을 편입하려면 근거를 따로 제시하라. 후보를 언급할 땐 ⚠경고와 반증 조건도 함께 적어라. "
-           "이 신호들이 시장 초과수익을 낸다는 검증은 아직 없다(가격 추세 신호는 과거 2년 검증에서 효과가 없어 점수에서 제외) — "
+           "✔ 표시 신호(한국 저PER·저PBR·자사주/소각/배당 공시)만 과거 검증을 통과했다(약 1.5~2년 한국 기준 — 시기 특유일 수 있음). "
+           "표시 없는 신호와 미국 신호는 시장 초과수익을 낸다는 검증은 아직 없다(가격 추세 신호는 효과가 없어 점수에서 제외) — "
            "후보는 '탐색 출발점'이지 예측이 아니므로 확신도를 높이는 근거로 쓰지 마라]")
 
 
@@ -46,11 +47,14 @@ def kr_picks(exclude: set[str], n: int = 5) -> tuple[str | None, list[dict], set
     if not dates or not _fresh(dates[0]):
         return None, [], set()
     rows = _query("SELECT code, name, market, close, chg_pct, mcap_eok, per, pbr, cns_per, eps, target, high52, score, signals "
-                  "FROM universe_screen_daily WHERE date=:d AND score>=3 ORDER BY score DESC, mcap_eok DESC LIMIT 60",
+                  "FROM universe_screen_daily WHERE date=:d AND score>=3 ORDER BY score DESC, mcap_eok DESC LIMIT 300",
                   {"d": dates[0]})
     keys = ("code", "name", "market", "close", "chg_pct", "mcap_eok", "per", "pbr", "cns_per", "eps", "target",
             "high52", "score", "signals")
-    picks = [dict(zip(keys, r)) for r in rows if r[0] not in exclude][:n]
+    from services.universe_screener import validated_groups_in
+    picks = [dict(zip(keys, r)) for r in rows if r[0] not in exclude]
+    picks.sort(key=lambda x: (-validated_groups_in(x["signals"]), -x["score"], -x["mcap_eok"]))     # 검증된 신호가 많은 종목 먼저
+    picks = picks[:n]
     prev: set[str] = set()
     if len(dates) > 1:
         prev = {r[0] for r in _query("SELECT code FROM universe_screen_daily WHERE date=:d AND score>=3", {"d": dates[1]})}
@@ -186,7 +190,7 @@ def build_block(exclude_codes: set[str] | None = None, for_user: bool = False) -
         if picks:
             from services.disclosure_events import by_code
             evs = by_code(days=7)
-            parts.append(f"한국 전 종목 {d} 기준 상위 후보 (코스피·코스닥 약 1,280종목 스크리닝, 신호가 3묶음 이상 겹친 종목):")
+            parts.append(f"한국 전 종목 {d} 기준 상위 후보 (코스피·코스닥 약 1,280종목 스크리닝, 신호 3묶음 이상, ✔=과거 검증 통과 신호가 많은 순):")
             parts += [_kr_line(p, evs.get(p["code"], []), bool(prev) and p["code"] not in prev) for p in picks]
     except Exception as e:
         logger.warning("[시장아이디어] 한국 후보 실패 (건너뜀): %s", e)

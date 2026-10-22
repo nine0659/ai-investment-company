@@ -9,7 +9,7 @@ import re
 logger = logging.getLogger(__name__)
 
 _SIGNAL_HELP = {
-    "수익성": "자기자본 대비 이익이 높음", "저평가": "추정PER이 낮음", "자산대비저평가": "PBR 1배 미만",
+    "수익성": "자기자본 대비 이익이 높음 (참고용 — ROE 단독은 과거 검증에서 효과 없어 점수 제외)", "저평가": "추정PER이 낮음", "자산대비저평가": "PBR 1배 미만",
     "업종대비저평가": "업종 중앙값보다 PER이 크게 낮음", "이익증가기대": "추정이익이 현재보다 20%+ 증가",
     "컨센서스여력": "애널리스트 평균 목표가 대비 여력 20%+", "고점대비낙폭": "52주 고점 대비 30%+ 하락",
     "쌍끌이매수": "최근 3일 중 외국인·기관이 모두 2일+ 순매수", "공시호재": "최근 호재성 공시",
@@ -30,7 +30,14 @@ def _pct(a, b):
 
 
 def _signal_lines(signals: str) -> list[str]:
-    return [f"   · {k}: {_SIGNAL_HELP.get(k.replace('(참고)', ''), '')}".rstrip(": ") for k in (signals or "").split(",") if k]
+    lines = []
+    for k in (signals or "").split(","):
+        if not k:
+            continue
+        base = k.replace("(참고)", "").replace("✔", "")
+        mark = "  ✔과거 검증 통과" if "✔" in k else ""
+        lines.append(f"   · {base}: {_SIGNAL_HELP.get(base, '')}{mark}".rstrip(": "))
+    return lines
 
 
 def _history(table: str, code: str) -> str:

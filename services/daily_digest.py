@@ -171,7 +171,8 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
     now = datetime.now(_KST)
     header = (f"📌 오늘의 발굴·공시 요약 ({now.strftime('%m/%d')} {_WEEK[now.weekday()]})\n"
               "코드 계산 · LLM 미사용 · 매수 권고가 아닌 '볼 만한 후보' 목록입니다. 📰는 기사 제목 원문이며 코드가 판단하지 않았습니다.\n"
-              "※ 이 신호들이 시장 초과수익을 낸다는 검증은 아직 없습니다(가격 추세 신호는 과거 2년 검증에서 효과가 없어 점수에서 뺐고, "
+              "※ ✔ 표시 신호만 과거 검증을 통과했습니다(한국 저PER·저PBR·자사주/소각/배당 공시 — 약 1.5~2년 한국 시장 기준이라 시기 특유의 "
+              "효과일 수 있음). 표시 없는 신호와 미국 신호는 시장 초과수익을 낸다는 검증은 아직 없습니다(가격 추세 신호는 효과가 없어 점수에서 뺐고, "
               "금요일 성적표가 후보의 실제 성과를 쌓아 검증합니다). 후보 탐색용이지 예측이 아닙니다.")
     return {"text": header + "\n\n" + "\n\n".join(sections), "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
 
