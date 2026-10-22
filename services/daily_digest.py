@@ -122,7 +122,17 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
         sections.append("🇺🇸 오늘분 미국 스크리닝 없음 (수집 지연 — 내일 헬스체크 확인)")
 
     try:
-        hl = mi.event_highlights(days=1, n=6)
+        ve = mi.validated_events(days=3)
+    except Exception as e:
+        logger.warning("[일일요약] 검증 통과 공시 실패 (건너뜀): %s", e)
+        ve = []
+    if ve:
+        counts["validated"] = len(ve)
+        sections.append("✔ 과거 검증을 통과한 공시 — 자사주 취득·소각·배당 결정 (최근 3일, 시총 1,000억+)\n"
+                        "  (한국 2년 검증: 공시 다음 거래일부터 20일 뒤 전 종목 중앙값 대비 +1.6%p, 이긴 시점 64% — 방향성 참고)\n"
+                        + "\n".join(ve))
+    try:
+        hl = mi.event_highlights(days=1, n=6, skip_types=mi._VALIDATED_GOOD)
     except Exception as e:
         logger.warning("[일일요약] 공시 하이라이트 실패 (건너뜀): %s", e)
         hl = []
@@ -153,7 +163,7 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
             logger.warning("[일일요약] 성적표 실패 (건너뜀): %s", e)
 
     informative = (counts["holdings"] + counts["kr_new"] + counts["us_new"] + counts["events"]
-                   + counts.get("board", 0))
+                   + counts.get("board", 0) + counts.get("validated", 0))
     if not informative:
         return {"text": None, "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
     now = datetime.now(_KST)

@@ -307,3 +307,29 @@ def test_digest_states_signals_are_not_validated(db):
 def test_llm_block_header_warns_against_overconfidence():
     from services import market_ideas as mi
     assert "검증은 아직 없다" in mi._HEADER and "확신도를 높이는 근거로 쓰지 마라" in mi._HEADER
+
+
+def test_digest_validated_events_section_lists_buyback_regardless_of_screener(db):
+    """과거 검증을 통과한 사건(자사주·소각·배당)은 스크리너 후보가 아니어도 전용 섹션에 나온다."""
+    _kr(_d(1), "111111"); _kr(_d(0), "111111", mcap=50000.0)          # 후보 아님(어제와 동일) + 시총 큰 종목
+    with get_conn() as c:
+        c.execute(text("INSERT INTO universe_screen_daily (date, code, name, market, close, mcap_eok, score, signals) "
+                       "VALUES (:d, '777777', '비후보', 'KOSPI', 100, 2000, 0, '')"), {"d": _d(0)})
+    _ev("VA1", "777777", "자사주취득", "호재")
+    _ev("VA2", "777777", "자사주취득", "호재")                          # 같은 종목·유형 중복은 한 번만
+    _ev("VA3", "111111", "공급계약", "호재", "계약금액 500억원", 15.0)   # 미검증 유형은 일반 하이라이트로
+    _us(_d(1), "AAA"); _us(_d(0), "AAA")
+    r = dd.build()
+    t = r["text"]
+    assert "✔ 과거 검증을 통과한 공시" in t and "회사(777777)" in t           # 공시의 회사명(corp_name)으로 표시된다
+    assert t.count("회사(777777)") == 1
+    assert r["counts"]["validated"] == 1
+    assert "공급계약" in t.split("📰 오늘 시장 공시 하이라이트")[1]
+
+
+def test_digest_highlights_skip_validated_types(db):
+    _kr(_d(0), "111111", mcap=50000.0)
+    _ev("VB1", "111111", "자사주소각", "호재")
+    _us(_d(0), "AAA")
+    t = dd.build()["text"]
+    assert "자사주소각" in t and "📰 오늘 시장 공시 하이라이트" not in t       # 하이라이트엔 중복으로 안 나온다

@@ -115,7 +115,7 @@ def _us_line(p: dict, is_new: bool) -> str:
     return s + (" | " + " · ".join(stats) if stats else "")
 
 
-def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8) -> list[str]:
+def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8, skip_types: set[str] | None = None) -> list[str]:
     """최근 며칠 시장 전체 공시 중 시총 큰 종목의 의미 있는 호재·악재 (공급계약은 매출액대비 10%+, 실적은 호재/악재 판정분)."""
     from services.disclosure_events import recent_events
     since = (datetime.now(_KST).date() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -130,6 +130,8 @@ def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8) -> l
         if not cap or cap < min_mcap_eok:
             continue
         t = e["event_type"]
+        if skip_types and t in skip_types:
+            continue
         if e["polarity"] == "호재" and (t in ("자사주취득", "자사주소각", "배당결정", "잠정실적")
                                          or (t == "공급계약" and (e["metric"] or 0) >= 10)):
             meaningful.append((cap, e))
@@ -143,6 +145,28 @@ def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8) -> l
         out.append(f"  · {e['corp_name']}({e['stock_code']}) 시총 {cap:,.0f}억 [{tag}] {e['event_type']}"
                    f"{(' — ' + e['summary']) if e['summary'] else ''} ({e['date']})")
     return out
+
+
+def validated_events(days: int = 3, min_mcap_eok: float = 1000, n: int = 8) -> list[str]:
+    """과거 검증을 통과한 호재 사건(자사주 취득·소각·배당 결정)을 스크리너 후보 여부와 무관하게 최근 며칠치 전부.
+    같은 종목의 같은 유형은 한 번만, 시총 큰 순. (검증: 2024-10~2026-10 한국, 접수일 다음 거래일 이후 20일 중앙 초과수익 +1.62%p, t=+3.2)"""
+    from services.disclosure_events import recent_events
+    since = (datetime.now(_KST).date() - timedelta(days=days)).strftime("%Y-%m-%d")
+    evs = [e for e in recent_events(days=days + 1) if e["date"] >= since and e["event_type"] in _VALIDATED_GOOD]
+    if not evs:
+        return []
+    caps = {r[0]: r[1] for r in _query(
+        "SELECT code, mcap_eok FROM universe_screen_daily WHERE date=(SELECT max(date) FROM universe_screen_daily)")}
+    seen, rows = set(), []
+    for e in evs:
+        cap = caps.get(e["stock_code"])
+        key = (e["stock_code"], e["event_type"])
+        if not cap or cap < min_mcap_eok or key in seen:
+            continue
+        seen.add(key)
+        rows.append((cap, e))
+    rows.sort(key=lambda x: -x[0])
+    return [f"  · {e['corp_name']}({e['stock_code']}) 시총 {cap:,.0f}억 — {e['event_type']} 결정 ({e['date']})" for cap, e in rows[:n]]
 
 
 def build_block(exclude_codes: set[str] | None = None, for_user: bool = False) -> str:

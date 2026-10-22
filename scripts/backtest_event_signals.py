@@ -2,6 +2,7 @@
 
   insider : 미국 임원·이사 공개시장 매수 군집(SEC Form 4 분기 데이터셋 8분기) 이후 수익률 vs 같은 시점 전 종목 중앙값
   dart    : 한국 DART 공시 사건(자사주취득·소각·배당 = 호재 / 유상증자·메자닌·감자 = 악재) 이후 수익률 vs 전 종목 중앙값
+  dart2   : 한국 거래소공시 중 공급계약(매출액대비 규모별)·잠정실적(영업이익 증감·흑자적자전환별) 이후 수익률 — 본문 숫자를 뽑아 표본 추출 검증
 
 룩어헤드 방지: 내부자는 *제출일*이 시점 이전인 거래만, DART 사건은 접수일 **다음 거래일 종가**에 진입한다.
 한계: 현재 시총 기준 유니버스(생존 편향), 사건이 겹치는 종목/시점은 독립 표본이 아님, 2년은 한 사이클이 안 됨.
@@ -174,15 +175,127 @@ def dart_study() -> str:
     return "\n".join(summarize(k, by[k], pdt[k]) for k in groups)
 
 
+# ── 한국 공급계약·잠정실적 (본문 숫자별) ───────────────────────────────────────
+
+def dart_i_events(months: int = 24) -> list[dict]:
+    """거래소공시(I) 중 공급계약·잠정실적만. 목록이 크다(약 800쪽)."""
+    import requests
+    from config.settings import DART_API_KEY
+    from services.disclosure_events import classify
+    sess = requests.Session()
+    end, out = date.today(), []
+    cur = end - timedelta(days=months * 30)
+    while cur < end:
+        win_end = min(cur + timedelta(days=30), end)
+        for cls in ("Y", "K"):
+            p = 1
+            while True:
+                try:
+                    r = sess.get("https://opendart.fss.or.kr/api/list.json", params={
+                        "crtfc_key": DART_API_KEY, "bgn_de": cur.strftime("%Y%m%d"), "end_de": win_end.strftime("%Y%m%d"),
+                        "pblntf_ty": "I", "corp_cls": cls, "page_no": p, "page_count": 100}, timeout=30).json()
+                except Exception:
+                    break
+                if r.get("status") != "000":
+                    break
+                for it in r.get("list") or []:
+                    c = classify(it.get("report_nm"))
+                    if c and c[0] in ("공급계약", "잠정실적") and it.get("stock_code"):
+                        out.append({"code": it["stock_code"], "date": datetime.strptime(it["rcept_dt"], "%Y%m%d").date(),
+                                    "type": c[0], "rcept_no": it["rcept_no"]})
+                if p >= int(r.get("total_page") or 1):
+                    break
+                p += 1
+        print(f"  거래소공시 {cur}~{win_end}: 누적 {len(out)}건", flush=True)
+        cur = win_end + timedelta(days=1)
+    return out
+
+
+def enrich_with_docs(events: list[dict], per_type: int = 1200) -> list[dict]:
+    """유형별 무작위 표본의 본문을 읽어 metric(공급계약=매출액대비%, 잠정실적=영업이익 전년동기대비%)과 플래그를 채운다."""
+    import random
+    from concurrent.futures import ThreadPoolExecutor
+    from services import disclosure_events as de
+    random.seed(7)
+    pick = []
+    for t in ("공급계약", "잠정실적"):
+        pool = [e for e in events if e["type"] == t]
+        random.shuffle(pool)
+        pick += pool[:per_type]
+
+    def one(e):
+        try:
+            toks = de._fetch_doc_tokens(e["rcept_no"])
+            if e["type"] == "공급계약":
+                d = de.parse_supply_contract(toks)
+                return {**e, "metric": d.get("sales_pct"), "flag": ""}
+            ed = de.parse_earnings(toks)
+            _, m = de.summarize_earnings(ed)
+            op = ed["rows"].get("영업이익") or {}
+            flags = " ".join(str(x) for x in (op.get("yoy_flag"), op.get("qoq_flag")) if x)
+            return {**e, "metric": m, "flag": flags, "op_cur": op.get("cur")}
+        except Exception:
+            return None
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        res = [r for r in ex.map(one, pick) if r]
+    print(f"  본문 해석 성공 {len(res)}/{len(pick)}", flush=True)
+    return res
+
+
+def dart2_study() -> str:
+    cache = os.path.join(tempfile.gettempdir(), "kr_dart2_events.pkl")
+    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
+        with open(cache, "rb") as f:
+            evs = pickle.load(f)
+    else:
+        evs = enrich_with_docs(dart_i_events())
+        with open(cache, "wb") as f:
+            pickle.dump(evs, f)
+    closes = load_prices("kr")
+    idx = pd.DatetimeIndex(closes.index).tz_localize(None).normalize()
+    conds = {
+        "공급계약 매출대비 10%+": lambda e: e["type"] == "공급계약" and (e["metric"] or 0) >= 10,
+        "공급계약 매출대비 5~10%": lambda e: e["type"] == "공급계약" and 5 <= (e["metric"] or 0) < 10,
+        "공급계약 매출대비 5% 미만": lambda e: e["type"] == "공급계약" and e["metric"] is not None and e["metric"] < 5,
+        "공급계약 매출대비 30%+": lambda e: e["type"] == "공급계약" and (e["metric"] or 0) >= 30,
+        "잠정실적 영업이익 YoY +30%+": lambda e: e["type"] == "잠정실적" and e["metric"] is not None and e["metric"] >= 30
+                                              and "적자" not in (e.get("flag") or ""),
+        "잠정실적 영업이익 YoY +100%+": lambda e: e["type"] == "잠정실적" and e["metric"] is not None and e["metric"] >= 100,
+        "잠정실적 흑자전환": lambda e: e["type"] == "잠정실적" and "흑자전환" in (e.get("flag") or ""),
+        "잠정실적 영업이익 YoY -30%-": lambda e: e["type"] == "잠정실적" and e["metric"] is not None and e["metric"] <= -30,
+        "잠정실적 적자전환": lambda e: e["type"] == "잠정실적" and "적자전환" in (e.get("flag") or ""),
+        "잠정실적 전체(기준)": lambda e: e["type"] == "잠정실적",
+    }
+    by = {k: {h: [] for h in HORIZONS} for k in conds}
+    pdt = {k: {h: {} for h in HORIZONS} for k in conds}
+    for e in evs:
+        if e["code"] not in closes.columns:
+            continue
+        pos = idx.searchsorted(pd.Timestamp(e["date"]), side="right")
+        if pos >= len(idx):
+            continue
+        for name, f in conds.items():
+            if f(e):
+                for h in HORIZONS:
+                    x = fwd_excess(closes, e["code"], pos, h)
+                    if x is not None:
+                        by[name][h].append(x)
+                        pdt[name][h].setdefault(pos // 10, []).append(x)
+    return "\n".join(summarize(k, by[k], pdt[k]) for k in conds)
+
+
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "insider"
     t0 = time.time()
     if which == "insider":
         print("미국 내부자 매수 군집 이후 수익률 vs 같은 시점 전 종목 중앙값 (제출일 이후 정보만 사용)", flush=True)
         print(insider_study())
+    elif which == "dart2":
+        print("한국 공급계약·잠정실적(본문 숫자별) 접수일 다음 거래일 이후 수익률 vs 전 종목 중앙값 (유형별 무작위 표본)", flush=True)
+        print(dart2_study())
     elif which == "dart":
         print("한국 DART 공시 사건 접수일 다음 거래일 이후 수익률 vs 전 종목 중앙값", flush=True)
         print(dart_study())
     else:
-        sys.exit("사용법: insider | dart")
+        sys.exit("사용법: insider | dart | dart2")
     print(f"\n※ 생존 편향·겹치는 표본·짧은 기간 — 방향성 참고용. ({time.time() - t0:.0f}초)")
