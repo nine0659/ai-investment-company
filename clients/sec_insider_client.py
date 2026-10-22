@@ -43,34 +43,41 @@ def latest_zip_urls(n: int = 2) -> list[str]:
 
 
 def _read(z: zipfile.ZipFile, name: str):
-    return csv.DictReader(io.StringIO(z.read(name).decode("utf-8", "ignore")), delimiter="\t")
+    """TSV를 한 줄씩 스트리밍으로 읽는다. (이전: 파일 전체를 decode→StringIO로 복사해 분기당 순간 +150MB — 2026-10-22 실측,
+    Render 무료 플랜 512MB에서 위험해 스트리밍으로 교체)"""
+    with z.open(name) as raw:
+        yield from csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8", errors="ignore", newline=""), delimiter="	")
 
 
 def parse_zip(content: bytes) -> list[dict]:
     """zip → 공개시장 매수(P) 거래 목록 [{cik, symbol, owner, role, date, filed, value, shares, price, plan}].
 
     심볼은 종목이 바뀌면 충돌하므로(티커 재사용) 발행사 CIK로 집계한다.
+    메모리: 거래 파일을 먼저 훑어 '공개시장 매수'의 접수번호만 모으고(수천 건), 제출·보고자 파일은 그 접수번호만 보관한다.
     """
     z = zipfile.ZipFile(io.BytesIO(content))
-    subs = {}
-    for r in _read(z, "SUBMISSION.tsv"):
-        subs[r["ACCESSION_NUMBER"]] = r
-    owners: dict[str, list[tuple[str, str, str]]] = {}
-    for r in _read(z, "REPORTINGOWNER.tsv"):
-        owners.setdefault(r["ACCESSION_NUMBER"], []).append(
-            (r["RPTOWNERCIK"], r["RPTOWNERNAME"], (r["RPTOWNER_RELATIONSHIP"] or "") + "|" + (r["RPTOWNER_TITLE"] or "")))
-    out = []
+    trans = []
     for t in _read(z, "NONDERIV_TRANS.tsv"):
         if t.get("TRANS_CODE") != "P" or t.get("TRANS_ACQUIRED_DISP_CD") != "A":
-            continue
-        sub = subs.get(t["ACCESSION_NUMBER"])
-        if not sub or sub.get("DOCUMENT_TYPE") not in ("4", "4/A"):
             continue
         try:
             shares, price = float(t["TRANS_SHARES"]), float(t["TRANS_PRICEPERSHARE"])
         except (TypeError, ValueError):
             continue
-        if shares <= 0 or price <= 0:
+        if shares > 0 and price > 0:
+            trans.append((t["ACCESSION_NUMBER"], t.get("TRANS_DATE"), shares, price))
+    wanted = {x[0] for x in trans}
+    subs = {r["ACCESSION_NUMBER"]: {k: r.get(k) for k in ("DOCUMENT_TYPE", "ISSUERCIK", "ISSUERTRADINGSYMBOL", "FILING_DATE", "AFF10B5ONE")}
+            for r in _read(z, "SUBMISSION.tsv") if r["ACCESSION_NUMBER"] in wanted}
+    owners: dict[str, list[tuple[str, str, str]]] = {}
+    for r in _read(z, "REPORTINGOWNER.tsv"):
+        if r["ACCESSION_NUMBER"] in wanted:
+            owners.setdefault(r["ACCESSION_NUMBER"], []).append(
+                (r["RPTOWNERCIK"], r["RPTOWNERNAME"], (r["RPTOWNER_RELATIONSHIP"] or "") + "|" + (r["RPTOWNER_TITLE"] or "")))
+    out = []
+    for acc, tdate, shares, price in trans:
+        sub = subs.get(acc)
+        if not sub or sub.get("DOCUMENT_TYPE") not in ("4", "4/A"):
             continue
         try:
             cik = int(sub.get("ISSUERCIK") or 0)
@@ -78,9 +85,9 @@ def parse_zip(content: bytes) -> list[dict]:
             cik = 0
         if not cik:
             continue                                           # 발행사를 특정할 수 없으면 쓰지 않는다
-        for ocik, name, role in owners.get(t["ACCESSION_NUMBER"], [("", "", "")])[:1]:   # 거래는 한 번만 센다
+        for ocik, name, role in owners.get(acc, [("", "", "")])[:1]:   # 거래는 한 번만 센다
             out.append({"cik": cik, "symbol": (sub.get("ISSUERTRADINGSYMBOL") or "").strip().upper(),
-                        "owner": ocik or name, "role": role, "date": _d(t.get("TRANS_DATE")),
+                        "owner": ocik or name, "role": role, "date": _d(tdate),
                         "filed": _d(sub.get("FILING_DATE")), "shares": shares, "price": price,
                         "value": shares * price, "plan": sub.get("AFF10B5ONE") == "1"})
     return out
