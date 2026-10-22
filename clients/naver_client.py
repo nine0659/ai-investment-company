@@ -10,10 +10,24 @@ logger = logging.getLogger(__name__)
 _UA = {"User-Agent": "Mozilla/5.0"}
 
 
+_SESSION = None
+
+
+def _session():
+    """공유 세션 — 호출마다 requests.get으로 연결을 새로 맺으면 Windows에서 20건에 17초·CPU 16초,
+    세션을 재사용하면 1.2초였다(2026-10-22 실측: 프록시 조회+TLS 핸드셰이크 반복). 전 종목 스크리너가 수천 건을 부른다."""
+    global _SESSION
+    if _SESSION is None:
+        import requests
+        from requests.adapters import HTTPAdapter
+        _SESSION = requests.Session()
+        _SESSION.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=16))
+    return _SESSION
+
+
 def _get(url: str):
     try:
-        import requests
-        r = requests.get(url, headers=_UA, timeout=8)
+        r = _session().get(url, headers=_UA, timeout=8)
         if r.status_code == 200:
             return r.json()
     except Exception as e:
@@ -70,6 +84,13 @@ def market_value_page(market: str, page: int, size: int = 100) -> dict:
     """시가총액순 종목 목록 한 페이지. market=KOSPI|KOSDAQ. 실패 시 {} (size는 100이 상한)."""
     j = _get(f"https://m.stock.naver.com/api/stocks/marketValue/{market}?page={page}&pageSize={size}")
     return j if isinstance(j, dict) and isinstance(j.get("stocks"), list) else {}
+
+
+def industry_groups() -> list[dict]:
+    """네이버 업종 그룹 목록 [{no, name, totalCount, changeRate, riseCount, fallCount, ...}]. 실패 시 []."""
+    # pageSize 상한은 100 (200이면 400 에러 → 빈 목록 → 업종 이름이 '업종282'로 폴백되던 사고, 2026-10-22). 전체 79개 업종.
+    j = _get("https://m.stock.naver.com/api/stocks/industry?page=1&pageSize=100")
+    return [g for g in (j or {}).get("groups", []) if isinstance(g, dict) and g.get("no") is not None]
 
 
 def stock_integration(code: str) -> dict:

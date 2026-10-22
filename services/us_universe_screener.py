@@ -155,10 +155,23 @@ def fetch_prices(tickers: list[str], chunk: int = 100) -> dict[str, dict]:
 
 # ── ④ 나스닥 애널리스트 ──────────────────────────────────────────────────────
 
+_NASDAQ_SESSION = None
+
+
+def _nasdaq_session():
+    """애널리스트 조회는 종목당 2회 × 250종목이라 연결을 재사용한다(requests.get 반복은 CPU·시간 낭비 — naver_client 참조)."""
+    global _NASDAQ_SESSION
+    if _NASDAQ_SESSION is None:
+        import requests
+        from requests.adapters import HTTPAdapter
+        _NASDAQ_SESSION = requests.Session()
+        _NASDAQ_SESSION.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=8))
+    return _NASDAQ_SESSION
+
+
 def _nasdaq_get(path: str) -> dict:
     try:
-        import requests
-        r = requests.get("https://api.nasdaq.com/api/" + path, headers=_UA, timeout=20)
+        r = _nasdaq_session().get("https://api.nasdaq.com/api/" + path, headers=_UA, timeout=20)
         if r.status_code == 200:
             return (r.json() or {}).get("data") or {}
     except Exception as e:

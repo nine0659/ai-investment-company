@@ -109,3 +109,84 @@ def test_fetch_universe_flags_incomplete(monkeypatch):
 def test_tradable_uses_market_cap_not_intraday_value():
     rows = [_row(mcap_eok=500.0), _row(mcap_eok=2000.0, value_eok=0.0)]
     assert len(us.tradable(rows)) == 1      # 장중엔 거래대금이 작아도 탈락시키지 않는다
+
+
+# ── 추세·상대강도 (2026-10-22: 시장 전체가 고점 대비 -40~60%라 낙폭·저평가 신호만으로는 변별이 안 됐다) ──────
+
+def _hist(ret_3m=20.0, ret_1m=5.0, ma50=9000.0, ma200=11000.0, hi_hist=20000.0):
+    return {"ret_1m": ret_1m, "ret_3m": ret_3m, "ret_6m": 10.0, "ma50": ma50, "ma200": ma200, "hi_hist": hi_hist}
+
+
+def _trend_row(code="111111", close=10000.0, **h):
+    d = us.parse_integration({"totalInfos": [{"code": "eps", "value": "1,000원"}, {"code": "highPriceOf52Weeks", "value": "20,000"}],
+                              "industryCode": "1", "consensusInfo": {}, "dealTrendInfos": []})
+    d["hist"] = _hist(**h)
+    return {"code": code, "name": code, "market": "KOSPI", "close": close, "chg_pct": 0.0, "volume": 1.0,
+            "value_eok": 1.0, "mcap_eok": 5000.0, "detail": d}
+
+
+def test_hist_stats_computes_returns_and_averages():
+    import pandas as pd
+    cl = pd.Series([100.0 + i for i in range(220)])              # 꾸준한 상승
+    st = us._hist_stats(cl)
+    assert st["ret_1m"] == pytest.approx((319 / 298 - 1) * 100)
+    assert st["ret_3m"] == pytest.approx((319 / 256 - 1) * 100)
+    assert st["ma50"] == pytest.approx(sum(range(270, 320)) / 50) and st["ma200"] is not None
+
+
+def test_hist_stats_none_when_too_short():
+    import pandas as pd
+    assert us._hist_stats(pd.Series([1.0] * 30)) is None
+    assert us._hist_stats(pd.Series([1.0] * 100))["ma200"] is None          # 200봉 미만이면 200일선은 비움
+
+
+def test_rs_percentiles_ranks_within_universe():
+    rows = [_trend_row(c, ret_3m=r) for c, r in (("A", -30.0), ("B", 0.0), ("C", 40.0))]
+    rs = us.rs_percentiles(rows)
+    assert rs == {"A": 0.0, "B": 50.0, "C": 100.0}
+
+
+def test_rs_percentiles_skips_missing_history():
+    r = _trend_row("A")
+    r["detail"]["hist"] = None
+    assert us.rs_percentiles([r]) == {}
+
+
+def test_relative_strength_signal_only_for_top_30pct():
+    rows = [_trend_row(f"{i:06d}", ret_3m=float(i)) for i in range(10)]
+    scored = us.score_all(rows)
+    keys = {r["code"]: {s["key"] for s in r["signals"]} for r in scored}
+    assert "상대강도" in keys["000009"] and "상대강도" in keys["000007"]
+    assert "상대강도" not in keys["000005"]
+
+
+def test_trend_recovery_requires_drawdown_and_close_above_ma50_and_positive_month():
+    ok = us.compute_signals(_trend_row(close=10000.0, ma50=9000.0, ret_1m=5.0), {})
+    assert "추세회복" in {s["key"] for s in ok}
+    below = us.compute_signals(_trend_row(close=10000.0, ma50=11000.0), {})
+    assert "추세회복" not in {s["key"] for s in below}
+    falling = us.compute_signals(_trend_row(close=10000.0, ma50=9000.0, ret_1m=-3.0), {})
+    assert "추세회복" not in {s["key"] for s in falling}
+    shallow = us.compute_signals(_trend_row(close=19000.0, ma50=9000.0), {})
+    assert "추세회복" not in {s["key"] for s in shallow}                # 고점 대비 -5%는 '회복'이 아니다
+
+
+def test_trend_warnings():
+    broken = _trend_row(close=10000.0, ma200=14000.0)                  # 200일선 대비 -29%
+    hot = _trend_row(close=10000.0, ma200=9000.0, ret_1m=55.0)
+    w1, w2 = us.trend_warnings(broken), us.trend_warnings(hot)
+    assert any("추세 훼손" in w for w in w1) and not any("과열" in w for w in w1)
+    assert any("단기 과열" in w for w in w2) and not any("추세 훼손" in w for w in w2)
+    assert us.trend_warnings({"detail": {"hist": None}, "close": 1.0}) == []
+
+
+def test_new_signals_count_as_their_own_groups():
+    assert us.score([{"key": "상대강도"}, {"key": "추세회복"}, {"key": "저평가"}]) == 3
+
+
+def test_job_fails_when_history_mostly_missing(monkeypatch):
+    base = {"universe_complete": True, "fetched": 4300, "expected": 4317, "detailed": 1280, "detail_requested": 1284,
+            "picks": [], "scored": [_trend_row()]}
+    monkeypatch.setattr(us, "run_screen", lambda: {**base, "hist_ok": 100, "hist_requested": 1280})
+    st, detail = us.run_daily_job()
+    assert st == "fail" and "추세 이력" in detail

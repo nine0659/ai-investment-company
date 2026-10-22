@@ -120,6 +120,75 @@ def enrich(rows: list[dict], workers: int = 6) -> list[dict]:
         return list(ex.map(one, rows))
 
 
+def _yf_tickers(rows: list[dict]) -> dict[str, str]:
+    return {r["code"] + (".KS" if r["market"] == "KOSPI" else ".KQ"): r["code"] for r in rows}
+
+
+def _hist_stats(cl) -> dict | None:
+    """종가 시리즈(오래된 순) → 추세 수치. 60봉 미만이면 None."""
+    n = len(cl)
+    if n < 60:
+        return None
+    last = float(cl.iloc[-1])
+
+    def ret(k):
+        return (last / float(cl.iloc[-1 - k]) - 1) * 100 if n > k and float(cl.iloc[-1 - k]) > 0 else None
+    return {"ret_1m": ret(21), "ret_3m": ret(63), "ret_6m": ret(126),
+            "ma50": float(cl.tail(50).mean()), "ma200": float(cl.tail(200).mean()) if n >= 200 else None,
+            "hi_hist": None}
+
+
+def _download_part(part: list[str], tmap: dict[str, str], out: dict) -> int:
+    """yfinance 일괄 다운로드 한 묶음 → out[code]에 채우고 성공 수를 반환. 실패하면 0."""
+    import yfinance as yf
+    real = len(part)
+    dl = part + ["005930.KS"] if real < 2 else part          # 단일 종목은 열 구조가 달라 더미를 붙인다
+    try:
+        df = yf.download(dl, period="1y", interval="1d", group_by="ticker", progress=False,
+                         threads=False, auto_adjust=False)
+    except Exception as e:
+        logger.warning("[전종목스크린] 이력 일괄 다운로드 실패: %s", e)
+        return 0
+    ok = 0
+    for tk in part:
+        try:
+            st = _hist_stats(df[tk]["Close"].dropna())
+            if st:
+                st["hi_hist"] = float(df[tk]["High"].dropna().max())
+                out[tmap[tk]] = st
+                ok += 1
+        except Exception:
+            continue
+    return ok
+
+
+def fetch_history(rows: list[dict], chunk: int = 100) -> dict[str, dict]:
+    """{종목코드: {ret_1m, ret_3m, ret_6m, ma50, ma200}} — 종목별 호출이 아니라 일괄 다운로드(Yahoo 제한 회피).
+    통째로 실패한 묶음은 20초 쉬고 한 번 더 시도한다."""
+    import time
+    tmap = _yf_tickers(rows)
+    items = list(tmap)
+    out: dict[str, dict] = {}
+    failed = []
+    for i in range(0, len(items), chunk):
+        part = items[i:i + chunk]
+        if _download_part(part, tmap, out) == 0:
+            failed.append(part)
+    if failed:
+        time.sleep(20)
+        for part in failed:
+            _download_part(part, tmap, out)
+    return out
+
+
+def rs_percentiles(rows: list[dict]) -> dict[str, float]:
+    """3개월 수익률의 전 종목 내 순위(0=최하위 … 100=최상위). 이력이 없는 종목은 빠진다."""
+    vals = sorted((r["detail"]["hist"]["ret_3m"], r["code"]) for r in rows
+                  if (r.get("detail") or {}).get("hist") and r["detail"]["hist"].get("ret_3m") is not None)
+    n = len(vals)
+    return {code: (i / (n - 1) * 100 if n > 1 else 50.0) for i, (_, code) in enumerate(vals)}
+
+
 def industry_medians(rows: list[dict], min_members: int = 5) -> dict[str, float]:
     """업종별 추정PER 중앙값 (표본 5개 미만 업종은 비교 불가라 제외)."""
     by: dict[str, list[float]] = {}
@@ -161,6 +230,15 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
         dd = close / d["high52"] - 1
         if dd <= -0.3:
             sig.append({"key": "고점대비낙폭", "text": f"52주 고점 대비 {dd * 100:.0f}%"})
+    h = d.get("hist")
+    if h:
+        rs = d.get("rs_pct")
+        if rs is not None and rs >= 70 and h.get("ret_3m") is not None:
+            sig.append({"key": "상대강도", "text": f"3개월 {h['ret_3m']:+.0f}% — 전 종목 중 상위 {100 - rs:.0f}%"})
+        hi = max(x for x in (d.get("high52"), h.get("hi_hist")) if x) if (d.get("high52") or h.get("hi_hist")) else None
+        if hi and close and close / hi - 1 <= -0.2 and h["ma50"] and close > h["ma50"] and (h.get("ret_1m") or 0) > 0:
+            sig.append({"key": "추세회복",
+                        "text": f"고점 대비 {(close / hi - 1) * 100:.0f}%에서 50일선({h['ma50']:,.0f}) 위로 회복 (1개월 {h['ret_1m']:+.0f}%)"})
     if d["flow_days"] >= 3 and d["foreign_buy_days"] >= 2 and d["organ_buy_days"] >= 2:
         sig.append({"key": "쌍끌이매수",
                     "text": f"최근 3일 중 외국인 {d['foreign_buy_days']}일·기관 {d['organ_buy_days']}일 순매수"})
@@ -169,7 +247,7 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
 
 # 같은 성격의 신호가 겹쳐 점수가 부풀지 않게 묶음 단위로 센다
 _GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대비저평가": "가치",
-          "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건"}
+          "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건", "상대강도": "모멘텀", "추세회복": "회복"}
 
 
 def score(signals: list[dict]) -> int:
@@ -178,6 +256,19 @@ def score(signals: list[dict]) -> int:
 
 # 중대 악재 공시가 최근에 있는 종목은 신호가 아무리 좋아도 후보에서 뺀다 (상폐·횡령·불성실공시는 '싸 보이는 이유'일 수 있다)
 _SEVERE_EVENTS = {"상폐·부도위험", "횡령·배임·회계위반", "불성실공시"}
+
+
+def trend_warnings(r: dict) -> list[str]:
+    d = r.get("detail") or {}
+    h = d.get("hist")
+    if not h:
+        return []
+    out = []
+    if h.get("ma200") and r["close"] < h["ma200"] * 0.8:
+        out.append(f"추세 훼손: 200일선({h['ma200']:,.0f}) 대비 {(r['close'] / h['ma200'] - 1) * 100:.0f}% — 싸 보이는 이유가 하락 추세일 수 있음")
+    if (h.get("ret_1m") or 0) >= 40:
+        out.append(f"단기 과열: 1개월 {h['ret_1m']:+.0f}% — 추격 매수 주의")
+    return out
 
 
 def event_signals(events: list[dict]) -> list[dict]:
@@ -209,13 +300,17 @@ def event_warnings(events: list[dict]) -> list[str]:
 def score_all(enriched: list[dict]) -> list[dict]:
     """상세 데이터가 있는 모든 종목에 신호·점수를 붙인다 (신호 없는 종목은 score 0)."""
     med = industry_medians(enriched)
+    rs = rs_percentiles(enriched)
+    for r in enriched:
+        if r.get("detail") is not None:
+            r["detail"]["rs_pct"] = rs.get(r["code"])
     out = []
     for r in enriched:
         sig = compute_signals(r, med)
         ev = (r.get("detail") or {}).get("events") or []
         if sig:                                            # 적자 등으로 후보 자격이 없는 종목(sig 빈 목록)엔 붙이지 않는다
             sig = sig + event_signals(ev)
-        out.append({**r, "signals": sig, "warnings": event_warnings(ev), "score": score(sig),
+        out.append({**r, "signals": sig, "warnings": trend_warnings(r) + event_warnings(ev), "score": score(sig),
                     "blocked": any(e["event_type"] in _SEVERE_EVENTS and e["polarity"] == "악재" for e in ev)})
     return out
 
@@ -231,6 +326,19 @@ def screen(enriched: list[dict], exclude: set[str] | None = None, top: int = 20,
     return pick_from(score_all(enriched), exclude, top, min_score)
 
 
+def _industry_board(scored: list[dict]) -> dict | None:
+    """업종 온도계. 실패해도 스크리닝 자체는 계속한다(None) — 단 잡 상태 상세에 '업종 온도계 없음'이 남는다."""
+    try:
+        from services import industry_board
+        groups = nv.industry_groups()
+        board = industry_board.build(scored, groups)
+        board["names_ok"] = bool(groups)                    # 업종 이름을 못 받으면 '업종NNN'으로 폴백 — 잡 상세에 남긴다
+        return board
+    except Exception as e:
+        logger.warning("[전종목스크린] 업종 온도계 실패 (스크리닝은 계속): %s", e)
+        return None
+
+
 def run_screen(exclude: set[str] | None = None, top: int = 20, max_detail: int = MAX_DETAIL) -> dict:
     """전 종목 스크리닝 전체 실행. 결과 dict (발송·저장 없음). 'scored'는 상세 확인된 전 종목."""
     uni = fetch_universe()
@@ -244,15 +352,20 @@ def run_screen(exclude: set[str] | None = None, top: int = 20, max_detail: int =
     except Exception as e:
         logger.warning("[전종목스크린] 공시 사건 조회 실패 (이 신호 없이 진행): %s", e)
         events = {}
+    with_detail = [r for r in detail_rows if r.get("detail")]
+    hist = fetch_history(with_detail) if with_detail else {}
     for r in detail_rows:
         if r.get("detail"):
             r["detail"]["events"] = events.get(r["code"], [])
+            r["detail"]["hist"] = hist.get(r["code"])
     scored = score_all([r for r in detail_rows if r.get("detail")])
     return {
         "as_of": datetime.now(_KST).strftime("%Y-%m-%d %H:%M"),
         "expected": uni["expected"], "fetched": uni["fetched"], "universe_complete": uni["complete"],
         "tradable": len(pool), "detailed": got, "detail_requested": len(detail_rows),
+        "hist_ok": len(hist), "hist_requested": len(with_detail),
         "event_codes": len(events), "blocked": sum(1 for r in scored if r.get("blocked")),
+        "industry_board": _industry_board(scored),
         "scored": scored, "picks": pick_from(scored, exclude, top),
     }
 
@@ -344,10 +457,27 @@ def run_daily_job() -> tuple[str, str]:
         return "fail", f"목록 수신 불완전 {res['fetched']}/{res['expected']}"
     if res["detail_requested"] and res["detailed"] < res["detail_requested"] * 0.8:
         return "fail", f"상세 조회 {res['detailed']}/{res['detail_requested']}만 성공 (80% 미만)"
+    hist_req, hist_ok = res.get("hist_requested", 0), res.get("hist_ok", 0)
+    if hist_req and hist_ok < hist_req * 0.5:
+        return "fail", f"추세 이력 {hist_ok}/{hist_req}만 수신 (50% 미만 — 추세 신호 없이 저장하지 않음)"
     n = save_daily(res)
     if n == 0:
         return "empty", "저장 0건"
-    return "success", f"저장 {n}종목 · 신호 3묶음+ {len(res['picks'])}종목 · 수신 {res['fetched']}/{res['expected']}"
+    board_note = ""
+    board = res.get("industry_board")
+    if board and board.get("industries"):
+        try:
+            from services import industry_board
+            board_note = f" · 업종 {industry_board.save_daily(board)}개"
+            if not board.get("names_ok", True):
+                board_note += " ⚠업종 이름 미수신(번호로 표시)"
+        except Exception as e:
+            logger.warning("[전종목스크린] 업종 온도계 저장 실패: %s", e)
+            board_note = " · ⚠업종 온도계 저장 실패"
+    elif "industry_board" in res:
+        board_note = " · ⚠업종 온도계 없음"
+    return "success", (f"저장 {n}종목 · 신호 3묶음+ {len(res['picks'])}종목 · 수신 {res['fetched']}/{res['expected']}"
+                       f" · 추세 {hist_ok}/{hist_req}{board_note}")
 
 
 def format_screen(res: dict) -> str:
@@ -355,6 +485,7 @@ def format_screen(res: dict) -> str:
              f"전체 {res['fetched']}/{res['expected']}종목 수신"
              + ("" if res["universe_complete"] else " ⚠불완전(수신 90% 미만 — 결과 신뢰 낮음)")
              + f" → 거래 가능 {res['tradable']}종목 → 상세 확인 {res['detailed']}/{res['detail_requested']}종목"
+             + f" · 추세 이력 {res.get('hist_ok', 0)}/{res.get('hist_requested', 0)}"
              + f" · 최근 7일 공시 사건 {res.get('event_codes', 0)}종목 · 중대 악재로 제외 {res.get('blocked', 0)}종목"]
     if not res["picks"]:
         lines.append("신호가 3묶음 이상 겹치는 종목 없음")

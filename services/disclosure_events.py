@@ -270,7 +270,8 @@ def collect(days: int = 3) -> dict:
             events.append(ev)
     saved = save_events(events)
     return {"ok": fetched["ok"], "errors": fetched["errors"], "listed": len(fetched["items"]),
-            "relevant": len(relevant), "new": len(fresh), "saved": saved, "doc_try": doc_try, "doc_fail": doc_fail}
+            "relevant": len(relevant), "new": len(fresh), "saved": saved, "doc_try": doc_try, "doc_fail": doc_fail,
+            "events": events}                                  # 이번에 처음 저장한 사건들 (보유종목 즉시 알림이 쓴다)
 
 
 def run_daily_job() -> tuple[str, str]:

@@ -438,6 +438,26 @@ def job_dart_events():
         record_job("dart_events", "fail", str(e))
 
 
+def job_holdings_disclosure():
+    """평일 장중 30분마다 — 보유 종목에 새 DART 공시가 뜨면 즉시 알림 (해당 없으면 무발송).
+
+    market_monitor와 같은 장중 반복 잡이라 정상 실행은 job_runs에 남기지 않고 실패만 기록한다
+    (절대원칙 5의 의도적 예외 — 기대 목록에 넣으면 매일 수십 건이 쌓여 헬스체크 의미가 사라진다).
+    17:40 일일 요약의 '내 보유 종목 공시' 섹션이 이 잡이 놓친 건의 백업이다.
+    """
+    from services.job_ledger import record_job
+    if not is_krx_trading_day():
+        return
+    try:
+        from services.holdings_alert import run_once
+        res = run_once()
+        if not res["ok"]:
+            record_job("holdings_disclosure", "fail", f"DART 조회 실패 {res.get('errors', [])[:2]}")
+    except Exception as e:
+        logger.warning("보유 종목 공시 알림 실패 (무시): %s", e)
+        record_job("holdings_disclosure", "fail", str(e))
+
+
 def job_daily_digest():
     """평일 17:40 — 오늘의 발굴·공시 요약 1통 (코드만으로 생성, LLM 없음). 보낼 내용이 없으면 무발송.
 
@@ -454,7 +474,7 @@ def job_daily_digest():
         return
     try:
         from services.daily_digest import run_daily_job
-        status, detail, sent = run_daily_job()
+        status, detail, sent = run_daily_job(wait=True)        # 스크리너가 느린 날엔 최대 10분 기다린다
         record_job("daily_digest", status, detail)
         if status == "fail" or sent is None:
             release_report_slot(date_str, "daily_digest")      # 무발송/실패면 수동 재실행이 가능하도록 슬롯을 돌려준다
@@ -483,9 +503,9 @@ def job_universe_screen():
 
 
 def job_us_universe_screen():
-    """평일 17:10 — 미국 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
+    """평일 17:15 — 미국 전 종목 스크리닝 스냅샷 기록 (무발송, LLM 없음).
 
-    17:10 KST는 미국장 마감 후라 직전 미국 거래일 종가 기준이다(미국 휴장일엔 같은 데이터가 반복될 뿐 해는 없다).
+    17:15 KST는 미국장 마감 후라 직전 미국 거래일 종가 기준이다(미국 휴장일엔 같은 데이터가 반복될 뿐 해는 없다).
     """
     from services.job_ledger import record_job
     try:
@@ -728,13 +748,23 @@ def setup_jobs():
 
     scheduler.add_job(
         job_us_universe_screen,
-        CronTrigger(day_of_week="mon-fri", hour=17, minute=10, timezone=TIMEZONE_STR),
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=15, timezone=TIMEZONE_STR),
         id="us_universe_screen",
-        name="[17:10] 미국 전 종목 스크리닝 스냅샷 (무발송, 약 14분 소요)",
+        name="[17:15] 미국 전 종목 스크리닝 스냅샷 (무발송, 약 14분 소요)",
         misfire_grace_time=1800,
         coalesce=True,
     )
-    console.print("  [cyan]⏰ 평일 17:10[/cyan] 미국 전 종목 스크리닝 스냅샷 (무발송)")
+    console.print("  [cyan]⏰ 평일 17:15[/cyan] 미국 전 종목 스크리닝 스냅샷 (무발송)")
+
+    scheduler.add_job(
+        job_holdings_disclosure,
+        CronTrigger(day_of_week="mon-fri", hour="9-18", minute="5,35", timezone=TIMEZONE_STR),
+        id="holdings_disclosure",
+        name="[장중 30분] 보유 종목 새 공시 즉시 알림 (해당 없으면 무발송)",
+        misfire_grace_time=600,
+        coalesce=True,
+    )
+    console.print("  [cyan]⏰ 평일 09~18시 30분마다[/cyan] 보유 종목 공시 즉시 알림")
 
     scheduler.add_job(
         job_daily_digest,

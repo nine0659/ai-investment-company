@@ -55,7 +55,7 @@ def holdings_events(codes: set[str], days: int = 2) -> list[str]:
     return out
 
 
-def build(today: str | None = None, holding_codes: set[str] | None = None) -> dict:
+def build(today: str | None = None, holding_codes: set[str] | None = None, force_scorecard: bool = False) -> dict:
     """{text: str|None, kr_ok, us_ok, counts:{...}}. text가 None이면 보낼 내용이 없는 것."""
     from services import market_ideas as mi
     from services.disclosure_events import by_code
@@ -66,7 +66,7 @@ def build(today: str | None = None, holding_codes: set[str] | None = None) -> di
     us_date, us_all, us_prev = mi.us_picks(set(), n=60)
     kr_ok, us_ok = kr_date == today, us_date == today
     sections: list[str] = []
-    counts = {"holdings": 0, "kr_new": 0, "us_new": 0, "events": 0}
+    counts = {"holdings": 0, "kr_new": 0, "us_new": 0, "events": 0, "scorecard": 0}
 
     hold = holdings_events(holding_codes) if holding_codes else []
     if hold:
@@ -111,7 +111,30 @@ def build(today: str | None = None, holding_codes: set[str] | None = None) -> di
         counts["events"] = len(hl)
         sections.append("📰 오늘 시장 공시 하이라이트 (시총 3,000억+, 본문 숫자는 코드가 추출)\n" + "\n".join(hl))
 
-    informative = counts["holdings"] + counts["kr_new"] + counts["us_new"] + counts["events"]
+    try:
+        from services.industry_board import format_board, load_snapshots
+        snaps = load_snapshots()
+        if snaps and snaps[0][0] == today:                 # 오늘분 업종 온도계일 때만 (오래된 건 '오늘의' 요약에 쓰지 않는다)
+            board = format_board(snaps)
+            if board:
+                counts["board"] = 1
+                sections.append(board)
+    except Exception as e:
+        logger.warning("[일일요약] 업종 온도계 실패 (건너뜀): %s", e)
+
+    # 금요일엔 스크리너 성적표를 덧붙인다 — 후보가 실제로 시장을 이겼는지(관측이 쌓인 뒤부터 나온다)
+    if datetime.now(_KST).weekday() == 4 or force_scorecard:
+        try:
+            from services.screen_scorecard import format_report
+            card = format_report()
+            if card:
+                counts["scorecard"] = 1
+                sections.append(card)
+        except Exception as e:
+            logger.warning("[일일요약] 성적표 실패 (건너뜀): %s", e)
+
+    informative = (counts["holdings"] + counts["kr_new"] + counts["us_new"] + counts["events"]
+                   + counts.get("board", 0))
     if not informative:
         return {"text": None, "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
     now = datetime.now(_KST)
@@ -120,7 +143,37 @@ def build(today: str | None = None, holding_codes: set[str] | None = None) -> di
     return {"text": header + "\n\n" + "\n\n".join(sections), "kr_ok": kr_ok, "us_ok": us_ok, "counts": counts}
 
 
-def run_daily_job(send_fn=None, holding_codes: set[str] | None = None) -> tuple[str, str, str | None]:
+def snapshots_ready(today: str | None = None) -> tuple[bool, bool]:
+    """(한국 오늘분 있음, 미국 오늘분 있음). 조회 실패는 '없음'으로 본다."""
+    from db.database import get_conn
+    from sqlalchemy import text
+    today = today or datetime.now(_KST).strftime("%Y-%m-%d")
+    out = []
+    for table in ("universe_screen_daily", "us_screen_daily"):
+        try:
+            with get_conn() as conn:
+                out.append(conn.execute(text(f"SELECT max(date) FROM {table}")).scalar() == today)
+        except Exception:
+            out.append(False)
+    return out[0], out[1]
+
+
+def wait_for_snapshots(max_wait: int = 600, poll: int = 60, sleep_fn=None, ready_fn=None) -> tuple[bool, bool]:
+    """미국 스크리너는 약 14분 걸려 느린 날엔 17:40에 아직 도는 중일 수 있다 → 둘 다 올 때까지 최대 max_wait초 기다린다.
+    끝내 안 오면 현재 상태를 반환하고, build()가 '오늘분 ... 없음'을 명시한다(조용히 빼지 않는다)."""
+    import time
+    sleep_fn = sleep_fn or time.sleep
+    ready_fn = ready_fn or snapshots_ready
+    waited = 0
+    state = ready_fn()
+    while not all(state) and waited < max_wait:
+        sleep_fn(poll)
+        waited += poll
+        state = ready_fn()
+    return state
+
+
+def run_daily_job(send_fn=None, holding_codes: set[str] | None = None, wait: bool = False) -> tuple[str, str, str | None]:
     """(status, detail, 발송한 본문). 오늘분 스냅샷이 둘 다 없으면 fail, 보낼 내용이 없으면 success('무발송')."""
     if holding_codes is None:
         try:
@@ -129,6 +182,8 @@ def run_daily_job(send_fn=None, holding_codes: set[str] | None = None) -> tuple[
         except Exception as e:
             logger.warning("[일일요약] 보유 종목 조회 실패 (보유 공시 섹션 없이 진행): %s", e)
             holding_codes = set()
+    if wait:
+        wait_for_snapshots()
     res = build(holding_codes=holding_codes)
     if not res["kr_ok"] and not res["us_ok"]:
         return "fail", "오늘분 한국·미국 스냅샷이 모두 없음 (스크리너 잡 확인 필요)", None

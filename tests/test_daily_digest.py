@@ -216,4 +216,59 @@ def test_us_screener_finishes_before_digest():
     src = open(scheduler.__file__, encoding="utf-8").read()
     i = src.index('id="us_universe_screen"')
     block = src[max(0, i - 200):i]
-    assert "hour=17, minute=10" in block
+    assert "hour=17, minute=15" in block
+
+
+def test_friday_digest_appends_scorecard_only_when_observations_exist(db, monkeypatch):
+    _kr(_d(1), "111111"); _kr(_d(0), "111111"); _kr(_d(0), "222222")
+    _us(_d(1), "AAA"); _us(_d(0), "AAA")
+    from services import screen_scorecard
+    monkeypatch.setattr(screen_scorecard, "format_report", lambda *a, **k: "🧪 스크리너 성적표 TEST")
+    assert "스크리너 성적표 TEST" in dd.build(force_scorecard=True)["text"]
+    assert dd.build(force_scorecard=True)["counts"]["scorecard"] == 1
+    monkeypatch.setattr(screen_scorecard, "format_report", lambda *a, **k: "")
+    r = dd.build(force_scorecard=True)
+    assert "성적표" not in r["text"] and r["counts"]["scorecard"] == 0
+
+
+def test_scorecard_failure_does_not_break_digest(db, monkeypatch):
+    _kr(_d(1), "111111"); _kr(_d(0), "111111"); _kr(_d(0), "222222")
+    _us(_d(1), "AAA"); _us(_d(0), "AAA")
+    from services import screen_scorecard
+    monkeypatch.setattr(screen_scorecard, "format_report", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    assert dd.build(force_scorecard=True)["text"]
+
+
+def test_wait_returns_immediately_when_both_ready():
+    sleeps = []
+    assert dd.wait_for_snapshots(sleep_fn=sleeps.append, ready_fn=lambda: (True, True)) == (True, True)
+    assert sleeps == []
+
+
+def test_wait_polls_until_late_snapshot_arrives():
+    states = iter([(True, False), (True, False), (True, True)])
+    sleeps = []
+    assert dd.wait_for_snapshots(max_wait=600, poll=60, sleep_fn=sleeps.append, ready_fn=lambda: next(states)) == (True, True)
+    assert sleeps == [60, 60]
+
+
+def test_wait_gives_up_after_max_wait_and_reports_state():
+    sleeps = []
+    assert dd.wait_for_snapshots(max_wait=180, poll=60, sleep_fn=sleeps.append, ready_fn=lambda: (True, False)) == (True, False)
+    assert len(sleeps) == 3
+
+
+def test_scheduler_job_requests_wait(monkeypatch):
+    seen = {}
+    rec, _, _ = _patch_job(monkeypatch)
+    monkeypatch.setattr(dd, "run_daily_job", lambda *a, **k: seen.update(k) or ("success", "x", "본문"))
+    scheduler.job_daily_digest()
+    assert seen.get("wait") is True
+
+
+def test_snapshots_ready_reflects_today_rows(db):
+    assert dd.snapshots_ready() == (False, False)
+    _kr(_d(0), "111111")
+    assert dd.snapshots_ready() == (True, False)
+    _us(_d(0), "AAA")
+    assert dd.snapshots_ready() == (True, True)

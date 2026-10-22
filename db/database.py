@@ -588,6 +588,25 @@ dart_events = Table("dart_events", metadata,
     Column("created_at",  Text,    server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# 한국 업종 온도계 일별 스냅샷: 업종별 상대강도·추세 폭·이익 기대·외국인 매수 비율을 코드가 계산해 쌓는다(전망의 근거 시계열).
+industry_daily = Table("industry_daily", metadata,
+    Column("id",              Integer, primary_key=True, autoincrement=True),
+    Column("date",            Text,    nullable=False),
+    Column("ind_no",          Text,    nullable=False),
+    Column("name",            Text),
+    Column("n",               Integer),                 # 우리 유니버스에 속한 종목 수
+    Column("change_rate",     Float),                   # 네이버 업종 그룹 당일 등락률(%)
+    Column("med_ret_1m",      Float),
+    Column("med_ret_3m",      Float),
+    Column("pct_above_ma50",  Float),                   # 50일선 위 종목 비율(%)
+    Column("pct_above_ma200", Float),
+    Column("med_cns_per",     Float),
+    Column("med_growth",      Float),                   # 추정EPS/현재EPS-1 중앙값(%)
+    Column("foreign_buy_pct", Float),                   # 최근 3일 중 2일+ 외국인 순매수 종목 비율(%)
+    Column("regime",          Text),                    # 강세 | 회복초입 | 약세 | 중립
+    Column("created_at",      Text,    server_default=text("CURRENT_TIMESTAMP")),
+)
+
 # 미국 전 종목 일별 스크리닝 스냅샷 (한국 universe_screen_daily와 같은 목적)
 us_screen_daily = Table("us_screen_daily", metadata,
     Column("id",        Integer, primary_key=True, autoincrement=True),

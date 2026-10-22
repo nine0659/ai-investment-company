@@ -68,9 +68,10 @@ tests/                ← 전부 과거 실제 사고의 회귀 테스트. 지�
 | 매월 첫째 월 19:00 | monthly_thesis | 월간 투자관 (CEO 브리핑 근거 주입용) |
 | 평일 16:10 / 16:20 | daily_nav / daily_tracker | 무발송 데이터 수집 |
 | 평일 16:50 | dart_events | 코스피·코스닥 전체 DART 공시(주요사항·거래소공시) 분류·저장, 공급계약/잠정실적은 본문 숫자를 코드가 추출 (무발송) |
-| 평일 17:00 | universe_screen | 한국 전 종목(약 1,290개) 스크리닝 스냅샷 `universe_screen_daily` — 종목 발굴 후보 풀 (무발송) |
-| 평일 17:10 | us_universe_screen | 미국 전 종목(시총 $30억+ 약 1,600개) 스냅샷 `us_screen_daily` — SEC EDGAR 재무 + 일괄 시세 + 나스닥 애널리스트 + 내부자 매수, **약 14분 소요** (무발송) |
-| 평일 17:40 | daily_digest | **오늘의 발굴·공시 요약 1통** (2026-10-22 사용자 승인, 코드만으로 생성·LLM 없음, 내용 없으면 무발송, 오늘분 스냅샷이 한국·미국 모두 없으면 fail) |
+| 평일 17:00 | universe_screen | 한국 전 종목(약 1,290개) 스크리닝 스냅샷 `universe_screen_daily` + 추세·상대강도(yfinance 일괄 이력) + **업종 온도계 `industry_daily`**, 약 12분 소요 — 종목 발굴 후보 풀 (무발송) |
+| 평일 17:15 | us_universe_screen | 미국 전 종목(시총 $30억+ 약 1,600개) 스냅샷 `us_screen_daily` — SEC EDGAR 재무 + 일괄 시세 + 나스닥 애널리스트 + 내부자 매수, **약 14분 소요** (무발송) |
+| 평일 09~18시 30분마다 | holdings_disclosure | **보유 종목 새 공시 즉시 알림**(접수번호별 claim, 해당 없으면 무발송, 실패만 job_runs 기록 — market_monitor와 같은 의도적 예외) |
+| 평일 17:40 | daily_digest | **오늘의 발굴·공시 요약 1통** (2026-10-22 사용자 승인, 코드만으로 생성·LLM 없음, 내용 없으면 무발송, 오늘분 스냅샷이 한국·미국 모두 없으면 fail, 스냅샷이 늦으면 최대 10분 대기, 업종 온도계 포함, 금요일엔 스크리너 성적표 `services/screen_scorecard.py` 추가) |
 | 평일 16:45 (GH) | nav-tracker.yml 백업 | Render가 16:10/16:20을 놓친 날만 대신 실행 (job_runs 흔적 확인 후) |
 
 **일시 중단** (추천·거래 데이터 축적 전 공허한 리포트 방지):
@@ -487,3 +488,10 @@ git push origin master              # = 운영 배포 (Render 자동배포 + CI)
   ⑥ `services/daily_digest.py` 평일 17:40 요약. **실수 기록: `pytest | tail`은 종료 코드를 가린다 — `set -o pipefail`로 `${PIPESTATUS[0]}`를
   확인한 뒤에만 push할 것(2026-10-22 테스트 4건 실패 상태로 push한 사고).** 회귀 테스트: test_universe_screener, test_universe_screen_daily,
   test_us_universe_screener, test_sec_insider, test_disclosure_events, test_market_ideas, test_daily_digest, test_us_invest_screener_link.
+
+- **[개선, 2026-10-22 오후] 변별력·검증 보강 4종.** ① 한국 스크리너에 **추세·상대강도**(yfinance 일괄 이력 → 3개월 수익률 전 종목 내 순위, 50일선 회복, 200일선 훼손·단기 과열 경고) —
+  시장 전체가 고점 대비 -40~60%라 낙폭·저평가 신호만으로는 변별이 안 됐다. 이력이 50% 미만 수신되면 조용히 열화하지 않고 잡을 fail 처리한다.
+  ② `services/industry_board.py` **업종 온도계**: 업종별 3개월 상대강도·200일선 위 비율·이익 증가 기대·외국인 매수 비율을 코드가 집계하고 *시장 전체 대비*로
+  강세/회복초입/약세 분류(지수 수준과 무관), 매일 `industry_daily`에 쌓아 변화를 본다 — 전망 엔진의 근거 시계열. ③ `services/screen_scorecard.py` **스크리너 성적표**:
+  과거 후보(3묶음+)의 N거래일 뒤 수익률 vs 같은 기간 *전 종목 중앙값*(외부 지수 불필요), 30건 미만이면 '표본 부족' 표시. 신호 가중치 조정의 근거(데이터가 쌓여야 의미).
+  ④ `services/holdings_alert.py` 보유 종목 공시 즉시 알림. 회귀 테스트: test_industry_board, test_screen_scorecard, test_holdings_alert, test_universe_screener(추세).

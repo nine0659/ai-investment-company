@@ -165,6 +165,16 @@ def build_block(exclude_codes: set[str] | None = None) -> str:
         logger.warning("[시장아이디어] 미국 후보 실패 (건너뜀): %s", e)
 
     try:
+        from services.industry_board import format_board, load_snapshots
+        snaps = load_snapshots()
+        if snaps and _fresh(snaps[0][0]):
+            board = format_board(snaps)
+            if board:
+                parts.append("\n" + board)
+    except Exception as e:
+        logger.warning("[시장아이디어] 업종 온도계 실패 (건너뜀): %s", e)
+
+    try:
         hl = event_highlights()
         if hl:
             parts.append("\n최근 2일 한국 시장 공시 하이라이트 (시총 3,000억+, 본문 숫자는 코드가 추출):")
