@@ -138,7 +138,9 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
         hl = []
     if hl:
         counts["events"] = len(hl)
-        sections.append("📰 오늘 시장 공시 하이라이트 (시총 3,000억+, 본문 숫자는 코드가 추출)\n" + "\n".join(hl))
+        sections.append("📰 오늘 시장 공시 하이라이트 (시총 3,000억+, 본문 숫자는 코드가 추출)\n"
+                        "  (실적 발표는 과거 검증에서 발표 후 20~60일 시장 대비 오히려 부진한 경향이 있어 '호재'로 단정하지 않습니다)\n"
+                        + "\n".join(hl))
 
     try:
         from services.industry_board import format_board, load_snapshots

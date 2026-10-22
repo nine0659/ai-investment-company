@@ -132,7 +132,9 @@ def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8, skip
         t = e["event_type"]
         if skip_types and t in skip_types:
             continue
-        if e["polarity"] == "호재" and (t in ("자사주취득", "자사주소각", "배당결정", "잠정실적")
+        if t == "잠정실적" and e["polarity"] != "악재":
+            meaningful.append((cap, e))                       # 실적 발표는 호재로 단정하지 않고 '참고'로만 (이후 성과가 오히려 부진했다)
+        elif e["polarity"] == "호재" and (t in ("자사주취득", "자사주소각", "배당결정")
                                          or (t == "공급계약" and (e["metric"] or 0) >= 10)):
             meaningful.append((cap, e))
         elif e["polarity"] == "악재" and t != "위험해소·절차":
@@ -141,7 +143,12 @@ def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8, skip
     out = []
     for cap, e in meaningful[:n]:
         # 과거 검증(2024-10~2026-10 한국)을 통과한 사건(자사주 취득·소각·배당)은 따로 표시한다: 20일 뒤 중앙 +1.62%p, t=+3.2
-        tag = ("✔호재(과거 검증)" if e["event_type"] in _VALIDATED_GOOD else "호재") if e["polarity"] == "호재" else "⚠악재"
+        if e["polarity"] == "호재":
+            tag = "✔호재(과거 검증)" if e["event_type"] in _VALIDATED_GOOD else "호재"
+        elif e["polarity"] == "악재":
+            tag = "⚠악재"
+        else:
+            tag = "실적 발표(참고)" if e["event_type"] == "잠정실적" else "참고"
         out.append(f"  · {e['corp_name']}({e['stock_code']}) 시총 {cap:,.0f}억 [{tag}] {e['event_type']}"
                    f"{(' — ' + e['summary']) if e['summary'] else ''} ({e['date']})")
     return out

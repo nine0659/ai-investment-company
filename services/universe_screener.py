@@ -272,8 +272,6 @@ def event_signals(events: list[dict]) -> list[dict]:
             out.append({"key": "공시호재", "text": f"{t} 결정 ({e['date']})"})
         elif t == "공급계약" and m is not None and m >= 10:
             out.append({"key": "공시호재", "info": True, "text": f"(참고·미검증) 공급계약 {e['summary']} ({e['date']})"})
-        elif t == "잠정실적" and e["polarity"] == "호재":
-            out.append({"key": "공시호재", "info": True, "text": f"(참고·미검증) 잠정실적 {e['summary']} ({e['date']})"})
     out.sort(key=lambda x: bool(x.get("info")))              # 검증된 것 먼저
     return out[:2]
 

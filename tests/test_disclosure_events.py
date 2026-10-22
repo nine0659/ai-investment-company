@@ -66,7 +66,8 @@ def test_parse_earnings_growth():
     assert d["unit"] == "백만원" and op["cur"] == 165762 and op["yoy"] == 127.1 and op["qoq"] == 35.1
     s, m = de.summarize_earnings(d)
     assert "+127.1%" in s and m == 127.1
-    assert de.earnings_polarity(d, m) == "호재"
+    # 영업이익이 크게 늘어도 '호재'가 아니다: 과거 검증에서 이런 발표 이후 20~60일은 오히려 시장보다 부진했다(+100%↑ 60일 t=-2.8)
+    assert de.earnings_polarity(d, m) == "중립"
 
 
 def test_earnings_turn_to_loss_is_bad_even_without_growth_rate():
@@ -76,9 +77,9 @@ def test_earnings_turn_to_loss_is_bad_even_without_growth_rate():
     assert de.earnings_polarity(d, m) == "악재"
 
 
-def test_earnings_turn_to_profit_is_good():
+def test_earnings_turn_to_profit_is_not_called_good_news():
     d = de.parse_earnings(_earn(("500", "-100", "-", "흑자전환", "-300", "-", "흑자전환")))
-    assert de.earnings_polarity(d, None) == "호재"
+    assert de.earnings_polarity(d, None) == "중립"            # 흑자전환도 검증된 초과수익 없음(t≈+1) → 호재로 단정하지 않는다
 
 
 def test_earnings_flat_is_neutral():
@@ -125,6 +126,7 @@ def test_event_signals_scored_only_for_validated_events():
     sig = us.event_signals([_ev("공급계약", "호재", "계약금액 500억원 · 최근매출액 대비 19.2%", 19.2),
                             _ev("자사주취득", "호재"), _ev("공급계약", "호재", "계약금액 100억원", 4.0),
                             _ev("잠정실적", "호재", "영업이익 +127.1%"), _ev("잠정실적", "중립", "x")])
+    assert not any("잠정실적" in s["text"] for s in sig)                       # 실적 발표는 호재 신호로 쓰지 않는다
     assert len(sig) == 2 and all(s["key"] == "공시호재" for s in sig)          # 최대 2개
     assert not sig[0].get("info") and "자사주취득" in sig[0]["text"]            # 검증된 것이 먼저
     assert sig[1]["info"] is True and "(참고·미검증)" in sig[1]["text"] and "4.0" not in sig[1]["text"]
@@ -224,3 +226,20 @@ def test_earnings_without_unit_omits_amount():
     toks = [t for t in _earn(("6,872", "6,120", "12.3", "-", "2,054", "234.6", "-")) if not t.startswith("단위")]
     s, m = de.summarize_earnings(de.parse_earnings(toks))
     assert "6,872" not in s and "+234.6%" in s and m == 234.6
+
+
+def test_stored_good_earnings_are_read_as_neutral(monkeypatch):
+    """극성 규칙을 바꾸기 전에 '호재'로 저장된 잠정실적도 읽을 때 중립으로 보정된다."""
+    from db.database import get_conn, init_db
+    from sqlalchemy import text
+    init_db()
+    with get_conn() as c:
+        c.execute(text("DELETE FROM dart_events WHERE rcept_no LIKE 'EP%'"))
+        for no, typ, pol in (("EP1", "잠정실적", "호재"), ("EP2", "자사주취득", "호재"), ("EP3", "잠정실적", "악재")):
+            c.execute(text("INSERT INTO dart_events (rcept_no, date, stock_code, corp_name, market, report_nm, event_type, polarity, "
+                           "summary, metric) VALUES (:n, :d, '999998', 'T', 'KOSPI', 'x', :t, :p, '', NULL)"),
+                      {"n": no, "d": __import__("datetime").date.today().isoformat(), "t": typ, "p": pol})
+    got = {e["event_type"] + ":" + e["polarity"] for e in de.recent_events(days=3) if e["stock_code"] == "999998"}
+    with get_conn() as c:
+        c.execute(text("DELETE FROM dart_events WHERE rcept_no LIKE 'EP%'"))
+    assert got == {"잠정실적:중립", "자사주취득:호재", "잠정실적:악재"}

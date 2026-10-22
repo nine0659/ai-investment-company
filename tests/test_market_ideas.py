@@ -142,3 +142,10 @@ def test_highlights_mark_validated_event_types(db):
     line_buyback = [l for l in hl.splitlines() if "자사주취득" in l][0]
     line_contract = [l for l in hl.splitlines() if "공급계약" in l][0]
     assert "✔호재(과거 검증)" in line_buyback and "✔" not in line_contract
+
+
+def test_highlights_show_earnings_as_reference_not_good_news(db):
+    _kr(_d(0), "111111", mcap=50000.0, name="대형A")
+    _ev("ER1", "111111", "잠정실적", "중립", "영업이익 +127.1%", 127.1, name="대형A")
+    hl = "\n".join(mi.event_highlights())
+    assert "실적 발표(참고)" in hl and "호재" not in hl

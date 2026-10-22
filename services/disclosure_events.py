@@ -141,15 +141,15 @@ def summarize_earnings(d: dict) -> tuple[str, float | None]:
 
 
 def earnings_polarity(ed: dict, yoy: float | None) -> str:
-    """영업이익 기준: 흑자전환·전년동기 +30%↑=호재, 적자전환/지속·-30%↓=악재, 그 외 중립."""
+    """잠정실적 극성. 적자 전환/지속만 '악재', 나머지는 모두 '중립'.
+
+    영업이익 증가율이 높다고 '호재'로 분류하지 않는다: 2024-10~2026-10 한국 검증(scripts/backtest_event_signals.py dart2)에서
+    영업이익 YoY +30%↑ 발표는 20일 뒤 중앙 -1.15%p(이긴 시점 27%), +100%↑는 60일 뒤 -4.26%p(이긴 시점 10%, t=-2.8)로
+    오히려 시장보다 부진했다(이미 주가에 반영됐거나 사이클 정점). 적자전환은 20일 -3.05%p로 방향이 음(표본 42건, 약함)."""
     op = ed.get("rows", {}).get("영업이익") or {}
     flags = " ".join(str(f) for f in (op.get("yoy_flag"), op.get("qoq_flag")) if f)
     if "적자" in flags or (op.get("cur") is not None and op["cur"] < 0 and "전환" in flags):
         return "악재"
-    if "흑자전환" in flags:
-        return "호재"
-    if yoy is not None:
-        return "호재" if yoy >= 30 else "악재" if yoy <= -30 else "중립"
     return "중립"
 
 
@@ -303,6 +303,9 @@ def recent_events(days: int = 7, polarity: str | None = None, codes: set[str] | 
         return []
     keys = ("date", "stock_code", "corp_name", "market", "report_nm", "event_type", "polarity", "summary", "metric")
     out = [dict(zip(keys, r)) for r in rows]
+    for e in out:                                    # 극성 규칙을 바꾸기 전에 '호재'로 저장된 잠정실적 보정 (earnings_polarity 참조)
+        if e["event_type"] == "잠정실적" and e["polarity"] == "호재":
+            e["polarity"] = "중립"
     if polarity:
         out = [e for e in out if e["polarity"] == polarity]
     if codes is not None:
