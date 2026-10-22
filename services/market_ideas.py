@@ -10,12 +10,12 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 _KST = ZoneInfo("Asia/Seoul")
 _MAX_AGE_DAYS = 4
-_VALIDATED_GOOD = {"자사주취득", "자사주소각", "배당결정"}
+_VALIDATED_GOOD = {"자사주취득"}   # 소각·배당은 검증 표본 0건 — 미검증
 
 _HEADER = ("[🔭 시장 전체 스크리닝 — 코드 계산. 보유 여부와 무관한 '관심 후보'이며 매수 권고가 아니다. "
            "이 블록의 수치만 인용하고 없는 수치는 만들지 마라. 신규 편입을 판단할 땐 이 후보 풀을 먼저 검토하고, "
            "목록 밖 종목을 편입하려면 근거를 따로 제시하라. 후보를 언급할 땐 ⚠경고와 반증 조건도 함께 적어라. "
-           "✔ 표시 신호(한국 저PER·저PBR·자사주/소각/배당 공시)만 과거 검증을 통과했다(약 1.5~2년 한국 기준 — 시기 특유일 수 있음). "
+           "✔ 표시 신호(한국 비금융 저PER·자사주 취득 공시)만 과거 검증을 통과했다(약 1.5~2년 한국 기준 — 시기 특유일 수 있고 저PER 근거는 약함, 금융주 랠리 제외 시). "
            "표시 없는 신호와 미국 신호는 시장 초과수익을 낸다는 검증은 아직 없다(가격 추세 신호는 효과가 없어 점수에서 제외) — "
            "후보는 '탐색 출발점'이지 예측이 아니므로 확신도를 높이는 근거로 쓰지 마라]")
 
@@ -146,7 +146,7 @@ def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8, skip
     meaningful.sort(key=lambda x: -x[0])
     out = []
     for cap, e in meaningful[:n]:
-        # 과거 검증(2024-10~2026-10 한국)을 통과한 사건(자사주 취득·소각·배당)은 따로 표시한다: 20일 뒤 중앙 +1.62%p, t=+3.2
+        # 과거 검증(2024-10~2026-10 한국)을 통과한 사건(자사주 취득)은 따로 표시한다: 20일 뒤 중앙 +1.62%p, t=+3.2
         if e["polarity"] == "호재":
             tag = "✔호재(과거 검증)" if e["event_type"] in _VALIDATED_GOOD else "호재"
         elif e["polarity"] == "악재":
@@ -159,7 +159,7 @@ def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8, skip
 
 
 def validated_events(days: int = 3, min_mcap_eok: float = 1000, n: int = 8) -> list[str]:
-    """과거 검증을 통과한 호재 사건(자사주 취득·소각·배당 결정)을 스크리너 후보 여부와 무관하게 최근 며칠치 전부.
+    """과거 검증을 통과한 호재 사건(자사주 취득 결정)을 스크리너 후보 여부와 무관하게 최근 며칠치 전부.
     같은 종목의 같은 유형은 한 번만, 시총 큰 순. (검증: 2024-10~2026-10 한국, 접수일 다음 거래일 이후 20일 중앙 초과수익 +1.62%p, t=+3.2)"""
     from services.disclosure_events import recent_events
     since = (datetime.now(_KST).date() - timedelta(days=days)).strftime("%Y-%m-%d")

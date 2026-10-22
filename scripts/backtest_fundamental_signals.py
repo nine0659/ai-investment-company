@@ -32,6 +32,9 @@ from backtest_event_signals import HORIZONS, load_prices, summarize  # noqa: E40
 
 _NI = ("당기순이익(손실)", "당기순이익", "연결당기순이익", "분기순이익")
 _EQ = ("자본총계",)
+_LIAB = ("부채총계",)
+_SALES = ("매출액", "영업수익", "수익(매출액)")
+_OP = ("영업이익", "영업이익(손실)")
 
 
 def _amt(s) -> float | None:
@@ -68,15 +71,49 @@ def fetch_financials(codes: list[str], years=(2024, 2025)) -> dict:
                     d["ni"] = (_amt(x["thstrm_amount"]), _amt(x.get("frmtrm_amount")))
                 if x["sj_div"] == "BS" and x["account_nm"] in _EQ and "eq" not in d:
                     d["eq"] = (_amt(x["thstrm_amount"]), _amt(x.get("frmtrm_amount")))
+                if x["sj_div"] == "BS" and x["account_nm"] in _LIAB and "liab" not in d:
+                    d["liab"] = (_amt(x["thstrm_amount"]), _amt(x.get("frmtrm_amount")))
+                if x["sj_div"] in ("IS", "CIS") and x["account_nm"] in _SALES and "sales" not in d:
+                    d["sales"] = (_amt(x["thstrm_amount"]), _amt(x.get("frmtrm_amount")))
+                if x["sj_div"] in ("IS", "CIS") and x["account_nm"] in _OP and "op" not in d:
+                    d["op"] = (_amt(x["thstrm_amount"]), _amt(x.get("frmtrm_amount")))
             for code in {k[0] for k in by}:
                 d = by.get((code, "CFS")) or by.get((code, "OFS")) or {}
                 if "ni" in d and "eq" in d:
                     rec = out.setdefault(code, {})
                     rec.setdefault(yr, {})["ni"], rec[yr]["eq"] = d["ni"][0], d["eq"][0]
+                    for k in ("liab", "sales", "op"):
+                        if k in d:
+                            rec[yr][k] = d[k][0]
                     rec.setdefault(yr - 1, {}).setdefault("ni", d["ni"][1])
                     rec[yr - 1].setdefault("eq", d["eq"][1])
         print(f"  FY{yr} 재무 수신: 누적 {len(out)}개 회사", flush=True)
     return out
+
+
+_FIN_KEYWORDS = ("은행", "증권", "보험", "카드", "금융", "캐피탈", "창업투자", "저축", "리스")
+
+
+def financial_codes(codes: list[str]) -> set[str]:
+    """금융업 종목 코드 집합 — 네이버 업종 이름에 금융 키워드가 들어간 종목. 부채비율이 구조적으로 높고(은행·증권·보험)
+    2025~26 한국 금융주 랠리가 '가치/고부채' 결과를 왜곡할 수 있어 따로 떼어 본다. 결과는 임시 폴더에 하루 캐시."""
+    from concurrent.futures import ThreadPoolExecutor
+    from clients import naver_client as nv
+    cache = os.path.join(tempfile.gettempdir(), "kr_fin_codes.pkl")
+    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
+        with open(cache, "rb") as f:
+            return pickle.load(f)
+    names = {str(g["no"]): g.get("name", "") for g in nv.industry_groups()}
+    def one(c):
+        ind = str((nv.stock_integration(c) or {}).get("industryCode") or "")
+        return c, names.get(ind, "")
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        res = list(ex.map(one, codes))
+    fin = {c for c, nm in res if any(k in nm for k in _FIN_KEYWORDS)}
+    print(f"  금융업 판정 {len(fin)}개 / {len(codes)}개 (업종 이름 {sorted({nm for c, nm in res if c in fin})[:12]})", flush=True)
+    with open(cache, "wb") as f:
+        pickle.dump(fin, f)
+    return fin
 
 
 def run() -> str:
@@ -84,7 +121,7 @@ def run() -> str:
     closes = load_prices("kr")
     uni = us.fetch_universe()
     mcap_now = {r["code"]: r["mcap_eok"] * 1e8 for r in us.tradable(uni["rows"])}      # 원
-    cache = os.path.join(tempfile.gettempdir(), "kr_fin_2y.pkl")
+    cache = os.path.join(tempfile.gettempdir(), "kr_fin2_2y.pkl")
     if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
         with open(cache, "rb") as f:
             fin = pickle.load(f)
@@ -92,6 +129,7 @@ def run() -> str:
         fin = fetch_financials([c for c in closes.columns if c in mcap_now])
         with open(cache, "wb") as f:
             pickle.dump(fin, f)
+    fin_set = financial_codes([c for c in closes.columns if c in mcap_now])
     idx = pd.DatetimeIndex(closes.index).tz_localize(None).normalize()
     last = closes.iloc[-1]
     by = {}
@@ -112,7 +150,10 @@ def run() -> str:
             if ni is None or not eq or eq <= 0:
                 continue
             mc = mcap_now[code] * px / now
-            rows.append({"code": code, "per": mc / ni if ni > 0 else None, "pbr": mc / eq, "roe": ni / eq,
+            liab, sales, op = f.get("liab"), f.get("sales"), f.get("op")
+            rows.append({"code": code, "fin": code in fin_set, "per": mc / ni if ni > 0 else None, "pbr": mc / eq, "roe": ni / eq, "mc": mc,
+                         "debt": liab / eq * 100 if liab is not None else None,
+                         "opm": op / sales * 100 if op is not None and sales and sales > 0 else None,
                          "growth": (ni / prev - 1) * 100 if prev and prev > 0 and ni > 0 else None})
         if len(rows) < 150:
             continue
@@ -129,6 +170,24 @@ def run() -> str:
             "순이익 +20%+ (실현)": df["growth"].notna() & (df["growth"] >= 20),
             "순이익 +20%+ AND PER≤10": df["growth"].notna() & (df["growth"] >= 20) & df["per"].notna() & (df["per"] <= 10),
             "ROE 하위(<3%) 또는 적자": (df["roe"] < 0.03),
+            "PER≤10 AND 부채비율 100% 이하": df["per"].notna() & (df["per"] <= 10) & df["debt"].notna() & (df["debt"] <= 100),
+            "PER≤10 AND 부채비율 300%+": df["per"].notna() & (df["per"] <= 10) & df["debt"].notna() & (df["debt"] >= 300),
+            "PER≤10 AND 영업이익률 10%+": df["per"].notna() & (df["per"] <= 10) & df["opm"].notna() & (df["opm"] >= 10),
+            "PER≤10 AND 영업이익률 5% 미만": df["per"].notna() & (df["per"] <= 10) & df["opm"].notna() & (df["opm"] < 5),
+            "PER≤10 AND PBR<1": df["per"].notna() & (df["per"] <= 10) & (df["pbr"] < 1),
+            "PER≤10 — 소형(시총 하위 1/3)": df["per"].notna() & (df["per"] <= 10) & (df["mc"] <= df["mc"].quantile(1 / 3)),
+            "PER≤10 — 중형(중간 1/3)": df["per"].notna() & (df["per"] <= 10) & (df["mc"] > df["mc"].quantile(1 / 3)) & (df["mc"] <= df["mc"].quantile(2 / 3)),
+            "PER≤10 — 대형(상위 1/3)": df["per"].notna() & (df["per"] <= 10) & (df["mc"] > df["mc"].quantile(2 / 3)),
+            "부채비율 300%+ (가치 무관)": df["debt"].notna() & (df["debt"] >= 300),
+            # ── 금융업을 떼어 본다 (금융주 랠리가 결과를 왜곡하는지) ──
+            "[비금융] PER≤10": ~df["fin"] & df["per"].notna() & (df["per"] <= 10),
+            "[비금융] PBR<1": ~df["fin"] & (df["pbr"] < 1),
+            "[비금융] PBR<0.5": ~df["fin"] & (df["pbr"] < 0.5),
+            "[비금융] 부채비율 300%+": ~df["fin"] & df["debt"].notna() & (df["debt"] >= 300),
+            "[비금융] PER≤10 AND 부채비율 100% 이하": ~df["fin"] & df["per"].notna() & (df["per"] <= 10) & df["debt"].notna() & (df["debt"] <= 100),
+            "[비금융] 대형 PER≤10": ~df["fin"] & df["per"].notna() & (df["per"] <= 10) & (df["mc"] > df["mc"].quantile(2 / 3)),
+            "[금융] 전체": df["fin"],
+            "[금융] PER≤10": df["fin"] & df["per"].notna() & (df["per"] <= 10),
         }
         for h in HORIZONS:
             if h == 5 or pos + h >= len(idx):

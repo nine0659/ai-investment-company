@@ -329,7 +329,7 @@ def test_digest_validated_events_section_lists_buyback_regardless_of_screener(db
 
 def test_digest_highlights_skip_validated_types(db):
     _kr(_d(0), "111111", mcap=50000.0)
-    _ev("VB1", "111111", "자사주소각", "호재")
+    _ev("VB1", "111111", "자사주취득", "호재")
     _us(_d(0), "AAA")
     t = dd.build()["text"]
-    assert "자사주소각" in t and "📰 오늘 시장 공시 하이라이트" not in t       # 하이라이트엔 중복으로 안 나온다
+    assert "자사주취득" in t and "📰 오늘 시장 공시 하이라이트" not in t       # 하이라이트엔 중복으로 안 나온다

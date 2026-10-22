@@ -210,10 +210,13 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
         # 참고용(info): ROE 10%+ 단독은 한국 17개월 검증에서 효과 없음(60일 +0.13%p, t=+0.8) → 점수 제외 (scripts/backtest_fundamental_signals.py)
         sig.append({"key": "수익성", "info": True, "text": f"(참고) ROE 약 {d['eps'] / d['bps'] * 100:.0f}% (EPS/BPS)"})
     if cp and 0 < cp <= 10:
-        # ✔검증: 확정 실적 PER 10배 이하는 한국 17개월 검증에서 60일 뒤 +2.14%p, 이긴 시점 78%(t=+3.4). (여기 PER은 컨센서스 추정 기준이라 근사)
-        sig.append({"key": "저평가", "validated": True, "text": f"추정PER {cp:.1f}배"})
+        # ✔검증(비금융만): 확정 실적 PER 10배 이하, 금융업을 뺀 한국 17개월 검증에서 60일 뒤 +1.36%p, 이긴 시점 53%, t=+2.1(약한 지지).
+        # 금융 포함 수치(+2.14%p, t=+3.4)는 2025~26 금융주 랠리가 섞인 것이라 쓰지 않는다. 금융업·분류 불명(financial 없음)은 ✔ 없음.
+        # (여기 PER은 컨센서스 추정 기준이라 근사)
+        sig.append({"key": "저평가", "validated": d.get("financial") is False, "text": f"추정PER {cp:.1f}배"})
     if d["pbr"] and 0 < d["pbr"] < 1:
-        sig.append({"key": "자산대비저평가", "validated": True, "text": f"PBR {d['pbr']:.2f}배"})   # ✔ PBR<1: 60일 +1.21%p(t=+2.3), <0.5: +1.87%p(t=+2.7)
+        # ✔ 없음: 금융을 빼면 PBR<1은 60일 +0.68%p, 이긴 시점 47%, t=+1.3으로 지지되지 않았다 (PBR<0.5는 t=+2.1로 약함)
+        sig.append({"key": "자산대비저평가", "text": f"PBR {d['pbr']:.2f}배"})
     med = ind_median.get(d["industry"])
     if cp and med and 0 < cp <= med * 0.7:
         sig.append({"key": "업종대비저평가", "text": f"추정PER {cp:.1f}배 vs 업종 중앙 {med:.1f}배"})
@@ -241,6 +244,14 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
 # 같은 성격의 신호가 겹쳐 점수가 부풀지 않게 묶음 단위로 센다
 _GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대비저평가": "가치",
           "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건"}
+
+
+FIN_KEYWORDS = ("은행", "증권", "보험", "카드", "금융", "캐피탈", "창업투자", "저축", "리스")
+
+
+def financial_industry_codes(groups: list[dict]) -> set[str]:
+    """네이버 업종 그룹 중 금융업(은행·증권·보험 등) 업종 번호. 이름을 못 받았으면 빈 집합."""
+    return {str(g["no"]) for g in groups or [] if any(k in str(g.get("name", "")) for k in FIN_KEYWORDS)}
 
 
 def validated_count(signals: list[dict]) -> int:
@@ -283,15 +294,17 @@ def trend_warnings(r: dict) -> list[str]:
 def event_signals(events: list[dict]) -> list[dict]:
     """최근 공시 사건 중 호재 신호. 수치는 공시 본문에서 코드가 뽑은 summary를 그대로 쓴다.
 
-    점수에 넣는 건 **과거 검증을 통과한 것만**이다: 자사주 취득·소각·배당 결정은 접수일 다음 거래일 이후 20일 중앙 초과수익
+    점수에 넣는 건 **과거 검증을 통과한 것만**이다: 자사주 취득 결정은 접수일 다음 거래일 이후 20일 중앙 초과수익
     +1.62%p, 이긴 시점 64%(t=+3.2, 2024-10~2026-10 한국, scripts/backtest_event_signals.py dart).
     대형 공급계약·잠정실적 호조는 아직 검증 전이라 '(참고)'로만 표시하고 점수에서 뺀다.
     """
     out = []
     for e in events or []:
         t, m = e["event_type"], e.get("metric")
-        if t in ("자사주취득", "자사주소각", "배당결정"):
-            out.append({"key": "공시호재", "validated": True, "text": f"{t} 결정 ({e['date']})"})
+        if t == "자사주취득":
+            out.append({"key": "공시호재", "validated": True, "text": f"자사주 취득 결정 ({e['date']})"})
+        elif t in ("자사주소각", "배당결정"):                     # 검증 표본 0건(주요사항보고서 목록에 없는 유형) — 미검증
+            out.append({"key": "공시호재", "info": True, "text": f"(참고·미검증) {t} 결정 ({e['date']})"})
         elif t == "공급계약" and m is not None and m >= 10:
             out.append({"key": "공시호재", "info": True, "text": f"(참고·미검증) 공급계약 {e['summary']} ({e['date']})"})
     out.sort(key=lambda x: bool(x.get("info")))              # 검증된 것 먼저
@@ -335,11 +348,11 @@ def screen(enriched: list[dict], exclude: set[str] | None = None, top: int = 20,
     return pick_from(score_all(enriched), exclude, top, min_score)
 
 
-def _industry_board(scored: list[dict]) -> dict | None:
+def _industry_board(scored: list[dict], groups: list[dict] | None = None) -> dict | None:
     """업종 온도계. 실패해도 스크리닝 자체는 계속한다(None) — 단 잡 상태 상세에 '업종 온도계 없음'이 남는다."""
     try:
         from services import industry_board
-        groups = nv.industry_groups()
+        groups = groups if groups is not None else nv.industry_groups()
         board = industry_board.build(scored, groups)
         board["names_ok"] = bool(groups)                    # 업종 이름을 못 받으면 '업종NNN'으로 폴백 — 잡 상세에 남긴다
         return board
@@ -367,6 +380,11 @@ def run_screen(exclude: set[str] | None = None, top: int = 20, max_detail: int =
         if r.get("detail"):
             r["detail"]["events"] = events.get(r["code"], [])
             r["detail"]["hist"] = hist.get(r["code"])
+    groups = nv.industry_groups()
+    fin_inds = financial_industry_codes(groups)
+    for r in detail_rows:                                      # 금융업 여부(은행·증권·보험…): 업종 이름을 못 받으면 None → 검증 표시를 달지 않는다
+        if r.get("detail"):
+            r["detail"]["financial"] = (str(r["detail"].get("industry")) in fin_inds) if groups else None
     scored = score_all([r for r in detail_rows if r.get("detail")])
     return {
         "as_of": datetime.now(_KST).strftime("%Y-%m-%d %H:%M"),
@@ -374,7 +392,7 @@ def run_screen(exclude: set[str] | None = None, top: int = 20, max_detail: int =
         "tradable": len(pool), "detailed": got, "detail_requested": len(detail_rows),
         "hist_ok": len(hist), "hist_requested": len(with_detail),
         "event_codes": len(events), "blocked": sum(1 for r in scored if r.get("blocked")),
-        "industry_board": _industry_board(scored),
+        "industry_board": _industry_board(scored, groups),
         "scored": scored, "picks": pick_from(scored, exclude, top),
     }
 

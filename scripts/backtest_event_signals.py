@@ -148,13 +148,28 @@ def dart_events(months: int = 24) -> list[dict]:
 
 
 def dart_study() -> str:
+    cache = os.path.join(tempfile.gettempdir(), "kr_dart_b_events.pkl")
+    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
+        with open(cache, "rb") as f:
+            evs = pickle.load(f)
+    else:
+        evs = dart_events()
+        with open(cache, "wb") as f:
+            pickle.dump(evs, f)
     closes = load_prices("kr")
-    evs = dart_events()
+    from backtest_fundamental_signals import financial_codes          # 금융업(금융주 랠리가 결과를 왜곡할 수 있어 따로 본다)
+    fin = financial_codes([c for c in closes.columns])
     idx = pd.DatetimeIndex(closes.index).tz_localize(None).normalize()
-    groups = {"자사주취득": ["자사주취득"], "자사주소각": ["자사주소각"], "배당결정": ["배당결정"],
-              "유상증자": ["유상증자"], "메자닌발행": ["메자닌발행"], "감자": ["감자"],
-              "호재 묶음(취득·소각·배당)": ["자사주취득", "자사주소각", "배당결정"],
-              "악재 묶음(증자·메자닌·감자)": ["유상증자", "메자닌발행", "감자"]}
+    good = ["자사주취득", "자사주소각", "배당결정"]
+    bad = ["유상증자", "메자닌발행", "감자"]
+    # 이름 → (유형 목록, 금융 처리: None=전부 / False=비금융만 / True=금융만)
+    groups = {"자사주취득": (["자사주취득"], None), "자사주소각": (["자사주소각"], None), "배당결정": (["배당결정"], None),
+              "유상증자": (["유상증자"], None), "메자닌발행": (["메자닌발행"], None), "감자": (["감자"], None),
+              "호재 묶음(취득·소각·배당)": (good, None),
+              "호재 묶음 — 비금융만": (good, False), "호재 묶음 — 금융만": (good, True),
+              "자사주취득 — 비금융만": (["자사주취득"], False), "자사주소각 — 비금융만": (["자사주소각"], False),
+              "배당결정 — 비금융만": (["배당결정"], False),
+              "악재 묶음(증자·메자닌·감자)": (bad, None), "악재 묶음 — 비금융만": (bad, False)}
     by = {k: {h: [] for h in HORIZONS} for k in groups}
     pdt = {k: {h: {} for h in HORIZONS} for k in groups}
     seen = set()
@@ -166,8 +181,9 @@ def dart_study() -> str:
         pos = idx.searchsorted(pd.Timestamp(e["date"]), side="right")      # 접수일 *다음* 거래일 (룩어헤드 방지)
         if pos >= len(idx):
             continue
-        for g, types in groups.items():
-            if e["type"] in types:
+        is_fin = e["code"] in fin
+        for g, (types, fin_mode) in groups.items():
+            if e["type"] in types and (fin_mode is None or fin_mode == is_fin):
                 for h in HORIZONS:
                     x = fwd_excess(closes, e["code"], pos, h)
                     if x is not None:

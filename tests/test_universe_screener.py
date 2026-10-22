@@ -171,7 +171,7 @@ def test_job_fails_when_history_mostly_missing(monkeypatch):
 
 # ── 검증 통과 신호(✔) 표시·정렬 (2026-10-22 한국 재무 신호 17개월 검증: scripts/backtest_fundamental_signals.py) ────────────
 
-def _vrow(code, cns_per=None, pbr=None, eps=1000.0, bps=5000.0, mcap=5000.0, target=None, recomm=None):
+def _vrow(code, cns_per=None, pbr=None, eps=1000.0, bps=5000.0, mcap=5000.0, target=None, recomm=None, financial=False):
     infos = [{"code": "eps", "value": f"{eps:,.0f}원"}, {"code": "bps", "value": f"{bps:,.0f}원"}]
     if cns_per:
         infos.append({"code": "cnsPer", "value": f"{cns_per}배"})
@@ -181,27 +181,58 @@ def _vrow(code, cns_per=None, pbr=None, eps=1000.0, bps=5000.0, mcap=5000.0, tar
                               "consensusInfo": {"priceTargetMean": f"{target:,.0f}" if target else None,
                                                 "recommMean": f"{recomm}" if recomm else None},
                               "dealTrendInfos": []})
+    d["financial"] = financial
     return {"code": code, "name": code, "market": "KOSPI", "close": 10000.0, "chg_pct": 0.0, "volume": 1.0,
             "value_eok": 1.0, "mcap_eok": mcap, "detail": d}
 
 
-def test_value_signals_are_marked_validated_and_roe_is_info_only():
-    sig = us.compute_signals(_vrow("A", cns_per=6.0, pbr=0.8), {})
-    by = {s["key"]: s for s in sig}
-    assert by["저평가"]["validated"] is True and by["자산대비저평가"]["validated"] is True
-    assert by["수익성"].get("info") is True and not by["수익성"].get("validated")
-    assert us.score(sig) == 1                                      # 수익성은 점수 제외, 저평가·자산대비는 같은 '가치' 묶음
-    assert us.validated_count(sig) == 1
+def test_low_per_validated_only_for_non_financials_and_pbr_never():
+    """금융업을 뺀 한국 17개월 검증: 저PER(≤10) 60일 +1.36%p·이긴 시점 53%·t=+2.1(약한 지지)만 ✔. PBR<1은 t=+1.3이라 ✔ 없음.
+    금융 포함 수치(t=+3.4)는 금융주 랠리 때문이라 쓰지 않는다 — 금융업·분류 불명은 ✔를 달지 않는다."""
+    non_fin = {s["key"]: s for s in us.compute_signals(_vrow("A", cns_per=6.0, pbr=0.8, financial=False), {})}
+    assert non_fin["저평가"]["validated"] is True
+    assert not non_fin["자산대비저평가"].get("validated")                      # PBR은 ✔ 없음
+    assert non_fin["수익성"].get("info") is True                              # ROE 단독은 효과 없어 참고용
+    fin = {s["key"]: s for s in us.compute_signals(_vrow("B", cns_per=6.0, pbr=0.8, financial=True), {})}
+    assert fin["저평가"]["validated"] is False                                # 금융업은 ✔ 없음
+    unknown = {s["key"]: s for s in us.compute_signals(_vrow("C", cns_per=6.0, pbr=0.8, financial=None), {})}
+    assert unknown["저평가"]["validated"] is False                            # 업종을 모르면 ✔ 없음(보수적)
+    assert us.validated_count(list(non_fin.values())) == 1 and us.validated_count(list(fin.values())) == 0
 
 
 def test_signal_labels_and_saved_string_roundtrip():
     sig = us.compute_signals(_vrow("A", cns_per=6.0, pbr=0.8), {})
     labels = [us.signal_label(s) for s in sig]
-    assert "저평가✔" in labels and "자산대비저평가✔" in labels and "수익성(참고)" in labels
-    assert us.validated_groups_in(",".join(labels)) == 1           # 가치 묶음 하나
+    assert "저평가✔" in labels and "자산대비저평가" in labels and "수익성(참고)" in labels
+    assert us.validated_groups_in(",".join(labels)) == 1                       # 가치 묶음 하나
     assert us.validated_groups_in("수익성(참고),컨센서스여력") == 0
     assert us.validated_groups_in("저평가✔,공시호재✔,쌍끌이매수") == 2
     assert us.validated_groups_in(None) == 0
+
+
+def test_financial_industry_codes_from_group_names():
+    groups = [{"no": 1, "name": "은행"}, {"no": 2, "name": "증권"}, {"no": 3, "name": "손해보험"}, {"no": 4, "name": "반도체와반도체장비"},
+              {"no": 5, "name": "기타금융"}, {"no": 6, "name": "조선"}]
+    assert us.financial_industry_codes(groups) == {"1", "2", "3", "5"}
+    assert us.financial_industry_codes([]) == set() and us.financial_industry_codes(None) == set()
+
+
+def test_run_screen_marks_financial_flag_from_industry_groups(monkeypatch):
+    """업종 이름을 받으면 financial True/False, 못 받으면 None(= ✔ 없음)이 상세에 들어간다."""
+    from clients import naver_client as nv
+    row = {"code": "111111", "name": "A", "market": "KOSPI", "close": 1.0, "chg_pct": 0.0, "volume": 1.0, "value_eok": 1.0, "mcap_eok": 5000.0}
+    det = _vrow("A", cns_per=6.0)["detail"]
+    monkeypatch.setattr(us, "fetch_universe", lambda: {"rows": [row], "expected": 1, "fetched": 1, "complete": True})
+    monkeypatch.setattr(us, "tradable", lambda rows: rows)
+    monkeypatch.setattr(us, "enrich", lambda rows: [{**rows[0], "detail": {**det, "industry": "7"}}])
+    monkeypatch.setattr(us, "fetch_history", lambda rows: {})
+    monkeypatch.setattr(us, "_industry_board", lambda scored, groups=None: None)
+    monkeypatch.setattr(nv, "industry_groups", lambda: [{"no": 7, "name": "증권"}])
+    assert us.run_screen()["scored"][0]["detail"]["financial"] is True
+    monkeypatch.setattr(nv, "industry_groups", lambda: [{"no": 8, "name": "반도체"}])
+    assert us.run_screen()["scored"][0]["detail"]["financial"] is False
+    monkeypatch.setattr(nv, "industry_groups", lambda: [])
+    assert us.run_screen()["scored"][0]["detail"]["financial"] is None
 
 
 def test_event_buyback_is_validated_but_contract_is_info():

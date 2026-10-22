@@ -121,14 +121,14 @@ def _ev(typ, pol, summary="", metric=None, date="2026-10-21"):
 
 
 def test_event_signals_scored_only_for_validated_events():
-    """과거 검증(scripts/backtest_event_signals.py dart): 자사주 취득·소각·배당만 20일 +1.62%p(t=+3.2)로 통과 → 점수 신호.
+    """과거 검증(scripts/backtest_event_signals.py dart): 자사주 취득만 통과(비금융 20일 +1.74%p, t=+3.4) → 점수 신호.
     대형 공급계약·잠정실적 호조는 미검증 → '(참고·미검증)' info 신호로만 표시하고 점수에서 제외."""
     sig = us.event_signals([_ev("공급계약", "호재", "계약금액 500억원 · 최근매출액 대비 19.2%", 19.2),
                             _ev("자사주취득", "호재"), _ev("공급계약", "호재", "계약금액 100억원", 4.0),
                             _ev("잠정실적", "호재", "영업이익 +127.1%"), _ev("잠정실적", "중립", "x")])
     assert not any("잠정실적" in s["text"] for s in sig)                       # 실적 발표는 호재 신호로 쓰지 않는다
     assert len(sig) == 2 and all(s["key"] == "공시호재" for s in sig)          # 최대 2개
-    assert not sig[0].get("info") and "자사주취득" in sig[0]["text"]            # 검증된 것이 먼저
+    assert not sig[0].get("info") and "자사주 취득" in sig[0]["text"]           # 검증된 것이 먼저
     assert sig[1]["info"] is True and "(참고·미검증)" in sig[1]["text"] and "4.0" not in sig[1]["text"]
 
 
@@ -243,3 +243,11 @@ def test_stored_good_earnings_are_read_as_neutral(monkeypatch):
     with get_conn() as c:
         c.execute(text("DELETE FROM dart_events WHERE rcept_no LIKE 'EP%'"))
     assert got == {"잠정실적:중립", "자사주취득:호재", "잠정실적:악재"}
+
+
+def test_buyback_cancel_and_dividend_are_not_validated():
+    """자사주소각·배당결정은 검증 표본이 0건(DART 주요사항보고서 목록에 없는 유형)이라 ✔를 달 수 없다 — 참고(미검증)로만."""
+    sig = us.event_signals([{"event_type": "자사주소각", "polarity": "호재", "summary": "", "metric": None, "date": "2026-10-21"},
+                            {"event_type": "배당결정", "polarity": "호재", "summary": "", "metric": None, "date": "2026-10-21"}])
+    assert len(sig) == 2 and all(x.get("info") and not x.get("validated") for x in sig)
+    assert us.score(sig) == 0 and us.validated_count(sig) == 0

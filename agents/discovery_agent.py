@@ -170,7 +170,7 @@ _VALIDATED_EVENT_SHARE = 4   # 후보 풀 15개 중 검증 통과 공시 종목�
 
 
 def _validated_event_candidates(exclude: set[str]) -> list[dict]:
-    """최근 3일 자사주 취득·소각·배당 결정 공시 종목(시총 3,000억+). 2024-10~2026-10 한국 검증: 공시 다음 거래일부터 20일 뒤
+    """최근 3일 자사주 취득 결정 공시 종목(시총 3,000억+). 2024-10~2026-10 한국 검증: 공시 다음 거래일부터 20일 뒤
     전 종목 중앙값 대비 +1.62%p, 이긴 시점 64%(t=+3.2). 실패하면 조용히 빈 목록(기존 방식으로 진행)."""
     try:
         from services.disclosure_events import validated_event_stocks

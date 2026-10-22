@@ -320,7 +320,7 @@ def by_code(days: int = 7) -> dict[str, list[dict]]:
     return out
 
 
-VALIDATED_GOOD_TYPES = ("자사주취득", "자사주소각", "배당결정")   # 과거 검증 통과(20일 +1.62%p, 이긴 시점 64%, t=+3.2)
+VALIDATED_GOOD_TYPES = ("자사주취득",)   # 과거 검증 통과: 비금융 20일 +1.74%p·이긴 시점 67%(t=+3.4), 60일 +2.58%p(t=+2.5). 소각·배당은 검증 표본 0건이라 제외
 
 
 def validated_event_stocks(days: int = 3, min_mcap_eok: float = 3000.0) -> list[dict]:
