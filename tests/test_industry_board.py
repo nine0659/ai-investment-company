@@ -187,3 +187,8 @@ def test_board_with_only_market_row_still_formats(db):
 
 def test_build_records_sample_size_in_market():
     assert ib.build(_ind("a", "1", 6), _GROUPS)["market"]["n"] == 6
+
+
+def test_board_states_it_is_descriptive_not_predictive(db):
+    ib.save_daily(_board_with([_item("1", "반도체", "강세")]), date="2026-10-22")
+    assert "예측한다는 검증은 없습니다" in ib.format_board()

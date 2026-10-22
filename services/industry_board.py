@@ -192,7 +192,8 @@ def format_board(snaps: list[tuple[str, list[dict]]] | None = None, top: int = 4
     groups = {k: [i for i in cur if i["regime"] == k] for k in ("강세", "회복초입", "약세")}
     if not any(groups.values()) and not mkt_now:
         return ""
-    lines = [f"🌡 업종 온도계 ({date} 기준, 시장 전체 대비 · 코드 계산 · {cmp_note})"]
+    lines = [f"🌡 업종 온도계 ({date} 기준, 시장 전체 대비 · 코드 계산 · {cmp_note})",
+             "   ※ 현재 상태 설명입니다. 업종 모멘텀이 이후 수익을 예측한다는 검증은 없습니다(한국 2년 검증에서 상대강도 효과 없음)."]
     breadth = breadth_line(mkt_now, mkt_prev, snaps[-1][0] if len(snaps) > 1 else None)
     if breadth:
         lines.append(breadth)
