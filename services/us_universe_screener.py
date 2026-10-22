@@ -109,7 +109,7 @@ def enrich(rows: list[dict], workers: int = 3) -> list[dict]:
         failed = [i for i, r in enumerate(done) if not r.get("detail")]
         if not failed:
             break
-        time.sleep(3)
+        time.sleep(60 if len(failed) > len(rows) * 0.3 else 3)   # 많이 막혔으면 제한이 풀리도록 길게 쉰다
         with ThreadPoolExecutor(max_workers=w) as ex:
             redo = list(ex.map(lambda i: one(rows[i], pause), failed))
         for i, r in zip(failed, redo):
