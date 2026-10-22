@@ -127,6 +127,11 @@ def _build_candidate_pool(kis: KISClient, exclude: set[str]) -> list[dict]:
     # 스냅샷이 없거나 오래됐으면 조용히 기존 방식 그대로(전부-아니면-전무 방지).
     screened = _screener_candidates(exclude)
     merged: dict[str, dict] = {c["code"]: c for c in screened}
+    for c in _validated_event_candidates(exclude):           # 과거 검증을 통과한 사건 종목은 점수가 낮아도 후보 풀에 넣는다
+        if c["code"] in merged:
+            merged[c["code"]]["signals"] = merged[c["code"]]["signals"] + c["signals"]
+        else:
+            merged[c["code"]] = c
     for c in ranked:
         if c["code"] in merged:
             merged[c["code"]]["signals"] = merged[c["code"]]["signals"] + c["signals"]
@@ -158,6 +163,22 @@ def _screener_candidates(exclude: set[str]) -> list[dict]:
         return out
     except Exception as e:
         logger.warning("[발굴] 전 종목 후보 편입 실패 (기존 방식으로 진행): %s", e)
+        return []
+
+
+_VALIDATED_EVENT_SHARE = 4   # 후보 풀 15개 중 검증 통과 공시 종목에 배정하는 최대 수
+
+
+def _validated_event_candidates(exclude: set[str]) -> list[dict]:
+    """최근 3일 자사주 취득·소각·배당 결정 공시 종목(시총 3,000억+). 2024-10~2026-10 한국 검증: 공시 다음 거래일부터 20일 뒤
+    전 종목 중앙값 대비 +1.62%p, 이긴 시점 64%(t=+3.2). 실패하면 조용히 빈 목록(기존 방식으로 진행)."""
+    try:
+        from services.disclosure_events import validated_event_stocks
+        return [{"code": s["code"], "name": s["name"], "market": s["market"],
+                 "signals": [f"검증공시:{s['event_type']}({s['date'][5:]})"]}
+                for s in validated_event_stocks(days=3) if s["code"] not in exclude][:_VALIDATED_EVENT_SHARE]
+    except Exception as e:
+        logger.warning("[발굴] 검증 통과 공시 종목 편입 실패 (기존 방식으로 진행): %s", e)
         return []
 
 

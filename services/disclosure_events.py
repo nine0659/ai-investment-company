@@ -318,3 +318,30 @@ def by_code(days: int = 7) -> dict[str, list[dict]]:
     for e in recent_events(days):
         out.setdefault(e["stock_code"], []).append(e)
     return out
+
+
+VALIDATED_GOOD_TYPES = ("자사주취득", "자사주소각", "배당결정")   # 과거 검증 통과(20일 +1.62%p, 이긴 시점 64%, t=+3.2)
+
+
+def validated_event_stocks(days: int = 3, min_mcap_eok: float = 3000.0) -> list[dict]:
+    """최근 며칠 내 검증 통과 호재 사건이 난 종목 [{code, name, market, event_type, date, mcap_eok}] (시총 큰 순, 종목당 1건).
+    시총은 최신 전 종목 스냅샷에서 가져온다(스냅샷에 없는 종목=유니버스 밖은 제외)."""
+    from db.database import get_conn
+    from sqlalchemy import text
+    evs = [e for e in recent_events(days=days) if e["event_type"] in VALIDATED_GOOD_TYPES]
+    if not evs:
+        return []
+    try:
+        with get_conn() as conn:
+            caps = {r[0]: r[1] for r in conn.execute(text(
+                "SELECT code, mcap_eok FROM universe_screen_daily WHERE date=(SELECT max(date) FROM universe_screen_daily)")).fetchall()}
+    except Exception as e:
+        logger.warning("[공시사건] 시총 조회 실패: %s", e)
+        return []
+    best: dict[str, dict] = {}
+    for e in evs:
+        cap = caps.get(e["stock_code"])
+        if cap and cap >= min_mcap_eok and e["stock_code"] not in best:
+            best[e["stock_code"]] = {"code": e["stock_code"], "name": e["corp_name"], "market": e["market"],
+                                     "event_type": e["event_type"], "date": e["date"], "mcap_eok": cap}
+    return sorted(best.values(), key=lambda x: -x["mcap_eok"])
