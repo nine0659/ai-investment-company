@@ -367,6 +367,7 @@ def save_daily(res: dict, date: str | None = None) -> int:
     rows = []
     for r in res.get("scored") or []:
         d = r["detail"]
+        h = d.get("hist") or {}
         rows.append({
             "date": date, "code": r["code"], "name": r["name"], "market": r["market"], "close": r["close"],
             "chg_pct": r["chg_pct"], "mcap_eok": r["mcap_eok"], "per": d["per"], "pbr": d["pbr"],
@@ -374,14 +375,18 @@ def save_daily(res: dict, date: str | None = None) -> int:
             # 중대 악재 공시 종목은 후보 조회(load_picks)에서 빠지게 0점으로 저장
             "score": 0 if r.get("blocked") else r["score"],
             "signals": ",".join(s["key"] + ("(참고)" if s.get("info") else "") for s in r["signals"]),
+            # 추정치·의견 시계열 (이익 리비전 등 앞으로 검증할 신호의 재료)
+            "cns_eps": d.get("cns_eps"), "recomm": d.get("recomm"), "bps": d.get("bps"),
+            "foreign_rate": d.get("foreign_rate"), "ret_1m": h.get("ret_1m"), "ret_3m": h.get("ret_3m"),
         })
     with get_conn() as conn:
         conn.execute(text("DELETE FROM universe_screen_daily WHERE date=:d"), {"d": date})
         if rows:
             conn.execute(text(
                 "INSERT INTO universe_screen_daily (date, code, name, market, close, chg_pct, mcap_eok, per, pbr, "
-                "cns_per, eps, target, high52, score, signals) VALUES (:date, :code, :name, :market, :close, "
-                ":chg_pct, :mcap_eok, :per, :pbr, :cns_per, :eps, :target, :high52, :score, :signals)"), rows)
+                "cns_per, eps, target, high52, score, signals, cns_eps, recomm, bps, foreign_rate, ret_1m, ret_3m) "
+                "VALUES (:date, :code, :name, :market, :close, :chg_pct, :mcap_eok, :per, :pbr, :cns_per, :eps, :target, "
+                ":high52, :score, :signals, :cns_eps, :recomm, :bps, :foreign_rate, :ret_1m, :ret_3m)"), rows)
     return len(rows)
 
 

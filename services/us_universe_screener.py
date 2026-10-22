@@ -146,6 +146,7 @@ def fetch_prices(tickers: list[str], chunk: int = 100) -> dict[str, dict]:
                 if len(cl) < 60:
                     continue
                 out[tk] = {"close": float(cl.iloc[-1]), "high52": float(sub["High"].dropna().max()),
+                           "ret_3m": (float(cl.iloc[-1]) / float(cl.iloc[-64]) - 1) * 100 if len(cl) > 63 and float(cl.iloc[-64]) > 0 else None,
                            "ma50": float(cl.tail(50).mean()),
                            "ma200": float(cl.tail(200).mean()) if len(cl) >= 200 else None}
             except Exception:
@@ -205,7 +206,7 @@ def build_detail(row: dict, edgar: dict | None, price: dict | None, insider: dic
     eps, ni, eq, rev, li = e.get("eps"), e.get("ni"), e.get("equity"), e.get("revenue"), e.get("liabilities")
     return {
         "close": close, "high52": price["high52"], "ma50": price["ma50"], "ma200": price["ma200"],
-        "eps": eps,
+        "ret_3m": price.get("ret_3m"), "eps": eps,
         "pe": close / eps if eps and eps > 0 else None,
         "roe": ni / eq if ni is not None and eq and eq > 0 else None,
         "margin": ni / rev if ni is not None and rev and rev > 0 else None,
@@ -381,14 +382,18 @@ def save_daily(res: dict, date: str | None = None) -> int:
         rows.append({"date": date, "code": r["code"], "name": r["name"], "sector": r["sector"], "close": d["close"],
                      "chg_pct": r["chg_pct"], "mcap_usd": r["mcap_usd"], "fwd_pe": d["fwd_pe"], "roe": d["roe"],
                      "target": d["target"], "high52": d["high52"], "score": r["score"],
-                     "signals": ",".join(s["key"] + ("(참고)" if s.get("info") else "") for s in r["signals"])})
+                     "signals": ",".join(s["key"] + ("(참고)" if s.get("info") else "") for s in r["signals"]),
+                     # 추정치·의견 시계열 (이익 리비전 등 앞으로 검증할 신호의 재료)
+                     "eps": d.get("eps"), "fwd_eps": d.get("fwd_eps"), "buy_ratio": d.get("buy_ratio"),
+                     "analysts": d.get("analysts"), "ret_3m": d.get("ret_3m")})
     with get_conn() as conn:
         conn.execute(text("DELETE FROM us_screen_daily WHERE date=:d"), {"d": date})
         if rows:
             conn.execute(text(
                 "INSERT INTO us_screen_daily (date, code, name, sector, close, chg_pct, mcap_usd, fwd_pe, roe, target, "
-                "high52, score, signals) VALUES (:date, :code, :name, :sector, :close, :chg_pct, :mcap_usd, :fwd_pe, "
-                ":roe, :target, :high52, :score, :signals)"), rows)
+                "high52, score, signals, eps, fwd_eps, buy_ratio, analysts, ret_3m) VALUES (:date, :code, :name, :sector, "
+                ":close, :chg_pct, :mcap_usd, :fwd_pe, :roe, :target, :high52, :score, :signals, :eps, :fwd_eps, "
+                ":buy_ratio, :analysts, :ret_3m)"), rows)
     return len(rows)
 
 

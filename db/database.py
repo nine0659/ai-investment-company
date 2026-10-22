@@ -570,6 +570,13 @@ universe_screen_daily = Table("universe_screen_daily", metadata,
     Column("score",     Integer),                   # 신호 묶음 수 (0이면 신호 없음)
     Column("signals",   Text),                      # 신호 키들(쉼표 구분)
     Column("created_at", Text,   server_default=text("CURRENT_TIMESTAMP")),
+    # 2026-10-22 추가 — 추정치 '시계열'을 쌓아 이익 리비전(추정EPS 변화) 등 앞으로 검증할 신호의 재료로 쓴다 (_SCREEN_EXTRA_COLS)
+    Column("cns_eps",   Float),                     # 컨센서스 추정 EPS
+    Column("recomm",    Float),                     # 투자의견 평균(1~5, 높을수록 매수)
+    Column("bps",       Float),
+    Column("foreign_rate", Float),                  # 외국인 소진율(%)
+    Column("ret_1m",    Float),                     # 1개월 수익률(%) — 일봉 이력 기준
+    Column("ret_3m",    Float),
 )
 
 # 시장 전체 DART 공시 사건(분류·세부수치 포함): 쌓아야 '최근 N일 사건'을 스크리너·발굴·브리핑이 코드로 조회한다.
@@ -624,6 +631,12 @@ us_screen_daily = Table("us_screen_daily", metadata,
     Column("score",     Integer),
     Column("signals",   Text),
     Column("created_at", Text,   server_default=text("CURRENT_TIMESTAMP")),
+    # 2026-10-22 추가 — 추정치 시계열 (_SCREEN_EXTRA_COLS)
+    Column("eps",       Float),                     # 최근 연간 희석 EPS (SEC)
+    Column("fwd_eps",   Float),                     # 다음 결산 컨센서스 EPS
+    Column("buy_ratio", Float),                     # 애널리스트 매수 의견 비율(0~1)
+    Column("analysts",  Float),
+    Column("ret_3m",    Float),
 )
 
 # 증권사 리포트 보관: 하루치 제목만으로는 '의견 흐름'을 못 본다 → 쌓아서 테마별 언급 추이를 코드가 계산.
@@ -672,6 +685,7 @@ def init_db():
     _migrate_order_history()
     _migrate_stock_recommendations()
     _migrate_learning_lessons()
+    _migrate_screen_tables()
     try:
         from services.position_lifecycle_service import migrate_portfolio_positions
         migrate_portfolio_positions()
@@ -683,6 +697,38 @@ def init_db():
     except Exception as _me2:
         logger.warning("[DB] 예측 테이블 마이그레이션 실패: %s", _me2)
     logger.info("[DB] 테이블 초기화 완료")
+
+
+# 스냅샷 테이블에 나중에 추가된 컬럼 — 이미 만들어진 운영 DB에는 create_all이 컬럼을 더하지 못하므로 ALTER로 보강한다.
+_SCREEN_EXTRA_COLS = {
+    "universe_screen_daily": (("cns_eps", "REAL"), ("recomm", "REAL"), ("bps", "REAL"), ("foreign_rate", "REAL"),
+                              ("ret_1m", "REAL"), ("ret_3m", "REAL")),
+    "us_screen_daily": (("eps", "REAL"), ("fwd_eps", "REAL"), ("buy_ratio", "REAL"), ("analysts", "REAL"), ("ret_3m", "REAL")),
+}
+
+
+def _migrate_screen_tables():
+    """universe_screen_daily / us_screen_daily에 추정치 시계열 컬럼이 없으면 ALTER TABLE로 추가 (2026-10-22, 추가만)."""
+    from sqlalchemy import inspect as sa_inspect
+    for table, cols_to_add in _SCREEN_EXTRA_COLS.items():
+        try:
+            have = {c["name"] for c in sa_inspect(engine).get_columns(table)}
+        except Exception as e:
+            logger.warning("[DB] %s 컬럼 조회 실패: %s", table, e)
+            continue
+        for col, typ in cols_to_add:
+            if col in have:
+                continue
+            try:                                              # 컬럼 단위로 독립 처리: 하나가 실패해도(이미 있음 등) 나머지는 계속 추가
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+                logger.info("[DB] %s.%s 컬럼 추가 완료", table, col)
+            except Exception as e:
+                msg = str(e).lower()
+                if "duplicate column" in msg or "already exists" in msg:
+                    logger.debug("[DB] %s.%s 이미 있음 — 건너뜀", table, col)
+                else:
+                    logger.warning("[DB] %s.%s 컬럼 추가 실패: %s", table, col, e)
 
 
 def _migrate_learning_lessons():
