@@ -214,6 +214,10 @@ def _cmd_help(chat_id: str, _args: str) -> None:
         "`/ledger 체결문자` — 체결 문자로 보유 원장 갱신안 (확인 후 반영)\n"
         "📷 체결내역 *캡처 이미지*를 그냥 보내도 읽어서 갱신안을 만듭니다 (파일로 보내면 더 정확)\n"
         "`/more` — 가장 최근 브리핑의 반론·사전부검·근거 상세\n\n"
+        "🔭 *시장 전체 (한국·미국 전 종목 스크리닝)*\n"
+        "`/ideas` — 오늘의 상위 후보 + 최근 공시 하이라이트\n"
+        "`/sector` — 업종 온도계 (강세·회복 초입·약세 업종)\n"
+        "`/why 종목명|코드|티커` — 그 종목이 후보인 이유 (예: `/why 삼성전자`, `/why NVDA`)\n\n"
         "🛡 *리스크 확인*\n"
         "`/auto` — 자동매매 비활성 상태 확인\n"
         "`/exposure` — 오늘 노출도 + 드로다운 현황\n\n"
@@ -1419,6 +1423,9 @@ _HANDLERS: dict = {
     "/did":       lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_did(c, a, _send),
     "/ledger":    lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_ledger(c, a, _send),
     "/more":      lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_more(c, a, _send),
+    "/ideas":     lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_ideas(c, a, _send),
+    "/sector":    lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_sector(c, a, _send),
+    "/why":       lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_why(c, a, _send),
     "/menu":      lambda c, a: _cmd_menu(c, a),
     "/limit":     lambda c, a: __import__("clients.telegram_advisor_cmds", fromlist=["x"]).cmd_limit(c, a, _send),
 }

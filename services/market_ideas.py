@@ -141,7 +141,7 @@ def event_highlights(days: int = 2, min_mcap_eok: float = 3000, n: int = 8) -> l
     return out
 
 
-def build_block(exclude_codes: set[str] | None = None) -> str:
+def build_block(exclude_codes: set[str] | None = None, for_user: bool = False) -> str:
     """브리핑·봇 컨텍스트용 텍스트. 소스별로 실패해도 나머지는 넣는다. 아무것도 없으면 ''."""
     exclude = set(exclude_codes or ())
     parts: list[str] = []
@@ -182,4 +182,8 @@ def build_block(exclude_codes: set[str] | None = None) -> str:
     except Exception as e:
         logger.warning("[시장아이디어] 공시 하이라이트 실패 (건너뜀): %s", e)
 
-    return (_HEADER + "\n" + "\n".join(parts)) if parts else ""
+    if not parts:
+        return ""
+    head = ("🔭 시장 전체 스크리닝 후보 — 코드 계산, 매수 권고가 아닌 '볼 만한 후보' 목록입니다. 종목별 이유는 /why 종목명"
+            if for_user else _HEADER)
+    return head + "\n" + "\n".join(parts)

@@ -227,6 +227,28 @@ def cmd_limit(chat_id: str, args: str, send) -> None:
     send(chat_id, msg)
 
 
+def cmd_ideas(chat_id: str, _args: str, send) -> None:
+    """/ideas — 한국·미국 전 종목 스크리닝 상위 후보 + 최근 공시 하이라이트 (코드 출력, LLM 없음)."""
+    from services import market_ideas
+    from services.portfolio_service import get_portfolio
+    held = {p["code"] for p in get_portfolio()}
+    send(chat_id, market_ideas.build_block(held, for_user=True)
+         or "스크리닝 기록이 없거나 4일 넘게 오래돼 보여드릴 후보가 없습니다. (평일 17:00~17:15 자동 수집)")
+
+
+def cmd_sector(chat_id: str, _args: str, send) -> None:
+    """/sector — 한국 업종 온도계 (강세·회복 초입·약세 업종, 시장 전체 대비)."""
+    from services import industry_board
+    send(chat_id, industry_board.format_board(top=6)
+         or "업종 온도계 기록이 없습니다. (평일 17:00 한국 스크리너가 쌓습니다)")
+
+
+def cmd_why(chat_id: str, args: str, send) -> None:
+    """/why 종목명|코드|티커 — 그 종목이 후보인 이유(켜진 신호·수치·최근 공시)."""
+    from services import stock_explain
+    send(chat_id, stock_explain.explain(args))
+
+
 def cmd_more(chat_id: str, _args: str, send) -> None:
     from services.briefing_facts import load_more
     m = load_more()
