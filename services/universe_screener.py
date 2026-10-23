@@ -533,6 +533,12 @@ def run_daily_job() -> tuple[str, str]:
     except Exception as e:
         logger.warning("[전종목스크린] 업종 전망 실패: %s", e)
         board_note += " · ⚠업종 전망 실패"
+    try:                                                    # 후보 행동안 성과 채점
+        from services import candidate_action
+        board_note += f" · 행동안 채점 {candidate_action.score_pending()}건"
+    except Exception as e:
+        logger.warning("[전종목스크린] 행동안 채점 실패: %s", e)
+        board_note += " · ⚠행동안 채점 실패"
     return "success", (f"저장 {n}종목 · 신호 3묶음+ {len(res['picks'])}종목 · 수신 {res['fetched']}/{res['expected']}"
                        f" · 추세 {hist_ok}/{hist_req}{board_note}")
 

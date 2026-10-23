@@ -634,6 +634,21 @@ sector_outlook = Table("sector_outlook", metadata,
     Column("created_at", Text,  server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# 후보 행동안 일지: 매일 내 계좌 기준 행동안(분할 매수/관찰만)을 기록하고 N거래일 뒤 전 종목 중앙값 대비 수익률로 채점한다.
+candidate_log = Table("candidate_log", metadata,
+    Column("id",        Integer, primary_key=True, autoincrement=True),
+    Column("date",      Text,    nullable=False),    # 후보 스냅샷 날짜
+    Column("code",      Text,    nullable=False),
+    Column("name",      Text),
+    Column("action",    Text),                       # buy | watch
+    Column("pct",       Float),                      # 제안 비중(계좌 투자금 대비 %)
+    Column("close",     Float),
+    Column("reasons",   Text),                       # watch 사유
+    Column("rel_ret",   Float),                      # 사후: 종목 수익률 - 전 종목 중앙값 (%p)
+    Column("scored_on", Text),
+    Column("created_at", Text,  server_default=text("CURRENT_TIMESTAMP")),
+)
+
 # 미국 전 종목 일별 스크리닝 스냅샷 (한국 universe_screen_daily와 같은 목적)
 us_screen_daily = Table("us_screen_daily", metadata,
     Column("id",        Integer, primary_key=True, autoincrement=True),

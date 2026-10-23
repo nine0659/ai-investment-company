@@ -65,6 +65,70 @@ def format_line(d: dict, ctx: dict) -> str:
     return f"· {d['name']}({d['code']}): 지금은 관찰만 — " + " · ".join(d["hold_reasons"])
 
 
+HORIZON = 20
+MIN_TRUSTED = 30
+
+
+def record(date: str, ds: list[dict]) -> None:
+    """오늘 행동안을 (날짜, 종목) 단위로 덮어써 기록 — 하루에 여러 번 불려도 중복되지 않는다."""
+    from sqlalchemy import text
+    from db.database import get_conn
+    with get_conn() as conn:
+        for d in ds:
+            conn.execute(text("DELETE FROM candidate_log WHERE date=:d AND code=:c"), {"d": date, "c": d["code"]})
+            conn.execute(text("INSERT INTO candidate_log (date, code, name, action, pct, close, reasons) "
+                              "VALUES (:d,:c,:n,:a,:p,:cl,:r)"),
+                         {"d": date, "c": d["code"], "n": d["name"], "a": "buy" if d["pct"] else "watch", "p": d["pct"],
+                          "cl": d.get("close"), "r": " / ".join(d["hold_reasons"])[:300]})
+
+
+def score_pending() -> int:
+    """HORIZON 거래일이 지난 미채점 기록을 '종목 수익률 - 전 종목 중앙값'으로 채점. 채점 건수 반환."""
+    import statistics
+    from sqlalchemy import text
+    from db.database import get_conn
+    with get_conn() as conn:
+        dates = [r[0] for r in conn.execute(text("SELECT DISTINCT date FROM universe_screen_daily ORDER BY date")).fetchall()]
+        pend = conn.execute(text("SELECT id, date, code FROM candidate_log WHERE rel_ret IS NULL")).fetchall()
+    n = 0
+    for pid, d, code in pend:
+        if d not in dates or dates.index(d) + HORIZON >= len(dates):
+            continue
+        d2 = dates[dates.index(d) + HORIZON]
+        with get_conn() as conn:
+            rows = conn.execute(text("SELECT a.code, a.close, b.close FROM universe_screen_daily a JOIN universe_screen_daily b "
+                                     "ON a.code=b.code WHERE a.date=:a AND b.date=:b AND a.close>0 AND b.close>0"),
+                                {"a": d, "b": d2}).fetchall()
+        mine = [(c / a - 1) * 100 for k, a, c in rows if k == code]
+        if len(rows) < 100 or not mine:
+            continue
+        rel = mine[0] - statistics.median([(c / a - 1) * 100 for _, a, c in rows])
+        with get_conn() as conn:
+            conn.execute(text("UPDATE candidate_log SET rel_ret=:r, scored_on=:s WHERE id=:i"), {"r": rel, "s": d2, "i": pid})
+        n += 1
+    return n
+
+
+def scorecard_line() -> str:
+    """행동안 성과 한 줄. 표본이 적으면 결론을 내지 않는다고 밝힌다."""
+    from sqlalchemy import text
+    from db.database import get_conn
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(text("SELECT action, rel_ret FROM candidate_log WHERE rel_ret IS NOT NULL")).fetchall()
+    except Exception:
+        return ""
+    if not rows:
+        return "이 행동안의 성과는 아직 채점 전입니다(기록 후 20거래일 뒤 시장 대비로 채점)."
+    parts = []
+    for act, label in (("buy", "분할 매수안"), ("watch", "관찰만")):
+        v = [r for a, r in rows if a == act]
+        if v:
+            parts.append(f"{label} {len(v)}건 평균 {sum(v) / len(v):+.1f}%p(이긴 비율 {sum(x > 0 for x in v) / len(v) * 100:.0f}%)")
+    tail = "" if len(rows) >= MIN_TRUSTED else f" — 표본 {MIN_TRUSTED}건 미만이라 결론 금지"
+    return "지난 행동안의 시장 대비 20일 성과: " + ", ".join(parts) + tail
+
+
 def _ctx(positions: list[dict]) -> dict:
     from services import concentration_rule as cr
     from services.briefing_sections import _financial_codes
@@ -105,7 +169,7 @@ def build_lines(exclude: set[str], positions: list[dict] | None = None, n: int =
         positions = load_positions()
     if not positions or sum(p["value"] for p in positions) <= 0:
         return []
-    _, picks, _ = mi.kr_picks(exclude, n=n)
+    snap_date, picks, _ = mi.kr_picks(exclude, n=n)
     if not picks:
         return []
     ctx = _ctx(positions)
@@ -114,6 +178,7 @@ def build_lines(exclude: set[str], positions: list[dict] | None = None, n: int =
         "SELECT code, industry FROM universe_screen_daily WHERE date=(SELECT MAX(date) FROM universe_screen_daily)")}
     lines = []
     buys = 0
+    decided: list[dict] = []
     gate = ctx.get("gate")
     max_buys = gate["max_picks"] if gate and gate.get("mode") in ("crash", "heated") else len(picks)
     for p in picks:
@@ -127,4 +192,13 @@ def build_lines(exclude: set[str], positions: list[dict] | None = None, n: int =
             else:
                 buys += 1
         lines.append(format_line(d, ctx))
+        d["close"] = p["close"]
+        decided.append(d)
+    try:
+        record(snap_date, decided)
+    except Exception as e:
+        logger.warning("[후보행동안] 기록 실패 (본문은 정상): %s", e)
+    sc = scorecard_line()
+    if sc:
+        lines.append("· " + sc)
     return lines

@@ -70,3 +70,27 @@ def test_gate_caps_simultaneous_entries(monkeypatch):
     pos = [{"code": "999999", "value": 1e7, "name": "x", "qty": 1, "price": 1e7, "avg": 1e7, "sector": "a"}]
     lines = ca.build_lines(set(), positions=pos)
     assert sum("소액 분할 후보" in l for l in lines) == 1 and sum("동시 진입은 1종목까지" in l for l in lines) == 2
+
+
+def test_record_is_idempotent_and_scored_against_market_median():
+    from sqlalchemy import text
+    from db.database import get_conn, init_db
+    init_db()
+    with get_conn() as c:
+        for t in ("candidate_log", "universe_screen_daily"):
+            c.execute(text(f"DELETE FROM {t}"))
+        dates = [f"2026-09-{d:02d}" for d in range(1, 28)]
+        for k, d in enumerate(dates):
+            for i in range(120):
+                close = 100 * (1.01 ** k) if i == 0 else 100.0       # 종목 000000만 매일 +1%
+                c.execute(text("INSERT INTO universe_screen_daily (date, code, close) VALUES (:d,:c,:p)"),
+                          {"d": d, "c": f"{i:06d}", "p": close})
+    row = {"code": "000000", "name": "t", "pct": 3.0, "hold_reasons": [], "close": 100.0}
+    ca.record(dates[0], [row]); ca.record(dates[0], [row])
+    with get_conn() as c:
+        assert c.execute(text("SELECT COUNT(*) FROM candidate_log")).scalar() == 1
+    assert ca.score_pending() == 1
+    with get_conn() as c:
+        rel = c.execute(text("SELECT rel_ret FROM candidate_log")).scalar()
+    assert rel == __import__("pytest").approx((1.01 ** 20 - 1) * 100)
+    assert "분할 매수안 1건" in ca.scorecard_line() and "결론 금지" in ca.scorecard_line()
