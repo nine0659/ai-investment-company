@@ -69,3 +69,9 @@ def test_board_lines_state_only_with_caveat(monkeypatch):
     monkeypatch.setattr(ib, "load_snapshots", lambda limit=6: [(today, rows)])
     out = bs._board_lines()
     assert "반도체(+12%)" in out[0] and "건설(-30%)" in out[1] and "예측력이 없었음" in out[-1]
+
+
+def test_plain_signals_hides_broader_duplicate():
+    out = bs.plain_signals("업종대비저PBR✔,자산대비저평가,업종대비저평가✔,저평가✔,공시호재✔")
+    assert "같은 업종보다 장부가치 대비 쌈✔" in out and "같은 업종보다 싼 편✔" in out
+    assert "장부가치 대비 쌈" not in out.replace("같은 업종보다 장부가치 대비 쌈", "") and "이익 대비 싼 편" not in out

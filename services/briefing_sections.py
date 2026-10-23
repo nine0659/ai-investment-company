@@ -19,6 +19,9 @@ _PLAIN = {"저평가": "이익 대비 싼 편", "자산대비저평가": "장부
           "고점대비낙폭": "고점 대비 많이 하락", "쌍끌이매수": "외국인·기관 동반 매수", "공시호재": "호재 공시",
           "수익성": "수익성 양호", "내부자매수": "임원 매수"}
 
+# 같은 뜻을 좁게/넓게 말하는 쌍 — 좁은 쪽(업종 기준)이 있으면 넓은 쪽은 숨긴다
+_SUBSUMED = {"업종대비저PBR": "자산대비저평가", "업종대비저평가": "저평가"}
+
 _SKIP = {"수익성"}      # ROE 단독은 효과 없음(참고용) — 사용자에게 근거처럼 보이지 않게 뺀다
 
 DISCLAIMER = "※ 후보는 '볼 만한 종목'이지 매수 권고가 아닙니다. ✔=과거 검증을 통과한 근거(그래도 확실하진 않음), 나머지는 검증 전입니다."
@@ -27,12 +30,14 @@ DISCLAIMER = "※ 후보는 '볼 만한 종목'이지 매수 권고가 아닙니
 def plain_signals(signals: str | None, max_items: int = 4) -> str:
     """'저평가✔,공시호재✔,수익성(참고)' → '이익 대비 싼 편✔ · 호재 공시✔ · …'. 검증된 것을 앞에 둔다."""
     items = []
+    present = {r.replace("✔", "").split("(")[0].strip() for r in (signals or "").split(",")}
+    hidden = {v for k, v in _SUBSUMED.items() if k in present}
     for raw in (signals or "").split(","):
         raw = raw.strip()
         if not raw:
             continue
         key = raw.replace("✔", "").split("(")[0]
-        if key in _SKIP:
+        if key in _SKIP or key in hidden:
             continue
         mark = "✔" if "✔" in raw else ""
         items.append((0 if mark else 1, f"{_PLAIN.get(key, key)}{mark}"))
