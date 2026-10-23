@@ -122,7 +122,8 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
         sections.append("🇺🇸 오늘분 미국 스크리닝 없음 (수집 지연 — 내일 헬스체크 확인)")
 
     try:
-        ve = mi.validated_events(days=3)
+        from services.briefing_sections import drop_financials
+        ve = drop_financials(mi.validated_events(days=3, n=24))[:8]       # 검증이 비금융 기준이라 금융업은 뺀다
     except Exception as e:
         logger.warning("[일일요약] 검증 통과 공시 실패 (건너뜀): %s", e)
         ve = []
@@ -152,6 +153,15 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
                 sections.append(board)
     except Exception as e:
         logger.warning("[일일요약] 업종 온도계 실패 (건너뜀): %s", e)
+
+    try:                                                   # 업종 전망 가설(기록·채점 중). 단독으론 발송 사유가 되지 않는다(informative에 불포함)
+        from services.briefing_sections import sector_lines
+        sl = sector_lines()
+        if sl:
+            counts["outlook"] = 1
+            sections.append("🧭 업종 전망 (향후 20거래일, 시장 대비 · 기록·채점 중인 가설)\n" + "\n".join(sl))
+    except Exception as e:
+        logger.warning("[일일요약] 업종 전망 실패 (건너뜀): %s", e)
 
     # 금요일엔 스크리너 성적표를 덧붙인다 — 후보가 실제로 시장을 이겼는지(관측이 쌓인 뒤부터 나온다)
     if datetime.now(_KST).weekday() == 4 or force_scorecard:

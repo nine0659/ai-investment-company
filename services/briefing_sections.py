@@ -98,16 +98,20 @@ def _financial_codes() -> set[str]:
     return {c for c, ind in rows if ind in fin_inds}
 
 
-def _buyback_lines(n: int = 3) -> list[str]:
-    """과거 검증은 비금융 기준이라 금융업은 뺀다(업종 정보가 있을 때)."""
-    from services import market_ideas as mi
-    rows = mi.validated_events(days=3, min_mcap_eok=1000, n=n * 3)
+def drop_financials(rows: list[str]) -> list[str]:
+    """'이름(코드) …' 형태의 줄에서 금융업 종목을 뺀다(업종 정보가 없으면 거르지 못하고 그대로)."""
     try:
         fin = _financial_codes()
     except Exception as e:
         logger.warning("[브리핑섹션] 금융업 판별 실패 (필터 없이 진행): %s", e)
-        fin = set()
-    kept = [r for r in rows if not any(f"({c})" in r for c in fin)]
+        return rows
+    return [r for r in rows if not any(f"({c})" in r for c in fin)]
+
+
+def _buyback_lines(n: int = 3) -> list[str]:
+    """과거 검증은 비금융 기준이라 금융업은 뺀다(업종 정보가 있을 때)."""
+    from services import market_ideas as mi
+    kept = drop_financials(mi.validated_events(days=3, min_mcap_eok=1000, n=n * 3))
     return [r.replace("  · ", "· ", 1) for r in kept[:n]]
 
 
@@ -133,7 +137,7 @@ def _board_lines() -> list[str]:
     return out
 
 
-def _sector_lines() -> list[str]:
+def sector_lines() -> list[str]:
     """업종 전망 가설(기록·채점 중) — 우호/비우호 각 최대 2개. 채점 결과가 없으면 그렇다고 밝힌다."""
     from db.database import get_conn
     from sqlalchemy import text
@@ -176,7 +180,7 @@ def build(exclude_codes: set[str] | None = None) -> tuple[str, dict]:
     add("🔎 오늘의 발굴 후보 — 한국 (전 종목 스크리닝)", "kr", lambda: _kr_lines(exclude))
     add("🔎 미국 후보", "us", lambda: _us_lines(exclude))
     add("✔ 자사주 취득 결정 (최근 3일, 과거 검증 통과 공시)", "buyback", _buyback_lines)
-    add("🧭 업종 전망 (향후 20거래일, 시장 대비 · 기록·채점 중인 가설)", "sector", _sector_lines)
+    add("🧭 업종 전망 (향후 20거래일, 시장 대비 · 기록·채점 중인 가설)", "sector", sector_lines)
     if not sections:
         return "", counts
     return "\n\n".join(sections) + "\n" + DISCLAIMER, counts
