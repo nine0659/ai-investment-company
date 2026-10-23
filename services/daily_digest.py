@@ -154,6 +154,17 @@ def build(today: str | None = None, holding_codes: set[str] | None = None, force
     except Exception as e:
         logger.warning("[일일요약] 업종 온도계 실패 (건너뜀): %s", e)
 
+    try:                                                   # 내 계좌 기준 행동안(코드 계산). 단독으론 발송 사유가 되지 않는다
+        from services import candidate_action
+        from services.portfolio_risk import load_positions
+        pos = load_positions()
+        al = candidate_action.build_lines({p["code"] for p in pos}, positions=pos)
+        if al:
+            counts["action"] = 1
+            sections.append("👉 내 계좌 기준 행동안 (한국 후보, 코드 계산 — 제안일 뿐 자동 매매 아님)" + chr(10) + chr(10).join(al))
+    except Exception as e:
+        logger.warning("[일일요약] 후보 행동안 실패 (건너뜀): %s", e)
+
     try:                                                   # 업종 전망 가설(기록·채점 중). 단독으론 발송 사유가 되지 않는다(informative에 불포함)
         from services.briefing_sections import sector_lines
         sl = sector_lines()
