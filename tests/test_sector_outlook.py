@@ -59,6 +59,7 @@ def test_parse_rejects_invented_numbers_unknown_and_bad_probs():
     ok = so.parse_views(_raw(_it()), rows, ev)
     assert len(ok) == 1 and ok[0]["name"] == "반도체"
     assert so.parse_views(_raw(_it(reason="영업이익 77.7% 급증")), rows, ev) == []     # 근거에 없는 숫자
+    assert len(so.parse_views(_raw(_it(wi="PER이 50% 이상 오르면")), rows, ev)) == 1   # 틀리는조건의 기준값은 새 숫자여도 정상(실모델 시험에서 전부 폐기돼 0건이었음)
     assert so.parse_views(_raw(_it(no="999")), rows, ev) == []                          # 모르는 업종
     assert so.parse_views(_raw(_it(prob=95)), rows, ev) == []                           # 과신
     assert so.parse_views(_raw(_it(view="중립")), rows, ev) == []
@@ -125,3 +126,14 @@ def test_run_daily_records_and_context(monkeypatch):
 def test_run_daily_skips_when_snapshot_has_no_industry():
     msg = so.run_daily(snaps=_snaps(), chat_fn=lambda *a, **k: pytest.fail("LLM 호출되면 안 됨"))
     assert "건너뜀" in msg
+
+
+def test_truncated_json_keeps_complete_items():
+    """2026-10-23 실모델 시험: 출력이 길어 JSON이 중간에 잘리면 전체가 폐기돼 유효 판단 0건이었다 — 완결된 객체는 살린다."""
+    _, rows, ev = so.evidence_rows(_snaps())
+    full = _raw(_it(), _it(no="2", view="비우호", reason="PER 할인 +20.0%"))
+    cut = full[: full.rfind("{") + 25]                       # 두 번째 객체 중간에서 잘림
+    got = so.parse_views(cut, rows, ev)
+    assert len(got) == 1 and got[0]["name"] == "반도체"
+    fenced = "```json\n" + full + "\n```"
+    assert len(so.parse_views(fenced, rows, ev)) == 2

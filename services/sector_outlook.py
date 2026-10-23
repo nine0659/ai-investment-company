@@ -33,7 +33,7 @@ _SYSTEM = """당신은 한국 업종의 향후 20거래일 '시장 전체 대비
 - 가격 모멘텀(최근 수익률·이평선)은 예측력이 검증되지 않았으니 근거로 쓰지 마세요. 밸류에이션·이익 기대·외국인 수급 변화로만 판단하세요.
 - 확률은 '그 판단이 맞을 확률'(50~75). 근거가 약하면 50~55. 표본이 작은 성적표가 있으면 과신하지 마세요.
 - 근거 문장에는 입력에 있는 숫자만 쓰세요. 입력에 없는 수치·사건을 만들지 마세요.
-- '틀리는조건'은 이 판단이 틀렸다고 볼 구체적 신호 한 문장.
+- '틀리는조건'은 이 판단이 틀렸다고 볼 구체적 신호 한 문장(기준 숫자는 새로 정해도 됩니다).
 JSON 객체만 출력(설명·코드블록 금지):
 {"판단":[{"업종번호":"123","전망":"우호|비우호","확률":58,"근거":"...","틀리는조건":"..."}]}"""
 
@@ -88,15 +88,30 @@ def _numbers_ok(sentence: str, evidence: str) -> bool:
     return all(n in have for n in _NUM.findall(sentence or ""))
 
 
-def parse_views(raw: str, rows: list[dict], evidence: str) -> list[dict]:
-    """LLM JSON → 검증된 판단 목록. 형식 불량·미지의 업종·창작 숫자·중복은 개별 폐기. 변별 불가능한 전체 불량이면 []."""
+def _load_items(raw: str) -> list:
+    """응답에서 판단 객체 목록을 꺼낸다. 전체 JSON이 깨져도(출력이 길어 중간에 잘린 경우 등) 완결된 객체는 살린다."""
     m = re.search(r"\{.*\}", raw or "", re.DOTALL)
     if not m:
         return []
     try:
         items = json.loads(m.group(0)).get("판단") or []
+        return items if isinstance(items, list) else []
     except (ValueError, AttributeError):
-        return []
+        pass
+    out = []
+    for om in re.finditer(r"\{[^{}]*\}", raw or ""):
+        try:
+            d = json.loads(om.group(0))
+        except ValueError:
+            continue
+        if isinstance(d, dict) and "업종번호" in d:
+            out.append(d)
+    return out
+
+
+def parse_views(raw: str, rows: list[dict], evidence: str) -> list[dict]:
+    """LLM JSON → 검증된 판단 목록. 형식 불량·미지의 업종·창작 숫자·중복은 개별 폐기. 변별 불가능한 전체 불량이면 []."""
+    items = _load_items(raw)
     by_no = {r["ind_no"]: r for r in rows}
     out, seen, count = [], set(), {"우호": 0, "비우호": 0}
     for it in items if isinstance(items, list) else []:
@@ -107,7 +122,9 @@ def parse_views(raw: str, rows: list[dict], evidence: str) -> list[dict]:
         reason, wrong_if = str(it.get("근거", ""))[:200], str(it.get("틀리는조건", ""))[:200]
         if no not in by_no or no in seen or view not in count or not (50 <= prob <= 80) or count[view] >= MAX_PER_SIDE:
             continue
-        if not reason or not wrong_if or not _numbers_ok(reason, evidence) or not _numbers_ok(wrong_if, evidence):
+        # 숫자 대조는 '근거'에만 건다. '틀리는조건'의 기준값(예: PER 50% 이상 상승)은 모델이 새로 정하는 조건이지 사실 주장이 아니다
+        # (2026-10-23 실모델 시험: 조건까지 대조했더니 유효 판단 0건 — 매일 빈 기록이 쌓일 뻔함).
+        if not reason or not wrong_if or not _numbers_ok(reason, evidence):
             continue
         seen.add(no)
         count[view] += 1
@@ -120,7 +137,7 @@ def make_views(evidence: str, rows: list[dict], scorecard_line: str = "", chat_f
     if chat_fn is None:
         from clients.openai_client import chat_independent as chat_fn
     user = evidence + (f"\n\n[지난 성적] {scorecard_line}" if scorecard_line else "")
-    return parse_views(chat_fn(_SYSTEM, user, max_tokens=900), rows, evidence)
+    return parse_views(chat_fn(_SYSTEM, user, max_tokens=2500), rows, evidence)
 
 
 # ── 기록 ──────────────────────────────────────────────────────────────
