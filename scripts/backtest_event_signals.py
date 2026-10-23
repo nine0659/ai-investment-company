@@ -194,8 +194,8 @@ def dart_study() -> str:
 
 # ── 한국 공급계약·잠정실적 (본문 숫자별) ───────────────────────────────────────
 
-def dart_i_events(months: int = 24) -> list[dict]:
-    """거래소공시(I) 중 공급계약·잠정실적만. 목록이 크다(약 800쪽)."""
+def dart_i_events(months: int = 24, types=("공급계약", "잠정실적")) -> list[dict]:
+    """거래소공시(I) 중 지정 유형만(기본 공급계약·잠정실적). 목록이 크다(약 800쪽)."""
     import requests
     from config.settings import DART_API_KEY
     from services.disclosure_events import classify
@@ -217,7 +217,7 @@ def dart_i_events(months: int = 24) -> list[dict]:
                     break
                 for it in r.get("list") or []:
                     c = classify(it.get("report_nm"))
-                    if c and c[0] in ("공급계약", "잠정실적") and it.get("stock_code"):
+                    if c and c[0] in types and it.get("stock_code"):
                         out.append({"code": it["stock_code"], "date": datetime.strptime(it["rcept_dt"], "%Y%m%d").date(),
                                     "type": c[0], "rcept_no": it["rcept_no"]})
                 if p >= int(r.get("total_page") or 1):
@@ -299,6 +299,49 @@ def dart2_study() -> str:
                         by[name][h].append(x)
                         pdt[name][h].setdefault(pos // 10, []).append(x)
     return "\n".join(summarize(k, by[k], pdt[k]) for k in conds)
+
+
+def dart3_study() -> str:
+    """거래소공시(I)에서 주식소각·배당결정 — B유형 목록엔 없어 표본 0건이었던 신호(2026-10-23). 금융/비금융을 분리해 본다."""
+    cache = os.path.join(tempfile.gettempdir(), "kr_dart3_events.pkl")
+    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
+        with open(cache, "rb") as f:
+            evs = pickle.load(f)
+    else:
+        evs = dart_i_events(types=("자사주소각", "배당결정", "자사주취득"))
+        with open(cache, "wb") as f:
+            pickle.dump(evs, f)
+    from collections import Counter
+    print("  수집 유형별 건수:", dict(Counter(e["type"] for e in evs)), flush=True)
+    closes = load_prices("kr")
+    from backtest_fundamental_signals import financial_codes
+    fin = financial_codes([c for c in closes.columns])
+    idx = pd.DatetimeIndex(closes.index).tz_localize(None).normalize()
+    groups = {}
+    for t in ("자사주소각", "배당결정", "자사주취득"):
+        groups[t] = (t, None)
+        groups[f"{t} — 비금융만"] = (t, False)
+        groups[f"{t} — 금융만"] = (t, True)
+    by = {k: {h: [] for h in HORIZONS} for k in groups}
+    pdt = {k: {h: {} for h in HORIZONS} for k in groups}
+    seen = set()
+    for e in evs:
+        key = (e["code"], e["date"], e["type"])
+        if key in seen or e["code"] not in closes.columns:
+            continue
+        seen.add(key)
+        pos = idx.searchsorted(pd.Timestamp(e["date"]), side="right")
+        if pos >= len(idx):
+            continue
+        is_fin = e["code"] in fin
+        for g, (t, fin_mode) in groups.items():
+            if e["type"] == t and (fin_mode is None or fin_mode == is_fin):
+                for h in HORIZONS:
+                    x = fwd_excess(closes, e["code"], pos, h)
+                    if x is not None:
+                        by[g][h].append(x)
+                        pdt[g][h].setdefault(pos // 10, []).append(x)
+    return "\n".join(summarize(k, by[k], pdt[k]) for k in groups)
 
 
 # ── 미국 자사주 매입 승인 8-K ─────────────────────────────────────────────────
@@ -392,9 +435,12 @@ if __name__ == "__main__":
     elif which == "dart2":
         print("한국 공급계약·잠정실적(본문 숫자별) 접수일 다음 거래일 이후 수익률 vs 전 종목 중앙값 (유형별 무작위 표본)", flush=True)
         print(dart2_study())
+    elif which == "dart3":
+        print("한국 거래소공시 소각·배당·자사주취득 접수일 다음 거래일 이후 수익률 vs 전 종목 중앙값 (금융 분리)", flush=True)
+        print(dart3_study())
     elif which == "dart":
         print("한국 DART 공시 사건 접수일 다음 거래일 이후 수익률 vs 전 종목 중앙값", flush=True)
         print(dart_study())
     else:
-        sys.exit("사용법: insider | dart | dart2 | usbuy")
+        sys.exit("사용법: insider | dart | dart2 | dart3 | usbuy")
     print(f"\n※ 생존 편향·겹치는 표본·짧은 기간 — 방향성 참고용. ({time.time() - t0:.0f}초)")
