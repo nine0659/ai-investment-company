@@ -39,7 +39,8 @@ _BLUECHIP_ALWAYS_FETCH: list[dict] = [
 
 
 # ── CIO 결정 로그 파싱 ────────────────────────────────────────────────────
-_LOG_RE = re.compile(r"=CIO_DECISION_START=[ \t]*\n(.*?)\n[ \t]*=CIO_DECISION_END=", re.DOTALL)
+# 마커 앞뒤에 코드펜스·볼드·공백이 붙어도 잡는다(2026-10-23: 10/23 브리핑에서 블록이 인식 안 됨 — 원인 불명이라 포맷 변형에 관대하게)
+_LOG_RE = re.compile(r"=CIO_DECISION_START=[^\n]*\n(.*?)\n[^\n]*?=CIO_DECISION_END=[^\n]*", re.DOTALL)
 
 # 2026-09-10 발견: LLM이 헌장의 "반드시 출력" 지시를 매번 지키지 않는다 —
 # 2026-09-04 실제 운영 브리핑에서 "살 것: 삼성전기(009150) 3%"를 사람이 읽는
@@ -76,6 +77,7 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
         "run_type": run_type,
         "macro_stance": "neutral",
         "cash_target_pct": 30,
+        "stance_parsed": False,     # stance 줄을 실제로 읽었는가 — False면 위 두 값은 '기본값'일 뿐 CEO의 판단이 아니다
         "thesis_status": "intact",
         "committee_alignment": "agree",
         "committee_dissent": "",
@@ -88,6 +90,7 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
 
     m = _LOG_RE.search(text)
     if not m:
+        logger.warning("[CIO] 결정 로그 블록 인식 실패 — 응답 끝 200자: %r", (text or "")[-200:])
         return text, base
 
     block   = m.group(1)
@@ -104,6 +107,7 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
             if key == "stance" and len(parts) >= 3:
                 base["macro_stance"]     = parts[1]
                 base["cash_target_pct"]  = int(parts[2])
+                base["stance_parsed"]    = True
             elif key == "thesis" and len(parts) >= 2:
                 base["thesis_status"] = parts[1]
             elif key == "analyst" and len(parts) >= 2:
@@ -178,6 +182,12 @@ def _build_summary_card(d: dict, holdings: list[tuple[str, str]] | None = None, 
     대응 — 이미 파싱된 구조화 데이터를 코드가 그대로 나열하므로 LLM이 매번
     형식을 지킬지 여부와 무관하게 항상 같은 모양으로 나온다.
     """
+    if not d.get("stance_parsed", True):
+        # 구조화 기록이 없을 때 기본값(중립·현금 30%)을 'CEO의 결론'처럼 내보내면 본문과 정반대가 된다(2026-10-23: 본문은 비관 85%·방어)
+        lines = ["📌 *한 줄 결론* — 구조화 기록이 없어 요약을 생략합니다. 아래 본문을 기준으로 보세요"]
+        if untracked:
+            lines.append("- ⚠️ 본문에 매수·매도 지시가 있습니다 — 아래 '오늘 할 일'을 직접 확인하세요")
+        return "\n".join(lines)
     stance_key = d.get("macro_stance", "neutral")
     cash = d.get("cash_target_pct", 30)
     tone = {

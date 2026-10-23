@@ -125,3 +125,24 @@ def test_summary_card_does_not_claim_nothing_to_do_when_untracked():
     assert "사고팔 것 없음" in _build_summary_card(d)
     card = _build_summary_card(d, untracked="줄일 것: SK하이닉스")
     assert "사고팔 것 없음" not in card and "직접 확인" in card
+
+
+def test_card_does_not_present_defaults_as_conclusion_when_block_missing():
+    """2026-10-23: 블록이 없으면 기본값(중립·현금 30%)이 'CEO의 한 줄 결론'처럼 나가 본문(비관 85%·방어)과 모순이었다."""
+    from agents.ceo_agent import _parse_cio_decisions, _build_summary_card
+    _, d = _parse_cio_decisions("본문만 있고 블록 없음", "2026-10-23", "pre_market")
+    assert d["stance_parsed"] is False
+    card = _build_summary_card(d, untracked="줄일 것: SK하이닉스")
+    assert "지켜보는 쪽" not in card and "현금 30%" not in card and "직접 확인" in card
+
+
+def test_parser_tolerates_fenced_and_bold_markers():
+    from agents.ceo_agent import _parse_cio_decisions
+    txt = ("본문\n```\n=CIO_DECISION_START=\nstance|defensive|40\nreduce|000660|SK하이닉스|33|집중도\n"
+           "=CIO_DECISION_END=\n```\n")
+    cleaned, d = _parse_cio_decisions(txt, "2026-10-23", "pre_market")
+    assert d["stance_parsed"] and d["macro_stance"] == "defensive" and d["cash_target_pct"] == 40
+    assert len(d["position_changes"]) == 1 and "CIO_DECISION" not in cleaned
+    txt2 = "본문\n**=CIO_DECISION_START=**\nstance|aggressive|10\n**=CIO_DECISION_END=**\n"
+    cleaned2, d2 = _parse_cio_decisions(txt2, "2026-10-23", "pre_market")
+    assert d2["macro_stance"] == "aggressive" and "CIO_DECISION" not in cleaned2
