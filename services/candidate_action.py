@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 BAND = {0: 0.0, 1: 2.0, 2: 3.0}        # 검증 묶음 수 → 계좌 투자금 대비 %
 STOP_PCT = 15.0
 TRANCHES = 2
+CRASH_TRANCHES = 3          # 급락 직후엔 1/3씩 3회(pick_gate와 같은 기준)
 
 
 def _won(x: float) -> str:
@@ -40,10 +41,12 @@ def decide(c: dict, ctx: dict) -> dict:
     pct = BAND[v] if not reasons else 0.0
     out = {"code": c["code"], "name": c["name"], "pct": pct, "hold_reasons": reasons, "v": v}
     if pct and ctx["total"] > 0 and c["close"] > 0:
+        gate = ctx.get("gate") or {}
+        tr = CRASH_TRANCHES if gate.get("mode") == "crash" else TRANCHES
         amt = ctx["total"] * pct / 100
         qty = math.floor(amt / c["close"])
-        if qty >= TRANCHES:
-            out.update(amount=qty * c["close"], qty=qty, first=qty // TRANCHES, stop=c["close"] * (1 - STOP_PCT / 100))
+        if qty >= tr:
+            out.update(amount=qty * c["close"], qty=qty, first=qty // tr, tranches=tr, stop=c["close"] * (1 - STOP_PCT / 100))
         else:
             out["pct"] = 0.0
             out["hold_reasons"] = reasons + ["투자금 대비 1주 가격이 커서 분할이 어려움"]
@@ -53,9 +56,11 @@ def decide(c: dict, ctx: dict) -> dict:
 def format_line(d: dict, ctx: dict) -> str:
     if d["pct"]:
         s = (f"· {d['name']}({d['code']}): 소액 분할 후보 — 계좌 투자금의 약 {d['pct']:.0f}%({_won(d['amount'])}, {d['qty']}주)를 "
-             f"{TRANCHES}회로 나눠 첫 {d['first']}주부터. 틀렸다고 볼 선: {d['stop']:,.0f}원(-{STOP_PCT:.0f}%).")
+             f"{d['tranches']}회로 나눠 첫 {d['first']}주부터. 틀렸다고 볼 선: {d['stop']:,.0f}원(-{STOP_PCT:.0f}%).")
         if ctx.get("funding"):
             s += f" 자금: {ctx['funding']}"
+        if (ctx.get("gate") or {}).get("mode") in ("crash", "heated"):
+            s += f" ⚠시장 상태: {ctx['gate']['reason']} — {ctx['gate']['note']}"
         return s
     return f"· {d['name']}({d['code']}): 지금은 관찰만 — " + " · ".join(d["hold_reasons"])
 
@@ -80,7 +85,14 @@ def _ctx(positions: list[dict]) -> dict:
             funding = f"{v0['name']} 비중이 상한을 넘어 줄이는 분량({_won(v0['plan']['sell_reinvest_won'])})을 옮기는 방식"
     except Exception as e:
         logger.debug("[후보행동안] 집중도 조회 실패: %s", e)
-    return {"total": sum(p["value"] for p in positions), "held_inds": held_inds, "views": latest_views(),
+    gate = None
+    try:
+        from services import pick_gate
+        from services.account_perf import _index_closes
+        gate = pick_gate.market_gate(_index_closes())
+    except Exception as e:
+        logger.debug("[후보행동안] 시장 관문 조회 실패(없이 진행): %s", e)
+    return {"gate": gate, "total": sum(p["value"] for p in positions), "held_inds": held_inds, "views": latest_views(),
             "fin": _financial_codes(), "funding": funding}
 
 
@@ -101,9 +113,18 @@ def build_lines(exclude: set[str], positions: list[dict] | None = None, n: int =
     ind = {c: (i or None) for c, i in mi._query(
         "SELECT code, industry FROM universe_screen_daily WHERE date=(SELECT MAX(date) FROM universe_screen_daily)")}
     lines = []
+    buys = 0
+    gate = ctx.get("gate")
+    max_buys = gate["max_picks"] if gate and gate.get("mode") in ("crash", "heated") else len(picks)
     for p in picks:
         p["industry"] = ind.get(p["code"])
         bad = [e for e in evs.get(p["code"], []) if e["polarity"] == "악재"][:1]
         p["bad_event"] = bad[0]["event_type"] if bad else None
-        lines.append(format_line(decide(p, ctx), ctx))
+        d = decide(p, ctx)
+        if d["pct"]:
+            if buys >= max_buys:      # 시장 상태가 정한 동시 진입 개수 상한
+                d.update(pct=0.0, hold_reasons=[f"시장 상태({ctx['gate']['reason']})상 동시 진입은 {max_buys}종목까지"])
+            else:
+                buys += 1
+        lines.append(format_line(d, ctx))
     return lines

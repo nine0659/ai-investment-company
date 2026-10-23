@@ -51,3 +51,22 @@ def test_ceo_context_includes_action_block(monkeypatch):
     monkeypatch.setattr(ca, "build_lines", lambda ex, positions=None, n=3: ["· 테스트(111111): 지금은 관찰만 — x"])
     blk = mi.build_block(set())
     assert "내 계좌 기준 행동안" in blk and "테스트(111111)" in blk and "바꿔 쓰지 마라" in blk
+
+
+def test_crash_gate_uses_three_tranches_and_warns():
+    ctx = _ctx(gate={"mode": "crash", "max_picks": 2, "reason": "급락 직후", "note": "1/3씩 3회"})
+    d = ca.decide(_c("업종대비저평가✔,공시호재✔"), ctx)
+    assert d["tranches"] == 3 and d["first"] == 10
+    assert "⚠시장 상태" in ca.format_line(d, ctx)
+
+
+def test_gate_caps_simultaneous_entries(monkeypatch):
+    from services import market_ideas as mi
+    picks = [{**_c("업종대비저평가✔,공시호재✔"), "code": f"11111{i}", "name": f"T{i}"} for i in range(3)]
+    monkeypatch.setattr(mi, "kr_picks", lambda ex, n=3: (None, picks, set()))
+    monkeypatch.setattr(mi, "_query", lambda *a, **k: [])
+    monkeypatch.setattr("services.disclosure_events.by_code", lambda days=7: {})
+    monkeypatch.setattr(ca, "_ctx", lambda pos: _ctx(gate={"mode": "heated", "max_picks": 1, "reason": "단기 과열", "note": "추격 금지"}))
+    pos = [{"code": "999999", "value": 1e7, "name": "x", "qty": 1, "price": 1e7, "avg": 1e7, "sector": "a"}]
+    lines = ca.build_lines(set(), positions=pos)
+    assert sum("소액 분할 후보" in l for l in lines) == 1 and sum("동시 진입은 1종목까지" in l for l in lines) == 2
