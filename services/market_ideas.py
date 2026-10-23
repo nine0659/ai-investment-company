@@ -196,6 +196,16 @@ def build_block(exclude_codes: set[str] | None = None, for_user: bool = False) -
         logger.warning("[시장아이디어] 한국 후보 실패 (건너뜀): %s", e)
 
     try:
+        from services.candidate_action import build_lines
+        acts = build_lines(exclude)
+        if acts:
+            parts.append("\n위 한국 후보의 내 계좌 기준 행동안 (코드 계산 — 사용자에게 브리핑 끝에 그대로 나갑니다. "
+                         "본문에서 같은 종목을 다르게 판단하면 반드시 이유를 밝히고, 이 비중·손절선 숫자를 바꿔 쓰지 마라):")
+            parts += acts
+    except Exception as e:
+        logger.warning("[시장아이디어] 후보 행동안 실패 (건너뜀): %s", e)
+
+    try:
         d, picks, prev = us_picks(exclude)
         if picks:
             parts.append(f"\n미국 전 종목 {d} 기준 상위 후보 (시총 $30억+ 약 1,600종목 스크리닝, 신호 3묶음 이상):")

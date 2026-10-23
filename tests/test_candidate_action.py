@@ -42,3 +42,12 @@ def test_too_expensive_to_split_becomes_watch():
 
 def test_no_account_gives_no_lines():
     assert ca.build_lines(set(), positions=[]) == []
+
+
+def test_ceo_context_includes_action_block(monkeypatch):
+    from services import market_ideas as mi
+    monkeypatch.setattr(mi, "kr_picks", lambda ex, n=5: (None, [], set()))
+    monkeypatch.setattr(mi, "us_picks", lambda ex, n=5: (None, [], set()))
+    monkeypatch.setattr(ca, "build_lines", lambda ex, positions=None, n=3: ["· 테스트(111111): 지금은 관찰만 — x"])
+    blk = mi.build_block(set())
+    assert "내 계좌 기준 행동안" in blk and "테스트(111111)" in blk and "바꿔 쓰지 마라" in blk
