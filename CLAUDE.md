@@ -551,4 +551,4 @@ git push origin master              # = 운영 배포 (Render 자동배포 + CI)
 원칙: 재료를 만들면 **사용자가 보는 곳까지 연결**하고, 연결됐는지(`branch:briefing_sections` 등)를 헬스체크가 본다. 새 신호는 검증 후 ✔, 검증 전이면 '검증 전' 표시.
 - **[설계문제→개선, 2026-10-23] 전망·발굴이 CEO 입력에만 있고 사용자 눈엔 안 보였다** (CEO 템플릿에 전망·발굴 칸이 없어 CEO가 신규 편입을 결정하지 않으면 노출 0 — "계산은 되나 안 보임" 패턴의 네 번째).
   `services/briefing_sections.py`가 스냅샷에서 코드로 줄을 만들어 PRE·CLOSE 브리핑 끝에 붙이고(보유 종목 제외, 쉬운 말, ✔ 표시, 매수 권고 아님 고지), 전부 비거나 소스가 실패하면 `branch:briefing_sections` fail로 기록한다.
-  알려진 한계: 자사주 취득 검증은 비금융 기준인데 목록엔 금융사가 섞일 수 있음(스냅샷에 금융 여부 없음). 회귀 테스트: tests/test_briefing_sections.py.
+  자사주 취득 목록은 금융업을 뺀다(`universe_screen_daily.industry`가 쌓인 뒤부터 — 10/23 17:00 이전 스냅샷엔 업종이 없어 그날까진 미필터). 🌡 업종 흐름은 현재 상태 설명이며 예측이 아님을 문구로 밝힌다. 회귀 테스트: tests/test_briefing_sections.py.

@@ -83,10 +83,54 @@ def _us_lines(exclude: set[str], n: int = 2) -> list[str]:
     return out
 
 
+def _financial_codes() -> set[str]:
+    """최근 스냅샷에서 금융업 종목 코드 집합. 업종 코드가 아직 안 쌓였으면 빈 집합(필터 불가 → 그대로 노출)."""
+    from db.database import get_conn
+    from sqlalchemy import text
+    from services.universe_screener import FIN_KEYWORDS
+    with get_conn() as conn:
+        d = conn.execute(text("SELECT MAX(date) FROM universe_screen_daily WHERE industry IS NOT NULL AND industry<>''")).scalar()
+        if not d:
+            return set()
+        names = dict(conn.execute(text("SELECT ind_no, name FROM industry_daily WHERE date=(SELECT MAX(date) FROM industry_daily)")).fetchall())
+        rows = conn.execute(text("SELECT code, industry FROM universe_screen_daily WHERE date=:d"), {"d": d}).fetchall()
+    fin_inds = {k for k, nm in names.items() if any(w in (nm or "") for w in FIN_KEYWORDS)}
+    return {c for c, ind in rows if ind in fin_inds}
+
+
 def _buyback_lines(n: int = 3) -> list[str]:
+    """과거 검증은 비금융 기준이라 금융업은 뺀다(업종 정보가 있을 때)."""
     from services import market_ideas as mi
-    rows = mi.validated_events(days=3, min_mcap_eok=1000, n=n)
-    return [r.replace("  · ", "· ", 1) for r in rows]
+    rows = mi.validated_events(days=3, min_mcap_eok=1000, n=n * 3)
+    try:
+        fin = _financial_codes()
+    except Exception as e:
+        logger.warning("[브리핑섹션] 금융업 판별 실패 (필터 없이 진행): %s", e)
+        fin = set()
+    kept = [r for r in rows if not any(f"({c})" in r for c in fin)]
+    return [r.replace("  · ", "· ", 1) for r in kept[:n]]
+
+
+def _board_lines() -> list[str]:
+    """업종 흐름 한 줄씩: 시장 대비 강한/약한 업종(현재 상태 설명 — 이후 성과 예측이 아니다)."""
+    from services.industry_board import load_snapshots
+    snaps = load_snapshots(limit=1)
+    if not snaps or not snaps[0][1]:
+        return []
+    date, rows = snaps[0]
+    if (datetime.now(_KST).date() - datetime.strptime(date, "%Y-%m-%d").date()).days > 5:
+        return []
+    inds = [r for r in rows if r["ind_no"] != "ALL" and r.get("med_ret_3m") is not None]
+    strong = sorted([r for r in inds if r["regime"] == "강세"], key=lambda r: -r["med_ret_3m"])[:3]
+    weak = sorted([r for r in inds if r["regime"] == "약세"], key=lambda r: r["med_ret_3m"])[:3]
+    out = []
+    if strong:
+        out.append("· 강한 업종: " + ", ".join(f"{r['name']}({r['med_ret_3m']:+.0f}%)" for r in strong))
+    if weak:
+        out.append("· 약한 업종: " + ", ".join(f"{r['name']}({r['med_ret_3m']:+.0f}%)" for r in weak))
+    if out:
+        out.append("· 최근 3개월 종목 수익률 중앙값 기준의 현재 상태입니다. 앞으로 계속 강하다는 뜻은 아닙니다(과거 검증에서 추세는 예측력이 없었음).")
+    return out
 
 
 def _sector_lines() -> list[str]:
@@ -128,6 +172,7 @@ def build(exclude_codes: set[str] | None = None) -> tuple[str, dict]:
         if lines:
             sections.append(title + "\n" + "\n".join(lines))
 
+    add("🌡 업종 흐름 (한국 전 종목 집계)", "board", _board_lines)
     add("🔎 오늘의 발굴 후보 — 한국 (전 종목 스크리닝)", "kr", lambda: _kr_lines(exclude))
     add("🔎 미국 후보", "us", lambda: _us_lines(exclude))
     add("✔ 자사주 취득 결정 (최근 3일, 과거 검증 통과 공시)", "buyback", _buyback_lines)
