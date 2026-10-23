@@ -23,6 +23,29 @@ def _won(x: float) -> str:
     return f"{x / 10000:,.0f}만원"
 
 
+REV_WARN_PCT = -15.0        # 내년·올해 EPS 추정이 90일간 이 이상 깎였으면 경고(검증된 신호는 아님 — 위험 표시용)
+_REV_CACHE: dict = {}
+
+
+def revision_90d(code: str, market: str | None) -> float | None:
+    """yfinance 이익 추정의 90일 변화율(%) 중 더 나쁜 쪽(내년·올해). 조회 실패는 None(경고 없이 진행). 6시간 캐시."""
+    import time
+    hit = _REV_CACHE.get(code)
+    if hit and time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    val = None
+    try:
+        from services.stock_thesis import fetch_estimates, revision_view
+        e = fetch_estimates(code + (".KQ" if (market or "").upper().startswith("KOSDAQ") else ".KS"))
+        vs = [revision_view(e["trend"][k]).get("d90") for k in ("+1y", "0y") if e.get("trend", {}).get(k)]
+        vs = [v for v in vs if v is not None]
+        val = min(vs) if vs else None
+    except Exception as ex:
+        logger.debug("[후보행동안] %s 이익 추정 조회 실패: %s", code, ex)
+    _REV_CACHE[code] = (time.time(), val)
+    return val
+
+
 def decide(c: dict, ctx: dict) -> dict:
     """c: kr_picks 후보(+ 'industry','ind_name','bad_event'), ctx: total(투자금), held_inds(set), views(dict 업종번호→전망), fin(set 코드), funding(str|None)."""
     from services.universe_screener import validated_groups_in
@@ -38,6 +61,8 @@ def decide(c: dict, ctx: dict) -> dict:
         reasons.append("업종 전망이 시장보다 못할 것으로 기록됨")
     if v == 0:
         reasons.append("과거 검증을 통과한 근거가 없음")
+    if c.get("rev90") is not None and c["rev90"] <= REV_WARN_PCT:
+        reasons.append(f"증권사 이익 추정이 최근 90일 {c['rev90']:.0f}% 하향(검증 전 경고)")
     pct = BAND[v] if not reasons else 0.0
     out = {"code": c["code"], "name": c["name"], "pct": pct, "hold_reasons": reasons, "v": v}
     if pct and ctx["total"] > 0 and c["close"] > 0:
@@ -185,6 +210,7 @@ def build_lines(exclude: set[str], positions: list[dict] | None = None, n: int =
         p["industry"] = ind.get(p["code"])
         bad = [e for e in evs.get(p["code"], []) if e["polarity"] == "악재"][:1]
         p["bad_event"] = bad[0]["event_type"] if bad else None
+        p["rev90"] = revision_90d(p["code"], p.get("market"))
         d = decide(p, ctx)
         if d["pct"]:
             if buys >= max_buys:      # 시장 상태가 정한 동시 진입 개수 상한

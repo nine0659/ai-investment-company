@@ -94,3 +94,10 @@ def test_record_is_idempotent_and_scored_against_market_median():
         rel = c.execute(text("SELECT rel_ret FROM candidate_log")).scalar()
     assert rel == __import__("pytest").approx((1.01 ** 20 - 1) * 100)
     assert "분할 매수안 1건" in ca.scorecard_line() and "결론 금지" in ca.scorecard_line()
+
+
+def test_falling_earnings_estimates_turn_buy_into_watch():
+    d = ca.decide(_c("업종대비저평가✔,공시호재✔", rev90=-33.0), _ctx())
+    assert d["pct"] == 0 and "90일 -33% 하향" in " ".join(d["hold_reasons"])
+    assert ca.decide(_c("업종대비저평가✔,공시호재✔", rev90=-5.0), _ctx())["pct"] == 3.0
+    assert ca.decide(_c("업종대비저평가✔,공시호재✔", rev90=None), _ctx())["pct"] == 3.0
