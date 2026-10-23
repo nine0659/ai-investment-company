@@ -1241,6 +1241,27 @@ def run(state: InvestmentState) -> InvestmentState:
         except Exception as _rre:
             logger.debug("[CIO] R/R 검증 실패: %s", _rre)
 
+        # 전망·발굴 섹션: 코드가 스냅샷에서 직접 만들어 브리핑 끝에 붙인다(LLM 서술 아님). 장전·마감 브리핑만.
+        # 템플릿에 전망·발굴 칸이 없어 후보 풀이 CEO 입력에만 있고 사용자에겐 안 보이던 문제(2026-10-23) 대응.
+        if run_type in (RUN_TYPE_PRE, RUN_TYPE_CLOSE):
+            try:
+                from services.briefing_sections import build as _build_sections
+                from services.job_ledger import record_job as _record_job
+                _sec, _cnt = _build_sections({c for c, _ in _load_holdings()})
+                if _sec:
+                    state["ceo_report"] = state["ceo_report"].rstrip() + "\n\n" + _sec
+                _fail = [k for k, v in _cnt.items() if v < 0]
+                # 섹션 전부 비었거나 일부 소스가 실패하면 조용히 넘기지 않고 헬스체크 대상으로 기록한다
+                _record_job("branch:briefing_sections", "fail" if (_fail or not _sec) else "success",
+                            f"{_cnt}" + (f" 실패:{_fail}" if _fail else ""))
+            except Exception as _bse:
+                logger.warning("[CIO] 전망·발굴 섹션 생성 실패 (본문은 정상): %s", _bse)
+                try:
+                    from services.job_ledger import record_job as _rj
+                    _rj("branch:briefing_sections", "fail", str(_bse)[:200])
+                except Exception:
+                    pass
+
         # Phase B: 생애주기 DB 업데이트
         try:
             from services.position_lifecycle_service import update_from_cio_decisions
