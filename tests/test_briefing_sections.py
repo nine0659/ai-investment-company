@@ -1,5 +1,12 @@
 """브리핑 전망·발굴 섹션 회귀 테스트 — 코드가 만든 줄만, 쉬운 말, 검증 표시, 실패 격리 (2026-10-23)."""
+import pytest
+
 from services import briefing_sections as bs
+
+
+@pytest.fixture(autouse=True)
+def _no_account(monkeypatch):
+    monkeypatch.setattr(bs, "_action_lines", lambda ex: [])      # 계좌 조회는 candidate_action 테스트에서 따로 검증
 
 
 def test_plain_signals_puts_validated_first_and_drops_profitability():
@@ -18,7 +25,7 @@ def test_build_isolates_failures_and_marks_them(monkeypatch):
     monkeypatch.setattr(bs, "_buyback_lines", lambda n=3: [])
     monkeypatch.setattr(bs, "sector_lines", lambda: []); monkeypatch.setattr(bs, "_board_lines", lambda: [])
     text, cnt = bs.build({"005930"})
-    assert cnt == {"board": 0, "kr": 1, "us": -1, "buyback": 0, "sector": 0}      # 실패는 -1로 드러난다(호출부가 헬스체크 기록)
+    assert cnt == {"board": 0, "action": 0, "kr": 1, "us": -1, "buyback": 0, "sector": 0}      # 실패는 -1로 드러난다(호출부가 헬스체크 기록)
     assert "A(000001)" in text and bs.DISCLAIMER in text and "미국 후보" not in text
 
 

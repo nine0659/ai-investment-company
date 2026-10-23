@@ -115,6 +115,11 @@ def _buyback_lines(n: int = 3) -> list[str]:
     return [r.replace("  · ", "· ", 1) for r in kept[:n]]
 
 
+def _action_lines(exclude: set[str]) -> list[str]:
+    from services import candidate_action
+    return candidate_action.build_lines(exclude)
+
+
 def _board_lines() -> list[str]:
     """업종 흐름 한 줄씩: 시장 대비 강한/약한 업종(현재 상태 설명 — 이후 성과 예측이 아니다)."""
     from services.industry_board import load_snapshots
@@ -177,6 +182,7 @@ def build(exclude_codes: set[str] | None = None) -> tuple[str, dict]:
             sections.append(title + "\n" + "\n".join(lines))
 
     add("🌡 업종 흐름 (한국 전 종목 집계)", "board", _board_lines)
+    add("👉 내 계좌 기준 행동안 (한국 후보, 코드 계산 — 제안일 뿐 자동 매매 아님)", "action", lambda: _action_lines(exclude))
     add("🔎 오늘의 발굴 후보 — 한국 (전 종목 스크리닝)", "kr", lambda: _kr_lines(exclude))
     add("🔎 미국 후보", "us", lambda: _us_lines(exclude))
     add("✔ 자사주 취득 결정 (최근 3일, 과거 검증 통과 공시)", "buyback", _buyback_lines)

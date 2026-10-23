@@ -155,6 +155,17 @@ def record_views(date: str, views: list[dict], evidence: str, model: str = "inde
     return len(views)
 
 
+def latest_views() -> dict:
+    """가장 최근 기록의 {업종번호: '우호'|'비우호'} (5일 넘게 오래됐으면 빈 dict)."""
+    from datetime import timedelta
+    from db.database import get_conn
+    with get_conn() as conn:
+        d = conn.execute(text("SELECT MAX(date) FROM sector_outlook")).scalar()
+        if not d or (datetime.now(_KST).date() - datetime.strptime(d, "%Y-%m-%d").date()) > timedelta(days=5):
+            return {}
+        return {r[0]: r[1] for r in conn.execute(text("SELECT ind_no, view FROM sector_outlook WHERE date=:d"), {"d": d})}
+
+
 # ── 채점 (LLM 없음) ───────────────────────────────────────────────────
 
 def score_hit(view: str, rel: float) -> int:
