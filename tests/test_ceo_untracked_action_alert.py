@@ -108,3 +108,20 @@ def test_run_does_not_alert_when_decision_block_present(monkeypatch):
 
     assert len(result["ceo_decisions"].get("new_positions", [])) == 1
     assert alerts == []
+
+
+def test_detects_split_and_bold_action_lines():
+    """2026-10-23: '**줄일 것:** …'·'**팔 것:** …' 형식은 기존 정규식('줄일 것·팔 것' 합친 꼴만)을 통과해 경보가 침묵했다."""
+    from agents.ceo_agent import _find_untracked_action_line as f
+    assert f("**오늘 할 일:**\n- **줄일 것:** SK하이닉스(000660) 83%→50%")
+    assert f("- **팔 것:** TIGER ETF 전량")
+    assert f("줄일 것·팔 것: 삼성전기")
+    assert f("**줄일 것:** 없음") is None
+
+
+def test_summary_card_does_not_claim_nothing_to_do_when_untracked():
+    from agents.ceo_agent import _build_summary_card
+    d = {"macro_stance": "neutral", "cash_target_pct": 30}
+    assert "사고팔 것 없음" in _build_summary_card(d)
+    card = _build_summary_card(d, untracked="줄일 것: SK하이닉스")
+    assert "사고팔 것 없음" not in card and "직접 확인" in card

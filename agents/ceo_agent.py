@@ -52,8 +52,8 @@ _LOG_RE = re.compile(r"=CIO_DECISION_START=[ \t]*\n(.*?)\n[ \t]*=CIO_DECISION_EN
 # 본문에 실제 행동 지시가 있는데 블록이 없으면 경보로 드러낸다(자동 파싱
 # 시도는 안 함 — 프롬프트에 없던 값을 지어내지 않는다는 원칙 유지).
 _ACTION_LINE_RE = re.compile(
-    r"[-·]?\s*(살\s*것|더\s*살\s*것|줄일\s*것[·・]?\s*팔\s*것)\s*[:：]\s*(?!없음)(\S.{0,60})"
-)
+    r"[-·*]*\s*\**\s*(살\s*것|더\s*살\s*것|줄일\s*것(?:[·・]\s*팔\s*것)?|팔\s*것)\s*[:：]\s*(?!\**\s*없음)\**\s*(\S.{0,60})"
+)   # 2026-10-23: LLM이 "**줄일 것:** …"·"팔 것: …"처럼 쓰는 변형도 잡는다(전엔 "줄일 것·팔 것" 합친 꼴만 인식해 10/23 브리핑을 놓침)
 
 
 def _find_untracked_action_line(raw_result: str) -> str | None:
@@ -171,7 +171,7 @@ def _load_holdings() -> list[tuple[str, str]]:
         return []
 
 
-def _build_summary_card(d: dict, holdings: list[tuple[str, str]] | None = None) -> str:
+def _build_summary_card(d: dict, holdings: list[tuple[str, str]] | None = None, untracked: str | None = None) -> str:
     """ceo_decisions dict를 고정 포맷 3~6줄 요약으로 조립. 본문 맨 위에 붙인다.
 
     긴 서술형 본문에 결론이 묻혀 한눈에 안 들어온다는 사용자 피드백(2026-09-08)
@@ -201,7 +201,10 @@ def _build_summary_card(d: dict, holdings: list[tuple[str, str]] | None = None) 
         )
         lines.append(f"- 오늘 조정: {parts}")
     elif not new_pos:
-        lines.append("- 오늘은 사고팔 것 없음")
+        if untracked:       # 구조화 기록은 없는데 본문엔 행동 지시가 있다 — "사고팔 것 없음"은 본문과 정반대가 된다(2026-10-23)
+            lines.append("- ⚠️ 구조화 기록이 빠져 조정 내역을 요약하지 못했습니다 — 아래 '오늘 할 일'을 직접 확인하세요")
+        else:
+            lines.append("- 오늘은 사고팔 것 없음")
 
     holds = d.get("position_holds") or []
     # 실보유 원장과 대조 — AI가 hold/조정 줄을 빠뜨린 종목을 코드가 드러낸다
@@ -1190,7 +1193,7 @@ def run(state: InvestmentState) -> InvestmentState:
             except Exception as _uae:
                 logger.warning("[CIO] 구조화 로그 누락 경보 발송 실패: %s", _uae)
         try:
-            ceo_report = _build_summary_card(ceo_decisions) + "\n\n" + ceo_report
+            ceo_report = _build_summary_card(ceo_decisions, untracked=_untracked_action) + "\n\n" + ceo_report
         except Exception as _sce:
             logger.debug("[CIO] 요약 카드 생성 실패 (본문은 정상): %s", _sce)
         # 핵심 수치는 코드가 확정 — 수치 줄 덮어쓰기·전일 급변 경고·방향 모순 교정

@@ -43,3 +43,12 @@ def test_no_false_positive_when_consistent():
 def test_missing_data_is_safe():
     out, _ = bf.apply("본문", {}, {}, "pre_market")
     assert out.startswith("본문")
+
+
+def test_bold_numbers_line_is_replaced_not_duplicated():
+    """2026-10-23: LLM이 '**수치:** …'(볼드)로 쓰자 정규식이 놓쳐, 지어낸 수치 줄(S&P선물 -1.18%)과 코드 줄(-0.54%)이 둘 다 나갔다."""
+    from services import briefing_facts as bf
+    raw = {"sp500_futures": {"realtime_pct": -0.54}, "nasdaq_futures": {"realtime_pct": -1.75}}
+    rep = "본문\n\n**수치:** KOSPI선물 5,533.77 · S&P500선물 -1.18% · 달러/원 1,325원\n\n끝"
+    out, _ = bf.apply(rep, raw, {}, "pre_market")
+    assert "-1.18" not in out and out.count("S&P500선물") == 1 and "-0.54" in out

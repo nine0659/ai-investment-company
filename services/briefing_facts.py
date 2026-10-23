@@ -145,8 +145,9 @@ def apply(report: str, raw: dict, kr_rt: dict, run_type: str,
 
     line = build_numbers_line(raw, kr_rt)
     if line and run_type == "pre_market":
-        if re.search(r"^수치\s?:.*$", text, flags=re.M):
-            text = re.sub(r"^수치\s?:.*$", lambda _m: line, text, count=1, flags=re.M)
+        _num_re = r"^[ \t]*[-*]*\s*\**수치\s?[:：]\**.*$"   # "**수치:** …" 볼드 변형 포함 — 놓치면 LLM이 지어낸 수치 줄과 코드 줄이 둘 다 남는다(2026-10-23)
+        if re.search(_num_re, text, flags=re.M):
+            text = re.sub(_num_re, lambda _m: line, text, count=1, flags=re.M)
         else:
             text = text.rstrip() + "\n\n" + line
     block = build_market_block(raw, kr_rt, run_type)
