@@ -271,3 +271,21 @@ def test_load_picks_sorts_by_validated_groups():
     finally:
         with get_conn() as c:
             c.execute(text("DELETE FROM universe_screen_daily"))
+
+
+def test_industry_relative_value_signals_validated_for_non_financials_only():
+    """2026-10-23 업종중립 검증: 업종 중앙값의 70% 이하 PER·PBR은 비금융에서 지지(PBR 20일 이긴 시점 72%). 시장 전체 PBR<1은 효과 없었다."""
+    med = {"1": 10.0, us.PBR_KEY + "1": 2.0}                   # 업종 PER 중앙 10배, PBR 중앙 2배
+    nf = {s["key"]: s for s in us.compute_signals(_vrow("A", cns_per=6.0, pbr=1.2, financial=False), med)}
+    assert nf["업종대비저평가"]["validated"] is True and nf["업종대비저PBR"]["validated"] is True
+    assert us.validated_count(list(nf.values())) == 1                       # 같은 '가치' 묶음 — 점수·✔ 부풀리기 방지
+    fin = {s["key"]: s for s in us.compute_signals(_vrow("B", cns_per=6.0, pbr=1.2, financial=True), med)}
+    assert fin["업종대비저평가"]["validated"] is False and fin["업종대비저PBR"]["validated"] is False
+    near = {s["key"] for s in us.compute_signals(_vrow("C", cns_per=9.0, pbr=1.8, financial=False), med)}
+    assert "업종대비저평가" not in near and "업종대비저PBR" not in near       # 70% 초과는 신호 없음
+
+
+def test_industry_medians_include_pbr_with_prefix():
+    rows = [{"detail": {"industry": "1", "cns_per": 10.0, "pbr": 1.0 + i}} for i in range(5)]
+    m = us.industry_medians(rows)
+    assert m["1"] == 10.0 and m[us.PBR_KEY + "1"] == 3.0

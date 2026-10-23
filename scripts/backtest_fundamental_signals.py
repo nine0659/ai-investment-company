@@ -205,8 +205,98 @@ def run() -> str:
     return "\n".join(summarize(k, by[k], pdt[k]) for k in by)
 
 
+def industry_codes(codes: list[str]) -> dict[str, str]:
+    """{종목코드: 네이버 업종코드}. 임시 폴더에 하루 캐시."""
+    from concurrent.futures import ThreadPoolExecutor
+    from clients import naver_client as nv
+    cache = os.path.join(tempfile.gettempdir(), "kr_ind_codes.pkl")
+    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
+        with open(cache, "rb") as f:
+            return pickle.load(f)
+
+    def one(c):
+        return c, str((nv.stock_integration(c) or {}).get("industryCode") or "")
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        out = dict(ex.map(one, codes))
+    with open(cache, "wb") as f:
+        pickle.dump(out, f)
+    return out
+
+
+def run_neutral() -> str:
+    """업종 중립 검증 — '시장 전체에서 싸다'가 아니라 '같은 업종 안에서 싸다/수익성 높다'. 금융 제외, 업종 표본 8개 이상만."""
+    from services import universe_screener as us
+    closes = load_prices("kr")
+    uni = us.fetch_universe()
+    mcap_now = {r["code"]: r["mcap_eok"] * 1e8 for r in us.tradable(uni["rows"])}
+    with open(os.path.join(tempfile.gettempdir(), "kr_fin2_2y.pkl"), "rb") as f:
+        fin = pickle.load(f)
+    cols = [c for c in closes.columns if c in mcap_now]
+    fin_set = financial_codes(cols)
+    ind = industry_codes(cols)
+    idx = pd.DatetimeIndex(closes.index).tz_localize(None).normalize()
+    last = closes.iloc[-1]
+    by, pdt = {}, {}
+    for pos in range(len(idx) - 20):
+        d = idx[pos].date()
+        if d < date(2025, 4, 1) or (pos % 10):
+            continue
+        fy = 2024 if d < date(2026, 4, 1) else 2025
+        rows = []
+        for code in cols:
+            f = (fin.get(code) or {}).get(fy)
+            px, now = closes[code].iloc[pos], last.get(code)
+            if not f or code in fin_set or not ind.get(code) or not (px > 0 and now > 0):
+                continue
+            ni, eq = f.get("ni"), f.get("eq")
+            prev = (fin.get(code) or {}).get(fy - 1, {}).get("ni")
+            if ni is None or not eq or eq <= 0:
+                continue
+            mc = mcap_now[code] * px / now
+            rows.append({"code": code, "ind": ind[code], "per": mc / ni if ni > 0 else np.nan, "pbr": mc / eq, "roe": ni / eq,
+                         "growth": (ni / prev - 1) * 100 if prev and prev > 0 and ni > 0 else np.nan})
+        if len(rows) < 150:
+            continue
+        df = pd.DataFrame(rows).set_index("code")
+        df = df[df.groupby("ind")["pbr"].transform("size") >= 8]
+        g = df.groupby("ind")
+        df["per_rel"] = df["per"] / g["per"].transform("median")
+        df["pbr_rel"] = df["pbr"] / g["pbr"].transform("median")
+        df["roe_rank"] = g["roe"].rank(pct=True)
+        df["gr_rank"] = g["growth"].rank(pct=True)
+        masks = {
+            "[업종중립] PER 업종중앙값의 70% 이하": df["per_rel"] <= 0.7,
+            "[업종중립] PBR 업종중앙값의 70% 이하": df["pbr_rel"] <= 0.7,
+            "[업종중립] ROE 업종 상위 25%": df["roe_rank"] >= 0.75,
+            "[업종중립] 순이익 성장 업종 상위 25%": df["gr_rank"] >= 0.75,
+            "[업종중립] 싸고(PER 70%↓) 수익성 높음(ROE 상위 50%)": (df["per_rel"] <= 0.7) & (df["roe_rank"] >= 0.5),
+            "[업종중립] 싸고(PBR 70%↓) 수익성 높음(ROE 상위 50%)": (df["pbr_rel"] <= 0.7) & (df["roe_rank"] >= 0.5),
+            "[업종중립] 비싸고(PER 130%↑) 수익성 낮음(ROE 하위 50%)": (df["per_rel"] >= 1.3) & (df["roe_rank"] <= 0.5),
+            "[업종중립] 기준: 표본 전체": df["pbr"].notna(),
+        }
+        for h in HORIZONS:
+            if h == 5 or pos + h >= len(idx):
+                continue
+            allr = (closes.iloc[pos + h] / closes.iloc[pos] - 1) * 100
+            bench = float(np.nanmedian(allr))
+            for name, m in masks.items():
+                vals = [float(allr[c]) - bench for c in df.index[m.fillna(False).values] if c in allr.index and not np.isnan(allr[c])]
+                by.setdefault(name, {}).setdefault(h, []).extend(vals)
+                pdt.setdefault(name, {}).setdefault(h, {}).setdefault(pos, []).extend(vals)
+    for k in by:
+        for h in HORIZONS:
+            by[k].setdefault(h, [])
+            pdt[k].setdefault(h, {})
+    return "\n".join(summarize(k, by[k], pdt[k]) for k in by)
+
+
 if __name__ == "__main__":
     t0 = time.time()
+    if len(sys.argv) > 1 and sys.argv[1] == "neutral":
+        print("한국 재무 신호 — 업종 중립(비금융, 같은 업종 안 상대 위치), 20·60거래일 뒤 vs 같은 시점 전 종목 중앙값", flush=True)
+        print(run_neutral())
+        print(f"\n※ 약 17개월·확정 실적 기준·시총 근사 — 방향성 참고용. ({time.time() - t0:.0f}초)")
+        sys.exit(0)
     print("한국 재무 신호(확정 실적 기준, 공개 시점 이후만) 과거 검증 — 20·60거래일 뒤 vs 같은 시점 전 종목 중앙값", flush=True)
     print(run())
     print(f"\n※ 약 17개월·현재 시총 기준 유니버스·시총 근사 — 방향성 참고용. ({time.time() - t0:.0f}초)")

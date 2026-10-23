@@ -186,14 +186,22 @@ def fetch_history(rows: list[dict], chunk: int = 100) -> dict[str, dict]:
     return out
 
 
+PBR_KEY = "pbr:"
+
+
 def industry_medians(rows: list[dict], min_members: int = 5) -> dict[str, float]:
     """업종별 추정PER 중앙값 (표본 5개 미만 업종은 비교 불가라 제외)."""
     by: dict[str, list[float]] = {}
+    by_pbr: dict[str, list[float]] = {}
     for r in rows:
         d = r.get("detail")
         if d and d["industry"] and d["cns_per"] and 0 < d["cns_per"] < 100:
             by.setdefault(d["industry"], []).append(d["cns_per"])
-    return {k: statistics.median(v) for k, v in by.items() if len(v) >= min_members}
+        if d and d["industry"] and d.get("pbr") and 0 < d["pbr"] < 50:
+            by_pbr.setdefault(d["industry"], []).append(d["pbr"])
+    out = {k: statistics.median(v) for k, v in by.items() if len(v) >= min_members}
+    out.update({PBR_KEY + k: statistics.median(v) for k, v in by_pbr.items() if len(v) >= min_members})   # 업종 PBR 중앙값(키 접두어로 같은 dict에 보관)
+    return out
 
 
 def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
@@ -219,7 +227,16 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
         sig.append({"key": "자산대비저평가", "text": f"PBR {d['pbr']:.2f}배"})
     med = ind_median.get(d["industry"])
     if cp and med and 0 < cp <= med * 0.7:
-        sig.append({"key": "업종대비저평가", "text": f"추정PER {cp:.1f}배 vs 업종 중앙 {med:.1f}배"})
+        # ✔검증(비금융만): 확정 실적 PER이 업종 중앙값의 70% 이하 — 한국 17개월 업종중립 검증에서 20일 +0.45%p(이긴 시점 67%), 60일 +1.56%p(62%, t=+3.3).
+        # 겹치는 표본이라 t는 부풀려져 있다(독립 표본 기준으로 환산하면 약 1.5~2.4) — 약~중간 지지. 여기 PER은 추정 기준이라 근사.
+        sig.append({"key": "업종대비저평가", "validated": d.get("financial") is False,
+                    "text": f"추정PER {cp:.1f}배 vs 업종 중앙 {med:.1f}배"})
+    pbr_med = ind_median.get(PBR_KEY + str(d["industry"]))
+    if d["pbr"] and pbr_med and 0 < d["pbr"] <= pbr_med * 0.7:
+        # ✔검증(비금융만): PBR이 업종 중앙값의 70% 이하 — 업종중립 검증에서 20일 +0.64%p(이긴 시점 72%, t=+3.4), 60일 +1.34%p(69%, t=+4.0, 겹침 보정 시 약 1.6~2.4).
+        # 시장 전체 기준 PBR<1은 효과가 없었다(t=+1.3) — '싸다'는 업종 안에서 비교해야 의미가 있었다.
+        sig.append({"key": "업종대비저PBR", "validated": d.get("financial") is False,
+                    "text": f"PBR {d['pbr']:.2f}배 vs 업종 중앙 {pbr_med:.2f}배"})
     if d["eps"] and d["eps"] > 0 and d["cns_eps"]:
         g = d["cns_eps"] / d["eps"] - 1
         if g >= 0.2:
@@ -242,7 +259,7 @@ def compute_signals(r: dict, ind_median: dict[str, float]) -> list[dict]:
 
 
 # 같은 성격의 신호가 겹쳐 점수가 부풀지 않게 묶음 단위로 센다
-_GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대비저평가": "가치",
+_GROUP = {"저평가": "가치", "자산대비저평가": "가치", "업종대비저평가": "가치", "업종대비저PBR": "가치",
           "이익증가기대": "이익", "컨센서스여력": "이익", "고점대비낙폭": "낙폭", "쌍끌이매수": "수급", "수익성": "질", "공시호재": "사건"}
 
 
