@@ -48,3 +48,15 @@ def test_lowercase_markers_recognized():
 def test_unparseable_block_leaves_defaults_marked_unparsed():
     _, d = parse(_wrap(["아무 말이나 적힌 줄"]), "d", "r")
     assert d["stance_parsed"] is False and d["new_positions"] == []
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("내 의견: 매수 (확신도: 중)", "medium"),
+    ("- 내 의견 — 보유 / 확신도 **하**", "low"),
+    ("내 의견: 보유, 확신도는 중간", "medium"),
+    ("**내 의견:** 축소 확신도 상", "high"),
+    ("내 의견: 보유", None),
+])
+def test_conviction_format_variants(text, expected):
+    from services.briefing_facts import parse_opinion_conviction
+    assert parse_opinion_conviction(text) == expected
