@@ -181,6 +181,8 @@ def test_loss_making_stock_gets_no_event_signal():
     ({"ok": True, "errors": [], "listed": 0, "relevant": 0, "new": 0, "saved": 0, "doc_try": 0, "doc_fail": 0}, "empty"),
     ({"ok": True, "errors": [], "listed": 500, "relevant": 80, "new": 40, "saved": 40, "doc_try": 10, "doc_fail": 8}, "fail"),
     ({"ok": True, "errors": [], "listed": 500, "relevant": 80, "new": 40, "saved": 40, "doc_try": 10, "doc_fail": 1}, "success"),
+    # 2026-10-26: 본문 시도 1건이 실패하자 0/1 → 100% 실패로 오탐. 표본 4건 미만은 판정하지 않는다
+    ({"ok": True, "errors": [], "listed": 500, "relevant": 80, "new": 40, "saved": 40, "doc_try": 1, "doc_fail": 1}, "success"),
 ])
 def test_run_daily_job_status(monkeypatch, stats, status):
     monkeypatch.setattr(de, "collect", lambda days=3: stats)

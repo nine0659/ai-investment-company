@@ -281,7 +281,8 @@ def run_daily_job() -> tuple[str, str]:
         return "fail", f"DART 목록 조회 실패 {st['errors'][:2]}"
     if st["listed"] == 0:
         return "empty", "공시 목록 0건"
-    if st["doc_try"] and st["doc_fail"] > st["doc_try"] * 0.5:
+    # 표본이 너무 작으면(1~2건) 한 건 실패가 곧 100%라 오탐 — 최소 4건 이상일 때만 판정(2026-10-26 0/1 오탐)
+    if st["doc_try"] >= 4 and st["doc_fail"] > st["doc_try"] * 0.5:
         return "fail", f"본문 수신 {st['doc_try'] - st['doc_fail']}/{st['doc_try']}만 성공"
     return "success", (f"목록 {st['listed']} · 관심 사건 {st['relevant']} · 신규 {st['new']} · "
                        f"본문 {st['doc_try'] - st['doc_fail']}/{st['doc_try']}")

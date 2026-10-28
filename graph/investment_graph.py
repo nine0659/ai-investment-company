@@ -524,6 +524,11 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
     )
     if gate["blocked"]:
         logger.error("[교차검증] 발송 보류: %s", gate["reason"])
+        try:  # 보류는 텔레그램 경보 1통뿐이라 놓치면 브리핑이 안 간 걸 아무도 모른다 — 대장에도 남긴다
+            from services.job_ledger import record_job
+            record_job("branch:send_gate", "fail", f"{state.get('run_type','')} 발송 보류: {gate['reason']}"[:200])
+        except Exception as e:
+            logger.warning("[교차검증] 보류 기록 실패: %s", e)
         try:
             from services.report_service import release_report_slot
             release_report_slot(state.get("date", ""), state.get("run_type", ""))

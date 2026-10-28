@@ -34,12 +34,17 @@ def test_blocked_gate_prevents_send_and_releases_slot(monkeypatch):
         "blocked": True, "reason": "테스트 사유", "actions": ["x"], "inconsistencies": ["y"],
     })
     monkeypatch.setattr(rs, "release_report_slot", lambda date, run_type: calls.__setitem__("released", (date, run_type)))
+    import services.job_ledger as jl
+    recorded = []
+    monkeypatch.setattr(jl, "record_job", lambda n, st, d="": recorded.append((n, st, d)))
 
     result = g.node_send_telegram(_state())
 
     assert calls["send_message"] == 0, "gate가 막았는데 실제 발송이 나가면 안 됨"
     assert calls["send_error_alert"] == 1, "발송 보류 시 경보는 나가야 함"
     assert calls["released"] == ("2026-07-22", "pre_market")
+    # 2026-10-28: 보류가 경보 1통뿐이라 브리핑 미발송을 DB에서 확인할 수 없었다 → 대장에 fail로 남겨 헬스체크가 잡는다
+    assert [(n, st) for n, st, _ in recorded if n == "branch:send_gate"] == [("branch:send_gate", "fail")]
     assert result is not None
 
 
