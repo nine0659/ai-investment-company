@@ -86,6 +86,7 @@ def after_job(job_name: str) -> float | None:
         peak = max(before, after or 0)
         if _peak["mb"] is None or peak > _peak["mb"]:
             _peak.update(mb=peak, job=job_name, at=time.strftime("%m-%d %H:%M"))
+        persist_peak(job_name, peak)
         if peak >= WARN_MB and time.time() - _last_alert_ts > _ALERT_COOLDOWN_SEC:
             _last_alert_ts = time.time()
             from clients.telegram_client import send_error_alert
@@ -103,3 +104,44 @@ def after_job(job_name: str) -> float | None:
 def peak() -> dict:
     """이 프로세스가 기록한 메모리 최고치 {"mb","job","at"} (측정 전이면 mb=None)."""
     return dict(_peak)
+
+
+_HISTORY_KEY = "mem.peak.history"
+_HISTORY_DAYS = 14
+
+
+def persist_peak(job_name: str, mb: float) -> None:
+    """날짜별 메모리 최고치를 DB에 남긴다 — 프로세스 변수(_peak)는 재시작·OOM 때 함께 사라져
+    '재시작 직전에 얼마였나'를 알 방법이 없었다(무료 플랜은 Render 메모리 그래프도 없음)."""
+    try:
+        import json
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from sqlalchemy import text
+        from db.database import get_conn
+        today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        with get_conn() as conn:
+            row = conn.execute(text("SELECT value FROM system_settings WHERE key=:k"), {"k": _HISTORY_KEY}).fetchone()
+            hist = json.loads(row[0]) if row and row[0] else {}
+            if mb > (hist.get(today) or {}).get("mb", 0):
+                hist[today] = {"mb": round(mb, 1), "job": job_name}
+                for d in sorted(hist)[:-_HISTORY_DAYS]:
+                    del hist[d]
+                conn.execute(text("DELETE FROM system_settings WHERE key=:k"), {"k": _HISTORY_KEY})
+                conn.execute(text("INSERT INTO system_settings (key, value) VALUES (:k, :v)"),
+                             {"k": _HISTORY_KEY, "v": json.dumps(hist, ensure_ascii=False)})
+    except Exception as e:
+        logger.debug("[메모리] 최고치 저장 실패 (무시): %s", e)
+
+
+def history() -> dict:
+    """{날짜: {"mb","job"}} — 최근 14일 일별 최고치. 없으면 {}."""
+    try:
+        import json
+        from sqlalchemy import text
+        from db.database import get_conn
+        with get_conn() as conn:
+            row = conn.execute(text("SELECT value FROM system_settings WHERE key=:k"), {"k": _HISTORY_KEY}).fetchone()
+        return json.loads(row[0]) if row and row[0] else {}
+    except Exception:
+        return {}
