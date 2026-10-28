@@ -267,12 +267,9 @@ def _miss_cases(rows: list[dict], k: int = 6) -> str:
 
 def parse_reflection(raw: str) -> list[dict]:
     """LLM 출력(JSON 배열) → 교훈 레코드. 형식이 깨졌으면 빈 리스트(조용히 넘어가지 않고 호출부가 기록)."""
-    m = re.search(r"\[.*\]", raw or "", re.DOTALL)
-    if not m:
-        return []
-    try:
-        items = json.loads(m.group(0))
-    except (ValueError, TypeError):
+    from services.llm_json import extract_json
+    items = extract_json(raw, list)
+    if items is None:
         return []
     out = []
     for it in items if isinstance(items, list) else []:

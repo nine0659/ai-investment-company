@@ -68,14 +68,8 @@ def _themes_allowed() -> tuple[str, ...]:
 def parse_json_object(raw: str) -> dict | None:
     if not raw:
         return None
-    m = re.search(r"\{.*\}", raw, re.S)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except json.JSONDecodeError:
-        return None
+    from services.llm_json import extract_json
+    return extract_json(raw, dict)
 
 
 def verify_analysis(raw: dict, source_text: str) -> dict:

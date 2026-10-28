@@ -59,11 +59,11 @@ def market_line(raw_mkt: dict) -> str:
 
 def parse_forecast(raw: str) -> dict | None:
     """LLM JSON → 검증된 예측 dict. 형식·논리 위반이면 None (조용히 쓰지 않고 호출부가 기록)."""
-    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
-    if not m:
+    from services.llm_json import extract_json
+    d = extract_json(raw, dict)
+    if d is None:
         return None
     try:
-        d = json.loads(m.group(0))
         direction = str(d["방향"]).strip()
         prob = float(d["확률"])
         lo, hi = float(d["하단"]), float(d["상단"])

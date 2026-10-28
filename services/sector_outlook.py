@@ -90,14 +90,11 @@ def _numbers_ok(sentence: str, evidence: str) -> bool:
 
 def _load_items(raw: str) -> list:
     """응답에서 판단 객체 목록을 꺼낸다. 전체 JSON이 깨져도(출력이 길어 중간에 잘린 경우 등) 완결된 객체는 살린다."""
-    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
-    if not m:
-        return []
-    try:
-        items = json.loads(m.group(0)).get("판단") or []
+    from services.llm_json import extract_json
+    whole = extract_json(raw, dict)
+    if whole is not None and "판단" in whole:          # 잘린 응답에선 안쪽 객체 하나가 읽히므로 '판단' 키가 있을 때만 전체로 본다
+        items = whole.get("판단") or []
         return items if isinstance(items, list) else []
-    except (ValueError, AttributeError):
-        pass
     out = []
     for om in re.finditer(r"\{[^{}]*\}", raw or ""):
         try:
