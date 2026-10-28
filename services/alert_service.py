@@ -563,6 +563,11 @@ def _send_falsification_alert(today: str, h: dict, market_data: dict) -> None:
     )
     if _send_telegram(msg):
         _mark_sent(today, h["code"], "falsification")
+        try:  # 발동 원인 조사(가설) — 미발송, 다음 브리핑 CEO 입력에만 반영 (2026-10-28)
+            from services.falsification_probe import run_probe
+            run_probe(h, res["fired"])
+        except Exception as e:
+            logger.debug("[반증조사] 호출 실패 (무시): %s", e)
 
 
 def _stop_tier_already_sent_type(code: str, alert_type: str, days: int) -> bool:

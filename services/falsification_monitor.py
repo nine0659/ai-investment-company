@@ -138,6 +138,13 @@ def build_status_context(prices: dict[str, float], market: dict | None) -> str:
             continue
         if res["fired"]:
             lines.append(f"  🚨 {h['name']}({h['code']}) 반증 발동: " + "; ".join(res["fired"]) + f" ← 기록: {h['falsification'][:60]}")
+            try:
+                from services.falsification_probe import recent_for
+                why = recent_for(h["code"])
+                if why:
+                    lines.append(f"     └ AI 조사(가설·검증 전, 확인할 방향일 뿐 근거 아님): {why}")
+            except Exception as e:
+                logger.debug("[반증감시] 조사 결과 조회 실패: %s", e)
         elif res["status"] == "coded":
             tail = f" (현재값 조회 불가 {len(res['unchecked'])}건)" if res["unchecked"] else ""
             lines.append(f"  ✅ {h['name']}({h['code']}) 반증 미발동{tail}: {h['falsification'][:60]}")
