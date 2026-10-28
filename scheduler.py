@@ -547,8 +547,13 @@ def job_rebound_screener():
         return
     try:
         from agents.rebound_screener_agent import run_rebound_screen
-        run_rebound_screen(send=True)
-        record_job("rebound_screener", "success")
+        report = run_rebound_screen(send=True)
+        from agents.rebound_screener_agent import DATA_FAIL_MARK
+        if isinstance(report, str) and DATA_FAIL_MARK in report:
+            # 사용자에겐 경고가 갔지만 대장엔 success로 남던 사각지대 — 데이터 수집 실패는 fail로 기록
+            record_job("rebound_screener", "fail", "KIS 하락률 상위 데이터 수집 실패(빈 후보 풀)")
+        else:
+            record_job("rebound_screener", "success")
     except Exception as e:
         logger.error("반등 스크리너 실패: %s", e)
         record_job("rebound_screener", "fail", str(e))

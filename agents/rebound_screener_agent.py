@@ -120,6 +120,10 @@ def _format_report(results: dict[str, list[dict]]) -> str:
     return "\n".join(lines)
 
 
+# 데이터 수집 실패 보고서의 머리말 — 스케줄러가 잡 상태를 success가 아닌 fail로 기록하는 판별 기준
+DATA_FAIL_MARK = "⚠️ KIS 하락률 상위 데이터 수집 결과가 비어있습니다"
+
+
 def run_rebound_screen(send: bool = True) -> str:
     from clients.telegram_client import send_message
 
@@ -134,7 +138,7 @@ def run_rebound_screen(send: bool = True) -> str:
     if not pool:
         report = (
             "📈 *기술적·추세적 반등 스크리너*\n\n"
-            "⚠️ KIS 하락률 상위 데이터 수집 결과가 비어있습니다 — 실제로 후보가 없는 게 "
+            f"{DATA_FAIL_MARK} — 실제로 후보가 없는 게 "
             "아니라 데이터 수집 실패(시간외·API 장애·서킷브레이커 등) 가능성이 높습니다.\n"
             "장중(09:00~15:30)에 다시 시도해주세요."
         )

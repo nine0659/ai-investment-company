@@ -67,3 +67,16 @@ def test_second_trigger_same_day_is_skipped(monkeypatch):
     scheduler.job_rebound_screener()
 
     assert len(calls) == 1
+
+
+def test_data_collection_failure_is_recorded_as_fail(monkeypatch):
+    """KIS 데이터 수집 실패 보고서가 나가도 대장에 success로 남던 사각지대(조용한 스킵) 회귀."""
+    init_db()
+    _clear_today_traces()
+    monkeypatch.setattr(scheduler, "is_krx_trading_day", lambda: True)
+    monkeypatch.setattr(rebound_screener_agent, "run_rebound_screen",
+                        lambda send=True: f"📈 제목\n\n{rebound_screener_agent.DATA_FAIL_MARK} — 재시도")
+
+    scheduler.job_rebound_screener()
+
+    assert job_ledger.has_trace_today("rebound_screener") is False  # fail은 흔적(성공)이 아니다
