@@ -40,7 +40,23 @@ _BLUECHIP_ALWAYS_FETCH: list[dict] = [
 
 # ── CIO 결정 로그 파싱 ────────────────────────────────────────────────────
 # 마커 앞뒤에 코드펜스·볼드·공백이 붙어도 잡는다(2026-10-23: 10/23 브리핑에서 블록이 인식 안 됨 — 원인 불명이라 포맷 변형에 관대하게)
-_LOG_RE = re.compile(r"=CIO_DECISION_START=[^\n]*\n(.*?)\n[^\n]*?=CIO_DECISION_END=[^\n]*", re.DOTALL)
+_LOG_RE = re.compile(r"=CIO_DECISION_START=[^\n]*\n(.*?)\n[^\n]*?=CIO_DECISION_END=[^\n]*", re.DOTALL | re.IGNORECASE)
+
+# 블록 안 줄의 서식 변형(불릿·번호·볼드·백틱·전각 파이프)을 걷어낸다.
+# 2026-10-28 점검: 블록은 인식돼도 "- stance|…"·"**new|…**" 같은 줄은 키가 'stance'가 아니라
+# '- stance'가 되어 전부 조용히 버려졌다(경고도 없음) — 구조화 결정 전체가 사라지는 사각지대.
+_LINE_PREFIX_RE = re.compile(r"^[\s>\-*•·`]*(?:\d+[.)]\s*)?[*`\s]*")
+
+
+def _normalize_block_line(raw_line: str) -> str:
+    line = raw_line.replace("｜", "|").replace("¦", "|")
+    line = _LINE_PREFIX_RE.sub("", line.strip())
+    return line.rstrip("*` \t")
+
+
+def _num(s: str, cast=float):
+    """'3', '3%', '+3.5 %' 모두 허용 — 비중 칸에 %가 붙어 와도 줄 전체가 버려지지 않게."""
+    return cast(float(s.replace("%", "").replace("+", "").strip()))
 
 # 2026-09-10 발견: LLM이 헌장의 "반드시 출력" 지시를 매번 지키지 않는다 —
 # 2026-09-04 실제 운영 브리핑에서 "살 것: 삼성전기(009150) 3%"를 사람이 읽는
@@ -59,7 +75,7 @@ _ACTION_LINE_RE = re.compile(
 
 def _find_untracked_action_line(raw_result: str) -> str | None:
     """CIO_DECISION 블록이 없는데 본문에 실제 매수/매도 지시가 있으면 그 줄을 반환."""
-    if "=CIO_DECISION_START=" in raw_result:
+    if "=CIO_DECISION_START=" in raw_result.upper():
         return None
     m = _ACTION_LINE_RE.search(raw_result)
     if m:
@@ -96,8 +112,9 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
     block   = m.group(1)
     cleaned = (text[: m.start()] + text[m.end() :]).strip()
 
+    skipped: list[str] = []
     for raw_line in block.split("\n"):
-        line = raw_line.strip()
+        line = _normalize_block_line(raw_line)
         if not line or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split("|")]
@@ -106,7 +123,7 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
         try:
             if key == "stance" and len(parts) >= 3:
                 base["macro_stance"]     = parts[1]
-                base["cash_target_pct"]  = int(parts[2])
+                base["cash_target_pct"]  = _num(parts[2], int)
                 base["stance_parsed"]    = True
             elif key == "thesis" and len(parts) >= 2:
                 base["thesis_status"] = parts[1]
@@ -117,7 +134,7 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
                 base["new_positions"].append({
                     "code":          parts[1],
                     "name":          parts[2],
-                    "size_pct":      float(parts[3]),
+                    "size_pct":      _num(parts[3]),
                     "conviction":    parts[4],
                     "timeframe":     parts[5] if len(parts) > 5 else "mid",
                     "thesis":        parts[6] if len(parts) > 6 else "",
@@ -132,7 +149,7 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
                     "name":             parts[2],
                     # exit 줄은 프롬프트가 이 칸을 빈 값으로 지시한다(exit|코드|종목명||이유).
                     # 빈 문자열을 float()하면 예외→조용히 무시돼 청산 결정이 통째로 버려졌다.
-                    "size_change_pct":  float(parts[3]) if len(parts) > 3 and parts[3] else 0,
+                    "size_change_pct":  _num(parts[3]) if len(parts) > 3 and parts[3] else 0,
                     "reason":           parts[4] if len(parts) > 4 else "",
                 })
             elif key == "hold" and len(parts) >= 3:
@@ -149,7 +166,12 @@ def _parse_cio_decisions(text: str, date: str, run_type: str) -> tuple[str, dict
             elif key == "note" and len(parts) >= 2:
                 base["strategic_note"] = parts[1]
         except Exception:
-            pass  # 파싱 실패한 줄은 조용히 무시
+            skipped.append(line[:60])  # 파싱 실패한 줄은 결정에서 빼되 흔적은 남긴다
+
+    if skipped:
+        logger.warning("[CIO] 결정 로그 %d줄 해석 실패(결정에서 제외): %s", len(skipped), skipped[:3])
+    if not (base["stance_parsed"] or base["new_positions"] or base["position_changes"] or base["position_holds"]):
+        logger.warning("[CIO] 결정 로그 블록은 있으나 해석된 줄이 없음 — 서식 변형 의심: %r", block[:200])
 
     return cleaned, base
 
