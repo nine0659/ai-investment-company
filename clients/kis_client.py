@@ -65,6 +65,26 @@ def _rank_api_available() -> bool:
     return True
 
 
+def _naver_rank_fallback(kind: str):
+    """KIS 순위 메서드가 빈 결과를 돌려주면 네이버 전 종목 시세로 같은 순위를 만든다(2026-10-28).
+    KIS 장애·시간외·서킷브레이커 때 순위 소비자(반등 스크리너·브리핑)가 통째로 비던 단일장애점 완화.
+    외국인·기관 순매수 순위는 종목별 수급이 없어 대상이 아니다."""
+    import functools
+
+    def wrap(fn):
+        @functools.wraps(fn)
+        def inner(self, market: str = "J", *args, **kwargs):
+            res = fn(self, market, *args, **kwargs)
+            if res:
+                return res
+            from services.kr_rank_fallback import rank_from_naver
+            rise = kwargs.get("rise", args[0] if args and isinstance(args[0], bool) else True)
+            top_n = kwargs.get("top_n", next((a for a in args if isinstance(a, int) and not isinstance(a, bool)), 20))
+            return rank_from_naver(kind, market, rise, top_n)
+        return inner
+    return wrap
+
+
 class KISClient:
     def __init__(self):
         self._token: str | None = None
@@ -151,6 +171,7 @@ class KISClient:
 
     # ── 순위 조회 ─────────────────────────────────────────────
 
+    @_naver_rank_fallback("volume")
     def get_volume_rank(self, market: str = "J", top_n: int = 20) -> list[dict]:
         """거래량 순위 (J=KOSPI, Q=KOSDAQ)"""
         return self._rank(
@@ -163,6 +184,7 @@ class KISClient:
             top_n,
         )
 
+    @_naver_rank_fallback("amount")
     def get_amount_rank(self, market: str = "J", top_n: int = 20) -> list[dict]:
         """거래대금 순위 (KOSPI: J, KOSDAQ: Q).
         KOSDAQ은 거래대금 전용 TR이 없으므로 volume-rank TR을 거래대금 정렬로 재사용.
@@ -191,6 +213,7 @@ class KISClient:
             top_n,
         )
 
+    @_naver_rank_fallback("fluctuation")
     def get_fluctuation_rank(self, market: str = "J", rise: bool = True, top_n: int = 20) -> list[dict]:
         """등락률 순위.
 
