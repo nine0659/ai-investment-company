@@ -419,3 +419,21 @@
   `candidate_log` 테이블에 buy/watch를 모두 기록해 평일 17:00 잡이 20거래일 뒤 전 종목 중앙값 대비로 채점(30건 미만 '결론 금지'). 비중·손절 상수는 초기값 — 채점으로 조정할 것.
   발견: 현대로템이 증권사 이익 추정 90일 -33% 하향인데 매수안으로 나오던 모순 → 경고로 관찰만 전환. 회귀 테스트: tests/test_candidate_action.py.
 
+
+---
+
+## 2026-10-28 점검 세션 (조용한 스킵·파서·KIS 폴백·메모리)
+
+- **[버그] 교차검증 발송 보류가 경보 1통뿐이었다.** 10/28 장전 브리핑은 리포트·CEO 결정이 저장됐는데 `report_claims`에 그날 `pre_market` 슬롯이 없었다(발송 보류 시 슬롯을 풀어주므로 보류 정황).
+  당시 수집값이 저장돼 있지 않아 원인 규칙은 확정하지 못했다. 이제 보류는 `branch:send_gate` fail로 job_runs에 남아 08:05 헬스체크가 잡는다. `tests/test_decision_guard_wiring.py`.
+- **[버그] dart_events가 본문 수신 표본 1건(0/1)에 "100% 실패"로 오탐(10/26).** 표본 4건 미만은 판정하지 않는다. `tests/test_disclosure_events.py`.
+- **[버그, 조용한 스킵] 반등 스크리너가 KIS 수집 실패 보고서를 보내고도 job_runs엔 success.** 머리말 상수 `DATA_FAIL_MARK`로 판별해 fail로 기록. `tests/test_rebound_scheduler.py`.
+- **[설계문제] LLM JSON을 `\{.*\}` 탐욕 정규식으로 꺼내던 4곳(예측가·복기·리서치 분석·업종 전망)이 JSON 뒤 설명/중복 블록/끝 쉼표에서 조용히 빈 결과.**
+  `services/llm_json.extract_json`(raw_decode로 첫 완결 값)으로 교체. 남은 한계: 리서치 분석 응답이 중간에 잘리면 안쪽 항목 하나가 읽혀 '판단불가'가 된다(없는 사실을 만들진 않음), 스마트 따옴표 미지원. `tests/test_llm_json.py`.
+- **[설계문제] CEO 결정 블록: 마커는 인식돼도 줄 서식 변형(불릿·번호·볼드·백틱·전각 파이프·% 칸)이면 그 줄이 경고 없이 버려져 구조화 결정 전체가 사라졌다.** 10/23 "구조화 블록이 비었던" 사고의 원인 후보
+  (그날이 이 경우였는지는 미확인). 줄 정규화·`_num()`·소문자 마커 허용, 해석 실패 줄과 '해석된 줄 0개'는 경고 로그. 확신도 파서도 변형 허용. `tests/test_cio_block_format_variants.py`.
+- **[개선] 메모리 일별 최고치 DB 기록** (`system_settings` `mem.peak.history`, `memory_watch.history()`): 프로세스 변수는 재시작·OOM과 함께 사라지고 무료 플랜엔 Render 메모리 그래프도 없다. 10/28 첫 실측: daily_nav 직후 281.5MB(한도 512MB).
+- **[개선] KIS 순위 폴백** (`services/kr_rank_fallback.py`): 거래량·거래대금·등락률 순위가 비면 네이버 전 종목 시세(`universe_screener.fetch_universe`, 약 2초)로 같은 순위를 만든다. 행은 KIS 필드명(`stck_shrn_iscd` 등)을 써서 소비자가 그대로 읽는다.
+  외국인·기관 순매수는 종목별 수급 데이터가 없어 대체 불가(빈 값 유지). 장 마감 후 KIS 순위 API가 빈 값을 주는 구조적 문제(반등 스크리너 첫 실행 사고)도 완화. `tests/test_kr_rank_fallback.py`.
+- **[개선] 반증 발동 자율 조사** (`services/falsification_probe.py`): 반증 경보 직후 독립 모델이 '가설:' 1~2문장을 쓰고, 입력에 없는 숫자는 폐기, 최근 10건을 보관해 다음 브리핑 CEO 입력에 "AI 조사(가설·검증 전)"로 덧붙인다. 새 발송 경로 없음. 실모델 3회 시험 전부 통과. `tests/test_falsification_probe.py`.
+- **CLAUDE.md 정리**: 70KB → 21KB, 사고 경위 원문은 이 파일로 이동.
