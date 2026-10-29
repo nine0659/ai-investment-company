@@ -182,7 +182,9 @@ def run_daily_health_check() -> None:
                 problems.append(warning)
         except Exception as e:
             logger.warning("[헬스체크] 보유원장 신선도 확인 실패: %s", e)
-    record_job("daily_health", "success", f"문제 {len(problems)}건")
+    # 내용까지 남긴다 — 건수만 남기면 경보 메시지를 놓친 뒤엔 무엇이 문제였는지 알 길이 없다
+    record_job("daily_health", "success", (f"문제 {len(problems)}건: " + " | ".join(problems))[:500]
+               if problems else "문제 0건")
     if not problems:
         logger.info("[헬스체크] 어제 예정 잡 모두 정상")
         return
