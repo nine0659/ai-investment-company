@@ -52,3 +52,45 @@ def test_foreign_institution_ranks_have_no_fallback(monkeypatch):
     kis = KISClient.__new__(KISClient)
     monkeypatch.setattr(KISClient, "_rank", lambda self, *a, **k: [])
     assert kis.get_foreign_buy_rank("J") == [] and kis.get_institution_buy_rank("J") == []
+
+
+# ── 외국인·기관 순매수 대체 (2026-10-29) ──────────────────────────────
+
+def _flows(monkeypatch, table):
+    monkeypatch.setattr(fb, "_latest_flow", lambda code: table.get(code))
+
+
+def test_investor_rank_orders_by_net_value_and_uses_kis_fields(monkeypatch):
+    _fb(monkeypatch)
+    _flows(monkeypatch, {
+        "000001": {"foreign": 100, "institution": -5, "bizdate": "20261028"},   # 금액 100,000
+        "000002": {"foreign": 60, "institution": 10, "bizdate": "20261028"},    # 금액 120,000
+        "000003": {"foreign": -9, "institution": 20, "bizdate": "20261028"},    # 순매도 → 제외
+    })
+    res = fb.rank_investor_from_naver("foreign", "J")
+    assert [r["mksc_shrn_iscd"] for r in res] == ["000002", "000001"]
+    assert res[0]["frgn_ntby_qty"] == "60" and "naver" in res[0]["source"]
+    inst = fb.rank_investor_from_naver("institution", "J")
+    assert [r["mksc_shrn_iscd"] for r in inst] == ["000003", "000002"] and inst[0]["inst_ntby_qty"] == "20"
+
+
+def test_investor_rank_empty_when_most_lookups_fail(monkeypatch):
+    _fb(monkeypatch)
+    _flows(monkeypatch, {"000001": {"foreign": 100, "institution": 1, "bizdate": "x"}})  # 3개 중 1개만 성공
+    assert fb.rank_investor_from_naver("foreign", "J") == []
+
+
+def test_investor_rank_bad_input_returns_empty(monkeypatch):
+    _fb(monkeypatch)
+    assert fb.rank_investor_from_naver("retail", "J") == []
+    assert fb.rank_investor_from_naver("foreign", "X") == []
+
+
+def test_kis_investor_methods_fall_back_only_when_kis_empty(monkeypatch):
+    _fb(monkeypatch)
+    _flows(monkeypatch, {c: {"foreign": 5, "institution": 5, "bizdate": "x"} for c in ("000001", "000002", "000003")})
+    k = KISClient()
+    monkeypatch.setattr(KISClient, "_rank", lambda self, *a, **kw: [])
+    assert k.get_foreign_buy_rank("J") and k.get_institution_buy_rank("J")
+    monkeypatch.setattr(KISClient, "_rank", lambda self, *a, **kw: [{"mksc_shrn_iscd": "KIS"}])
+    assert k.get_foreign_buy_rank("J") == [{"mksc_shrn_iscd": "KIS"}]

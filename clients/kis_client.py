@@ -68,7 +68,7 @@ def _rank_api_available() -> bool:
 def _naver_rank_fallback(kind: str):
     """KIS 순위 메서드가 빈 결과를 돌려주면 네이버 전 종목 시세로 같은 순위를 만든다(2026-10-28).
     KIS 장애·시간외·서킷브레이커 때 순위 소비자(반등 스크리너·브리핑)가 통째로 비던 단일장애점 완화.
-    외국인·기관 순매수 순위는 종목별 수급이 없어 대상이 아니다."""
+    외국인·기관 순매수는 rank_investor_from_naver(거래대금 상위 종목 내 근사)로 별도 대체."""
     import functools
 
     def wrap(fn):
@@ -262,7 +262,7 @@ class KISClient:
 
     def get_foreign_buy_rank(self, market: str = "J", top_n: int = 20) -> list[dict]:
         """외국인 순매수 상위 종목"""
-        return self._rank(
+        res = self._rank(
             "/uapi/domestic-stock/v1/quotations/foreign-institution-total",
             "FHPTJ04400000",
             {"FID_COND_MRKT_DIV_CODE": market, "FID_COND_SCR_DIV_CODE": "20444",
@@ -272,10 +272,14 @@ class KISClient:
              "FID_INPUT_DATE_1": "", "FID_INPUT_DATE_2": ""},
             top_n,
         )
+        if res:
+            return res
+        from services.kr_rank_fallback import rank_investor_from_naver
+        return rank_investor_from_naver("foreign", market, top_n)
 
     def get_institution_buy_rank(self, market: str = "J", top_n: int = 20) -> list[dict]:
         """기관 순매수 상위 종목"""
-        return self._rank(
+        res = self._rank(
             "/uapi/domestic-stock/v1/quotations/foreign-institution-total",
             "FHPTJ04400000",
             {"FID_COND_MRKT_DIV_CODE": market, "FID_COND_SCR_DIV_CODE": "20444",
@@ -285,6 +289,10 @@ class KISClient:
              "FID_INPUT_DATE_1": "", "FID_INPUT_DATE_2": ""},
             top_n,
         )
+        if res:
+            return res
+        from services.kr_rank_fallback import rank_investor_from_naver
+        return rank_investor_from_naver("institution", market, top_n)
 
     # ── 개별 종목 조회 ────────────────────────────────────────────
 
