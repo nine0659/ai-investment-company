@@ -47,3 +47,14 @@ def test_record_uses_branch_prefix(monkeypatch):
     calls.clear()
     bq.record(_full_state(), "pre_market")
     assert calls[0][1] == "success"
+
+
+def test_record_detail_includes_ungrounded_tokens(monkeypatch):
+    import services.briefing_quality as bq
+    import services.job_ledger as jl
+    rec = []
+    monkeypatch.setattr(jl, "record_job", lambda n, st, d="": rec.append(d))
+    state = {"ceo_report": "x" * 40, "ceo_decisions": {"a": 1}, "debate_verdict": "v",
+             "ceo_fact_check": {"count": 2, "total": 9, "ungrounded": ["12.5%", "300억"]}}
+    bq.record(state, "pre_market")
+    assert "근거없음=2(12.5%,300억)" in rec[0]

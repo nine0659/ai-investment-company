@@ -61,9 +61,16 @@ def assess(state: dict, run_type: str) -> dict:
     metrics = {
         "empty": len(empty), "expected": len(fields),
         "ungrounded": fc.get("count"), "claims": fc.get("total"),
+        "ungrounded_tokens": list(fc.get("ungrounded") or [])[:8],
         "ceo_len": len(ceo), "na_cnt": ceo.count("N/A"),
     }
     return {"expected": len(fields), "empty": empty, "problems": problems, "metrics": metrics}
+
+
+def _tokens(m: dict) -> str:
+    """근거 없는 수치 원문 — 건수만 남기면 나중에 무엇이 의심스러웠는지 알 수 없다(2026-10-29)."""
+    t = m.get("ungrounded_tokens") or []
+    return f"({','.join(t)})" if t else ""
 
 
 def record(state: dict, run_type: str) -> dict:
@@ -75,7 +82,7 @@ def record(state: dict, run_type: str) -> dict:
         from services.job_ledger import record_job
         m = result["metrics"]
         detail = (f"{run_type} 빈리포트={m['empty']}/{m['expected']} 수치주장={m['claims']} "
-                  f"근거없음={m['ungrounded']} N/A={m['na_cnt']} 길이={m['ceo_len']}")
+                  f"근거없음={m['ungrounded']}{_tokens(m)} N/A={m['na_cnt']} 길이={m['ceo_len']}")
         if result["problems"]:
             detail = "; ".join(result["problems"])[:150] + " | " + detail
             record_job("branch:briefing_quality", "fail", detail)
