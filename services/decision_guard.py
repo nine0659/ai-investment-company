@@ -100,3 +100,22 @@ def gate_high_conviction_actions(
     )
     logger.warning("[의사결정가드] %s", reason)
     return {"blocked": True, "reason": reason, "actions": actions, "inconsistencies": inconsistencies}
+
+
+def recheck_blocked_gate(ceo_decisions: dict, fetch_raw, fetch_kr) -> dict:
+    """보류 판정이 일시적 수집 불일치일 수 있어, 시장 데이터를 한 번 다시 받아 같은 규칙으로 재판정한다(2026-10-29).
+
+    안전 장치를 약하게 하지 않는다 — 규칙은 그대로, 재수집한 값으로도 불일치가 남으면 보류 유지.
+    재수집이 실패하면(예외·빈 값) 보류를 그대로 유지한다. 반환은 gate_high_conviction_actions와 같은 모양
+    (+ "rechecked": True).
+    """
+    try:
+        raw, kr = fetch_raw(), fetch_kr()
+        if not raw or not kr:
+            raise ValueError("재수집 결과가 비었음")
+        res = gate_high_conviction_actions(ceo_decisions, raw, kr)
+    except Exception as e:
+        logger.warning("[의사결정가드] 보류 재판정용 재수집 실패 — 보류 유지: %s", e)
+        return {"blocked": True, "reason": "", "actions": [], "inconsistencies": [], "rechecked": False}
+    res["rechecked"] = True
+    return res

@@ -162,3 +162,30 @@ def test_ceo_context_injects_inconsistency_warning_source():
     import inspect
     import agents.ceo_agent as ca
     assert "데이터 불일치 경고" in inspect.getsource(ca)
+
+
+# ── 보류 전 재수집 재판정 (2026-10-29) ──────────────────────────────
+
+def _risky():
+    return {"position_changes": [{"action": "exit", "code": "1", "name": "A"}]}
+
+
+def test_recheck_resolves_when_fresh_data_is_consistent():
+    from services.decision_guard import recheck_blocked_gate
+    res = recheck_blocked_gate(_risky(), lambda: {"ewy": {"change_pct": 1.0}}, lambda: {"kospi": {"change_pct": 1.2}})
+    assert res["rechecked"] and not res["blocked"]
+
+
+def test_recheck_keeps_block_when_still_inconsistent():
+    from services.decision_guard import recheck_blocked_gate
+    res = recheck_blocked_gate(_risky(), lambda: {"ewy": {"change_pct": 4.0}}, lambda: {"kospi": {"change_pct": -4.0}})
+    assert res["rechecked"] and res["blocked"]
+
+
+def test_recheck_failure_or_empty_keeps_hold():
+    from services.decision_guard import recheck_blocked_gate
+    def boom():
+        raise RuntimeError("x")
+    assert recheck_blocked_gate(_risky(), boom, lambda: {"kospi": {}})["blocked"]
+    r = recheck_blocked_gate(_risky(), lambda: {}, lambda: {})
+    assert r["blocked"] and not r["rechecked"]

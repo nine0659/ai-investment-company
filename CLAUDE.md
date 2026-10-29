@@ -155,7 +155,7 @@ pass/fail 임계값을 걸면 오판만 낸다. 대신 과거 추천이 실제�
 - GH Actions cron은 정시에 안 돈다(정시성 필요한 잡은 Render). Render 재시작을 넘긴 APScheduler 실행은 증발한다(GH 백업이 job_runs 흔적을 보고 대신 실행). cron-job.org 트리거는 저장소 밖에 있으니 스케줄 축소 시 함께 정리.
 - 워크플로 YAML에 `python -c "` 멀티라인 인라인 금지(스크립트 파일로). Windows 콘솔은 cp949 — `PYTHONUTF8=1`. 텔레그램 4096자 분할은 `send_message`가 처리. KIS 토큰 서킷 브레이커·KISClient 생성 try/except 유지.
 - 메모리: Render 무료 512MB(스케줄러+웹 ~290MB). 대형 배치는 묶음 사이에 `memory_watch.guard()`를 넣고 로컬 최대 메모리를 측정. 일별 최고치는 `memory_watch.history()`(DB `mem.peak.history`).
-- 교차검증 발송 보류(`decision_guard`)는 `branch:send_gate` fail로 기록된다. 보류되면 슬롯이 풀리므로 `report_claims`에 그날 슬롯이 없다.
+- 교차검증 발송 보류(`decision_guard`) 직전에 시장 데이터를 한 번 재수집해 재판정한다(`recheck_blocked_gate`, 2026-10-29 — 일시적 출처 불일치로 브리핑이 통째로 사라지던 문제 완화, 재수집 실패·불일치 지속이면 보류 유지, 해소되면 `branch:send_gate` success로 기록). 보류는 `branch:send_gate` fail로 기록된다. 보류되면 슬롯이 풀리므로 `report_claims`에 그날 슬롯이 없다.
 
 **판단·학습 품질**
 - 수치 계산은 코드가, LLM은 서술만. 괄호 밖 사실 주장은 `output_fact_check`·`briefing_facts`가 사후 대조·교정(발송은 막지 않음).

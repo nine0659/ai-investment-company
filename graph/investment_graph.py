@@ -523,6 +523,26 @@ def node_send_telegram(state: InvestmentState) -> InvestmentState:
         state.get("kr_index_realtime", {}),
     )
     if gate["blocked"]:
+        # 일시적 수집 불일치로 브리핑이 통째로 사라지지 않게, 보류 전에 시장 데이터를 한 번 다시 받아 재판정(2026-10-29)
+        from services.decision_guard import recheck_blocked_gate
+        first_reason = gate["reason"]
+        again = recheck_blocked_gate(
+            state.get("ceo_decisions", {}),
+            lambda: _guard_market_data(fetch_global_market_data()),
+            fetch_kr_index_realtime,
+        )
+        if again.get("rechecked"):
+            if again["blocked"]:
+                gate = again   # 재수집 값 기준의 사유로 갱신
+            else:
+                logger.warning("[교차검증] 재수집 후 불일치 해소 — 발송 진행 (최초 사유: %s)", first_reason)
+                try:
+                    from services.job_ledger import record_job
+                    record_job("branch:send_gate", "success", f"보류 후보였으나 재수집으로 해소: {first_reason}"[:200])
+                except Exception:
+                    pass
+                gate = again
+    if gate["blocked"]:
         logger.error("[교차검증] 발송 보류: %s", gate["reason"])
         try:  # 보류는 텔레그램 경보 1통뿐이라 놓치면 브리핑이 안 간 걸 아무도 모른다 — 대장에도 남긴다
             from services.job_ledger import record_job

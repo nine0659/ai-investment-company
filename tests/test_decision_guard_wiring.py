@@ -38,6 +38,9 @@ def test_blocked_gate_prevents_send_and_releases_slot(monkeypatch):
     recorded = []
     monkeypatch.setattr(jl, "record_job", lambda n, st, d="": recorded.append((n, st, d)))
 
+    # 보류 전 재수집은 실제 네트워크를 타면 안 된다 — 재수집 실패(보류 유지) 경로로 고정
+    monkeypatch.setattr(dg, "recheck_blocked_gate", lambda *a, **k: {"blocked": True, "rechecked": False})
+
     result = g.node_send_telegram(_state())
 
     assert calls["send_message"] == 0, "gate가 막았는데 실제 발송이 나가면 안 됨"
@@ -60,3 +63,36 @@ def test_unblocked_gate_sends_normally(monkeypatch):
     g.node_send_telegram(_state())
 
     assert calls["send_message"] == 1
+
+
+def _blocked_env(monkeypatch, recheck_result):
+    calls = {"send_message": 0, "released": None}
+    monkeypatch.setattr(g, "send_message", lambda *a, **k: calls.__setitem__("send_message", calls["send_message"] + 1))
+    monkeypatch.setattr(g, "send_error_alert", lambda *a, **k: None)
+    import services.decision_guard as dg
+    import services.report_service as rs
+    import services.job_ledger as jl
+    monkeypatch.setattr(dg, "gate_high_conviction_actions", lambda *a, **k: {
+        "blocked": True, "reason": "최초 사유", "actions": ["x"], "inconsistencies": ["y"]})
+    monkeypatch.setattr(dg, "recheck_blocked_gate", lambda *a, **k: recheck_result)
+    monkeypatch.setattr(rs, "release_report_slot", lambda d, r: calls.__setitem__("released", (d, r)))
+    recorded = []
+    monkeypatch.setattr(jl, "record_job", lambda n, st, d="": recorded.append((n, st, d)))
+    return calls, recorded
+
+
+def test_recheck_clears_transient_inconsistency_and_sends(monkeypatch):
+    calls, recorded = _blocked_env(monkeypatch, {"blocked": False, "reason": "", "actions": ["x"],
+                                                 "inconsistencies": [], "rechecked": True})
+    g.node_send_telegram(_state())
+    assert calls["send_message"] >= 1 and calls["released"] is None
+    assert [(n, st) for n, st, _ in recorded if n == "branch:send_gate"] == [("branch:send_gate", "success")]
+
+
+def test_recheck_still_inconsistent_keeps_hold(monkeypatch):
+    calls, recorded = _blocked_env(monkeypatch, {"blocked": True, "reason": "재수집 후에도", "actions": ["x"],
+                                                 "inconsistencies": ["y"], "rechecked": True})
+    g.node_send_telegram(_state())
+    assert calls["send_message"] == 0 and calls["released"] == ("2026-07-22", "pre_market")
+    assert [(n, st) for n, st, d in recorded if n == "branch:send_gate"] == [("branch:send_gate", "fail")]
+    assert "재수집 후에도" in [d for n, _, d in recorded if n == "branch:send_gate"][0]
