@@ -7,6 +7,7 @@
 모든 수치는 스냅샷 값, 표시·고지는 고정 문구. 없는 항목은 말없이 생략하고, 전부 없으면 ''.
 """
 import logging
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -24,7 +25,8 @@ _SUBSUMED = {"업종대비저PBR": "자산대비저평가", "업종대비저평�
 
 _SKIP = {"수익성"}      # ROE 단독은 효과 없음(참고용) — 사용자에게 근거처럼 보이지 않게 뺀다
 
-DISCLAIMER = "※ 후보는 '볼 만한 종목'이지 매수 권고가 아닙니다. ✔=과거 검증을 통과한 근거(그래도 확실하진 않음), 나머지는 검증 전입니다."
+DISCLAIMER = ("※ 후보는 '볼 만한 종목'이지 매수 권고가 아닙니다. ✔=과거 검증 통과 근거, 나머지는 검증 전. "
+              "업종 흐름은 최근 3개월 현재 상태일 뿐 예측이 아니며, 업종 전망은 채점 전 가설입니다.")
 
 
 def plain_signals(signals: str | None, max_items: int = 4) -> str:
@@ -45,7 +47,18 @@ def plain_signals(signals: str | None, max_items: int = 4) -> str:
     return " · ".join(t for _, t in items[:max_items])
 
 
-def _kr_lines(exclude: set[str], n: int = 3) -> list[str]:
+def _compact_action(lines: list[str]) -> list[str]:
+    """행동안 줄을 핵심만: 자금 출처·시장상태 경고 꼬리는 /more 몫 — 단, 분할 진입 경고는 남긴다."""
+    out = []
+    for ln in lines:
+        if " 자금:" in ln:                                  # 자금 출처 문구만 걷고 ⚠ 경고 꼬리는 남긴다
+            head, _, tail = ln.partition(" 자금:")
+            ln = head.rstrip() + (" " + tail[tail.index("⚠"):] if "⚠" in tail else "")
+        out.append(ln)
+    return out
+
+
+def _kr_lines(exclude: set[str], n: int = 3, brief: bool = False) -> list[str]:
     from services import market_ideas as mi
     from services.disclosure_events import by_code
     d, picks, _ = mi.kr_picks(exclude, n=n)
@@ -55,13 +68,13 @@ def _kr_lines(exclude: set[str], n: int = 3) -> list[str]:
     out = []
     for p in picks:
         stats = []
-        if p.get("cns_per"):
+        if p.get("cns_per") and not brief:
             stats.append(f"예상PER {p['cns_per']:.1f}배")
         up = mi._pct(p.get("target"), p["close"])
         if up is not None:
             stats.append(f"목표가 대비 {up:+.0f}%")
         dd = mi._pct(p["close"], p.get("high52"))
-        if dd is not None:
+        if dd is not None and not brief:
             stats.append(f"고점 대비 {dd:.0f}%")
         warn = [e for e in evs.get(p["code"], []) if e["polarity"] == "악재"][:1]
         line = f"· {p['name']}({p['code']}) {p['close']:,.0f}원 — {plain_signals(p['signals'])}" + \
@@ -72,13 +85,13 @@ def _kr_lines(exclude: set[str], n: int = 3) -> list[str]:
     return out
 
 
-def _us_lines(exclude: set[str], n: int = 2) -> list[str]:
+def _us_lines(exclude: set[str], n: int = 2, brief: bool = False) -> list[str]:
     from services import market_ideas as mi
     d, picks, _ = mi.us_picks(exclude, n=n)
     out = []
     for p in picks:
         stats = []
-        if p.get("fwd_pe"):
+        if p.get("fwd_pe") and not brief:
             stats.append(f"예상PER {p['fwd_pe']:.1f}배")
         up = mi._pct(p.get("target"), p["close"])
         if up is not None:
@@ -113,10 +126,12 @@ def drop_financials(rows: list[str]) -> list[str]:
     return [r for r in rows if not any(f"({c})" in r for c in fin)]
 
 
-def _buyback_lines(n: int = 3) -> list[str]:
+def _buyback_lines(n: int = 3, skip_text: str = "") -> list[str]:
     """과거 검증은 비금융 기준이라 금융업은 뺀다(업종 정보가 있을 때)."""
     from services import market_ideas as mi
-    kept = drop_financials(mi.validated_events(days=3, min_mcap_eok=1000, n=n * 3))
+    kept = drop_financials(mi.validated_events(days=3, min_mcap_eok=1000, n=n * 4 + 6))
+    if skip_text:
+        kept = [r for r in kept if not any(f"({c})" in skip_text for c in re.findall(r"[(](\w{6})[)]", r))]
     return [r.replace("  · ", "· ", 1) for r in kept[:n]]
 
 
@@ -142,8 +157,6 @@ def _board_lines() -> list[str]:
         out.append("· 강한 업종: " + ", ".join(f"{r['name']}({r['med_ret_3m']:+.0f}%)" for r in strong))
     if weak:
         out.append("· 약한 업종: " + ", ".join(f"{r['name']}({r['med_ret_3m']:+.0f}%)" for r in weak))
-    if out:
-        out.append("· 최근 3개월 종목 수익률 중앙값 기준의 현재 상태입니다. 앞으로 계속 강하다는 뜻은 아닙니다(과거 검증에서 추세는 예측력이 없었음).")
     return out
 
 
@@ -164,8 +177,9 @@ def sector_lines() -> list[str]:
     for label, grp in (("시장보다 나을 것으로 본 업종", good), ("시장보다 못할 것으로 본 업종", bad)):
         if grp:
             out.append(f"· {label}: " + ", ".join(f"{r[0]}({r[2]:.0f}%)" for r in grp))
-    if out:
-        out.append(f"· {so.format_scorecard_line(so.scorecard())}")
+    sc = so.scorecard()
+    if out and sc.get("n"):                                # 채점 전이면 "아직 없음" 줄은 생략(푸터가 가설임을 밝힘)
+        out.append(f"· {so.format_scorecard_line(sc)}")
     return out
 
 
@@ -186,12 +200,13 @@ def build(exclude_codes: set[str] | None = None) -> tuple[str, dict]:
         if lines:
             sections.append(title + "\n" + "\n".join(lines))
 
-    add("🌡 업종 흐름 (한국 전 종목 집계)", "board", _board_lines)
-    add("👉 내 계좌 기준 행동안 (한국 후보, 코드 계산 — 제안일 뿐 자동 매매 아님)", "action", lambda: _action_lines(exclude))
-    add("🔎 오늘의 발굴 후보 — 한국 (전 종목 스크리닝)", "kr", lambda: _kr_lines(exclude))
-    add("🔎 미국 후보", "us", lambda: _us_lines(exclude))
-    add("✔ 자사주 취득 결정 (최근 3일, 과거 검증 통과 공시)", "buyback", _buyback_lines)
-    add("🧭 업종 전망 (향후 20거래일, 시장 대비 · 기록·채점 중인 가설)", "sector", sector_lines)
+    add("🌡 업종 흐름", "board", _board_lines)
+    add("👉 내 계좌 기준 행동안 (제안일 뿐 자동 매매 아님)", "action", lambda: _compact_action(_action_lines(exclude)))
+    add("🔎 발굴 후보 — 한국", "kr", lambda: _kr_lines(exclude, n=2, brief=True))
+    add("🔎 발굴 후보 — 미국", "us", lambda: _us_lines(exclude, n=1, brief=True))
+    # 위 섹션(행동안·발굴 후보)에 이미 나온 종목은 자사주 섹션에서 뺀다 — 같은 종목이 세 번 나오던 중복(2026-10-30)
+    add("✔ 자사주 취득 결정 (최근 3일)", "buyback", lambda: _buyback_lines(n=2, skip_text=" ".join(sections)))
+    add("🧭 업종 전망 (20거래일, 기록·채점 중)", "sector", sector_lines)
     if not sections:
         return "", counts
     return "\n\n".join(sections) + "\n" + DISCLAIMER, counts
