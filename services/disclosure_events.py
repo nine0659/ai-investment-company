@@ -9,6 +9,7 @@ LLM 없음, 발송 없음. 해석은 쓰는 쪽(스크리너 신호·브리핑)�
 import io
 import logging
 import re
+import time
 import zipfile
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -255,23 +256,29 @@ def collect(days: int = 3) -> dict:
     relevant = [it for it, c in classified if c]
     known = _known_rcept_nos([it["rcept_no"] for it in relevant])
     fresh = [it for it in relevant if it["rcept_no"] not in known]
-    events, doc_fail, doc_try = [], 0, 0
+    events, doc_fail, doc_try, first_err = [], 0, 0, ""
     for it in fresh:
         toks = None
         if classify(it["report_nm"])[0] in ("공급계약", "잠정실적"):
             doc_try += 1
-            try:
-                toks = _fetch_doc_tokens(it["rcept_no"])
-            except Exception as e:
-                doc_fail += 1
-                logger.debug("[공시사건] 본문 수신 실패(%s): %s", it["rcept_no"], e)
+            for attempt in (1, 2):                            # 일시 오류 1회 재시도 (2026-10-29 0/5 전멸, 직후 재현 안 됨)
+                try:
+                    toks = _fetch_doc_tokens(it["rcept_no"])
+                    break
+                except Exception as e:
+                    logger.debug("[공시사건] 본문 수신 실패(%s, %d회차): %s", it["rcept_no"], attempt, e)
+                    if attempt == 2:
+                        doc_fail += 1
+                        first_err = first_err or f"{type(e).__name__}: {str(e)[:80]}"
+                    else:
+                        time.sleep(2)
         ev = build_event(it, toks)
         if ev:
             events.append(ev)
     saved = save_events(events)
     return {"ok": fetched["ok"], "errors": fetched["errors"], "listed": len(fetched["items"]),
             "relevant": len(relevant), "new": len(fresh), "saved": saved, "doc_try": doc_try, "doc_fail": doc_fail,
-            "events": events}                                  # 이번에 처음 저장한 사건들 (보유종목 즉시 알림이 쓴다)
+            "doc_err": first_err, "events": events}                                  # 이번에 처음 저장한 사건들 (보유종목 즉시 알림이 쓴다)
 
 
 def run_daily_job() -> tuple[str, str]:
@@ -283,7 +290,8 @@ def run_daily_job() -> tuple[str, str]:
         return "empty", "공시 목록 0건"
     # 표본이 너무 작으면(1~2건) 한 건 실패가 곧 100%라 오탐 — 최소 4건 이상일 때만 판정(2026-10-26 0/1 오탐)
     if st["doc_try"] >= 4 and st["doc_fail"] > st["doc_try"] * 0.5:
-        return "fail", f"본문 수신 {st['doc_try'] - st['doc_fail']}/{st['doc_try']}만 성공"
+        return "fail", (f"본문 수신 {st['doc_try'] - st['doc_fail']}/{st['doc_try']}만 성공"
+                       f"{' — ' + st['doc_err'] if st.get('doc_err') else ''}")
     return "success", (f"목록 {st['listed']} · 관심 사건 {st['relevant']} · 신규 {st['new']} · "
                        f"본문 {st['doc_try'] - st['doc_fail']}/{st['doc_try']}")
 

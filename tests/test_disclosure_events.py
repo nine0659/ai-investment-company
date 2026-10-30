@@ -253,3 +253,26 @@ def test_buyback_cancel_and_dividend_are_not_validated():
                             {"event_type": "배당결정", "polarity": "호재", "summary": "", "metric": None, "date": "2026-10-21"}])
     assert len(sig) == 2 and all(x.get("info") and not x.get("validated") for x in sig)
     assert us.score(sig) == 0 and us.validated_count(sig) == 0
+
+
+def test_collect_retries_doc_fetch_once_and_records_error(monkeypatch):
+    from services import disclosure_events as de
+    item = {"rcept_no": "1", "report_nm": "단일판매ㆍ공급계약체결", "stock_code": "005930", "corp_name": "X"}
+    monkeypatch.setattr(de, "fetch_disclosures", lambda days=3: {"ok": True, "errors": [], "items": [item]})
+    monkeypatch.setattr(de, "_known_rcept_nos", lambda nos: set())
+    monkeypatch.setattr(de, "save_events", lambda ev: len(ev))
+    monkeypatch.setattr(de.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def flaky(no):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("boom")
+        return []
+    monkeypatch.setattr(de, "_fetch_doc_tokens", flaky)
+    st = de.collect()
+    assert calls["n"] == 2 and st["doc_fail"] == 0
+
+    monkeypatch.setattr(de, "_fetch_doc_tokens", lambda no: (_ for _ in ()).throw(TimeoutError("down")))
+    st = de.collect()
+    assert st["doc_fail"] == 1 and "TimeoutError" in st["doc_err"]
